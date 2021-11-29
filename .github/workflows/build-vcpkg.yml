@@ -15,6 +15,8 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-20.04, windows-2022]
+        triplet-all: ["x64-linux", "x64-windows"]
+        triplet: ["x64-linux-release-only", "x64-windows-release-only"]
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }}-${{ github.workflow }}
@@ -22,6 +24,7 @@ jobs:
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg/bincache
+      VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
 
     steps:
     - uses: actions/checkout@v2
@@ -33,7 +36,12 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v10
       with:
-        vcpkgGitCommitId: '3a68454afa67bde8b6e9e741536daa95d3785966'
+        vcpkgGitCommitId: 'b03d383e49c1288be78886a2406c6f01a7afc446'
+
+    - name: Create custom vcpkg triplet
+      run: |
+        cp "$VCPKG_ROOT/triplets/${{matrix.triplet-all}}.cmake" "$VCPKG_ROOT/triplets/community/${{matrix.triplet}}.cmake"
+        echo "set(VCPKG_BUILD_TYPE release)" >> "$VCPKG_ROOT/triplets/community/${{matrix.triplet}}.cmake"
 
     - name: Configure CMake
       shell: bash
