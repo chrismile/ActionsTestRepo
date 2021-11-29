@@ -15,8 +15,6 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-20.04, windows-2022]
-        triplet-all: ["x64-linux", "x64-windows"]
-        triplet: ["x64-linux-release-only", "x64-windows-release-only"]
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }}-${{ github.workflow }}
@@ -24,9 +22,22 @@ jobs:
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg/bincache
-      VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
 
     steps:
+    - name: Set up vcpkg environment variables
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" == "Linux" ]; then
+          echo "VCPKG_COPY_TRIPLET=x64-linux" >> $GITHUB_ENV
+          echo "VCPKG_DEFAULT_TRIPLET=x64-linux-release-only" >> $GITHUB_ENV
+        elif [ "$RUNNER_OS" == "Windows" ]; then
+          echo "VCPKG_COPY_TRIPLET=x64-windows" >> $GITHUB_ENV
+          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-release-only" >> $GITHUB_ENV
+        else
+          echo "$RUNNER_OS is not supported."
+          exit 1
+        fi
+
     - uses: actions/checkout@v2
       with:
         submodules: true
@@ -36,12 +47,12 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v10
       with:
-        vcpkgGitCommitId: 'b03d383e49c1288be78886a2406c6f01a7afc446'
+        vcpkgGitCommitId: '36de5f9de5eceee418b77e0b9df023e6ab77533a'
 
     - name: Create custom vcpkg triplet
       run: |
-        cp "$VCPKG_ROOT/triplets/${{matrix.triplet-all}}.cmake" "$VCPKG_ROOT/triplets/community/${{matrix.triplet}}.cmake"
-        echo "set(VCPKG_BUILD_TYPE release)" >> "$VCPKG_ROOT/triplets/community/${{matrix.triplet}}.cmake"
+        cp "$VCPKG_ROOT/triplets/$VCPKG_COPY_TRIPLET.cmake" "$VCPKG_ROOT/triplets/community/$VCPKG_DEFAULT_TRIPLET.cmake"
+        echo "set(VCPKG_BUILD_TYPE release)" >> "$VCPKG_ROOT/triplets/community/$VCPKG_DEFAULT_TRIPLET.cmake"
 
     - name: Configure CMake
       shell: bash
