@@ -31,8 +31,6 @@
 #include <iostream>
 #include <filesystem>
 
-#include <boost/algorithm/string/predicate.hpp>
-#include <boost/algorithm/string/case_conv.hpp>
 #include <archive.h>
 #include <archive_entry.h>
 
@@ -54,10 +52,9 @@ ArchiveFileLoadReturnType loadFileFromArchive(
     std::string filenameLocal;
     bool foundArchive = false;
 
-    std::string filenameLower = boost::to_lower_copy(filename);
     std::string fileExtension;
     for (const char* const archiveExtension : archiveFileExtensions) {
-        const size_t extensionPos = filenameLower.find(archiveExtension);
+        const size_t extensionPos = filename.find(archiveExtension);
         if (extensionPos != std::string::npos) {
             const size_t extensionSize = strlen(archiveExtension);
             filenameArchive = filename.substr(0, extensionPos + extensionSize);
@@ -70,7 +67,7 @@ ArchiveFileLoadReturnType loadFileFromArchive(
 
     if (!foundArchive) {
         for (const char* const archiveExtension : archiveFileExtensionsUnsupported) {
-            const size_t extensionPos = filenameLower.find(archiveExtension);
+            const size_t extensionPos = filename.find(archiveExtension);
             if (extensionPos != std::string::npos) {
                 std::cerr << "ERROR in loadFileFromArchive: Invalid archive format. Please use "
                         << ".tar" << fileExtension << " instead of " << fileExtension;
@@ -93,7 +90,7 @@ ArchiveFileLoadReturnType loadFileFromArchive(
     archive* a = archive_read_new();
     archive_read_support_filter_all(a);
     bool isRaw;
-    if (boost::starts_with(fileExtension, ".tar") || fileExtension == ".zip" || fileExtension == ".7z") {
+    if (fileExtension == ".zip" || fileExtension == ".7z") {
         archive_read_support_format_all(a);
         isRaw = false;
     } else {
