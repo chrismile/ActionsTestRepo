@@ -48,11 +48,11 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v10
       with:
-        vcpkgGitCommitId: '36de5f9de5eceee418b77e0b9df023e6ab77533a'
+        vcpkgGitCommitId: '60a8f7971e5b23c329c2bca3b0bb82e7f65a0e35'
 
     - name: Create custom vcpkg triplet
       run: |
-        cp "${{env.VCPKG_ROOT}}/triplets/${{env.VCPKG_COPY_TRIPLET}}.cmake" "$VCPKG_ROOT/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
+        cp "${{env.VCPKG_ROOT}}/triplets/${{env.VCPKG_COPY_TRIPLET}}.cmake" "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
         echo "set(VCPKG_BUILD_TYPE release)" >> "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
 
     - name: Configure CMake
