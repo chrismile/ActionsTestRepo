@@ -13,5 +13,7 @@ int main() {
     sgl::ArchiveFileLoadReturnType returnCode = sgl::loadFileFromArchive(
             "test.zip", buffer, bufferSize, true);
 
+    std::cout << "TEST" << std::endl;
+    
     return 0;
 }
