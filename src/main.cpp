@@ -14,6 +14,7 @@ int main() {
             "test.zip", buffer, bufferSize, true);
 
     std::cout << "TEST" << std::endl;
+    std::cout << "TEST2" << std::endl;
     
     return 0;
 }
