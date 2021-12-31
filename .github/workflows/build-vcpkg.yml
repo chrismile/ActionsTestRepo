@@ -68,4 +68,4 @@ jobs:
     - name: Remove symbolic links before caching (Windows only)
       if: runner.os == 'Windows'
       shell: bash
-      run: find ${{env.VCPKG_ROOT}}/buildtrees -type l -exec echo {} \;
+      run: find "${{env.VCPKG_ROOT}}/buildtrees" -type l -exec echo {} \;
