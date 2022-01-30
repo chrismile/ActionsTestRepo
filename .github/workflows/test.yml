@@ -20,3 +20,15 @@ jobs:
       run: |
         echo "$USER"
         ls /home
+        mkdir -p /home/$USER/.config/linevis
+        echo "some data for the file" >> /home/$USER/.config/linevis/Logfile.html
+        exit 1
+        
+    - name: Archive logs and failure case images
+      if: always() && steps.tests.outcome == 'failure'
+      uses: actions/upload-artifact@v2
+      with:
+        name: vpt-output-images
+        path: |
+          /home/$USER/.config/linevis/Logfile.html
+          ${{github.workspace}}/build/*.png
