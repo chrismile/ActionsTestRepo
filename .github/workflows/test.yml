@@ -15,13 +15,14 @@ jobs:
     name: "${{ github.workflow }}"
 
     steps:
-    - name: Test environment
+    - name: Tests
+      id: tests
       shell: bash
       run: |
         echo "$USER"
         ls /home
         mkdir -p /home/$USER/.config/linevis
-        echo "some data for the file" >> /home/$USER/.config/linevis/Logfile.html
+        echo "Test content in logfile" >> /home/$USER/.config/linevis/Logfile.html
         exit 1
         
     - name: Archive logs and failure case images
