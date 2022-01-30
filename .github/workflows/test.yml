@@ -19,6 +19,7 @@ jobs:
       id: tests
       shell: bash
       run: |
+        echo "USER=$USER" >> $GITHUB_ENV
         echo "$USER"
         ls /home
         mkdir -p /home/$USER/.config/linevis
@@ -31,5 +32,5 @@ jobs:
       with:
         name: vpt-output-images
         path: |
-          /home/$USER/.config/linevis/Logfile.html
+          /home/${{env.USER}}/.config/linevis/Logfile.html
           ${{github.workspace}}/build/*.png
