@@ -66,7 +66,8 @@ jobs:
           hdiutil attach vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
           sudo /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION/InstallVulkan.app/Contents/MacOS/InstallVulkan \
           --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
-          sudo ~/VulkanSDK/$VULKAN_SDK_VERSION/install_vulkan.py
+          cd ~/VulkanSDK/$VULKAN_SDK_VERSION
+          sudo ./install_vulkan.py
         else
           echo "$RUNNER_OS is not supported."
           exit 1
