@@ -11,7 +11,9 @@
         {
             "name": "sdl2",
             "features": [ "vulkan" ]
-        }
+        },
+        "vulkan",
+        "vulkan-headers"
     ]
 }
 

@@ -6,6 +6,7 @@
 #include "Archive.hpp"
 #include <archive.h>
 #include <archive_entry.h>
+#include <vulkan/vulkan.h>
 
 int main() {
     uint8_t* buffer = nullptr;

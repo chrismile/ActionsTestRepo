@@ -6,5 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 add_executable(TestLibArchive src/main.cpp src/Archive.cpp)
 
 find_package(LibArchive REQUIRED)
-target_link_libraries(TestLibArchive ${LibArchive_LIBRARIES})
+find_package(Vulkan REQUIRED)
+target_link_libraries(TestLibArchive PRIVATE ${LibArchive_LIBRARIES})
+target_link_libraries(TestLibArchive PRIVATE Vulkan::Headers)
 target_include_directories(TestLibArchive PRIVATE ${LibArchive_INCLUDE_DIRS})
