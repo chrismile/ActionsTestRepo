@@ -66,11 +66,9 @@ jobs:
           sudo hdiutil attach vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
           sudo /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION/InstallVulkan.app/Contents/MacOS/InstallVulkan \
           --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
-          ls ~/VulkanSDK/$VULKAN_SDK_VERSION
           cd ~/VulkanSDK/$VULKAN_SDK_VERSION
           sudo ./install_vulkan.py
           sudo hdiutil unmount /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION
-          ls ~/VulkanSDK/$VULKAN_SDK_VERSION
         else
           echo "$RUNNER_OS is not supported."
           exit 1
@@ -96,12 +94,6 @@ jobs:
         elif [ "$RUNNER_OS" == "Windows" ]; then
           export VULKAN_SDK="C:/VulkanSDK/$(ls C:/VulkanSDK)"
         elif [ "$RUNNER_OS" == "macOS" ]; then
-          ls -al "/Users/runner"
-          ls -al "/Users/runner/VulkanSDK"
-          ls -al "/Users/runner/VulkanSDK/1.3.204.1"
-          ls "/Users/runner/VulkanSDK/1.3.204.1"
-          ls "$HOME/VulkanSDK"
-          ls "$HOME/VulkanSDK/$(ls ~/VulkanSDK)"
           source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
         fi
         cmake -B "${{github.workspace}}/build" -DCMAKE_TOOLCHAIN_FILE="${{env.VCPKG_ROOT}}/scripts/buildsystems/vcpkg.cmake" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DVCPKG_TARGET_TRIPLET=${{env.VCPKG_DEFAULT_TRIPLET}}

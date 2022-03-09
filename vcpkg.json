@@ -8,10 +8,22 @@
             "default-features": true,
             "features": [ "bzip2", "lz4", "lzma", "zstd" ]
         },
+        "boost-core",
+        "boost-algorithm",
+        "boost-filesystem",
+        {
+            "name": "boost-interprocess",
+            "platform": "windows"
+        },
         {
             "name": "sdl2",
             "features": [ "vulkan" ]
         },
+        "tinyxml2",
+        "glew",
+        "glm",
+        "jsoncpp",
+        "openexr",
         "vulkan",
         "vulkan-headers"
     ]
