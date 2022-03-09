@@ -1,93 +1,44 @@
 ## Compilation using vcpkg
 
-First of all, clone [vcpkg](https://github.com/microsoft/vcpkg) to a local directory on your system.
-
-```
-git clone https://github.com/microsoft/vcpkg
-```
-
-
-### Setup on Linux
-
-As the first step, call the following command in the directory which vcpkg has been cloned to.
-
-```
-export VCPKG_HOME=$(pwd)
-./bootstrap-vcpkg.sh -disableMetrics
-```
-
-For Vulkan support, the LunarG Vulkan SDK needs to be installed. Below, an example for installing release 1.2.162 on
-Ubuntu 20.04 is given (see https://vulkan.lunarg.com/sdk/home#linux).
-
-```
-wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
-sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-1.2.162-focal.list \
-https://packages.lunarg.com/vulkan/1.2.162/lunarg-vulkan-1.2.162-focal.list
-sudo apt update
-sudo apt install vulkan-sdk
-```
-
-On Arch Linux, the following command can be used.
-
-```
-sudo pacman -S vulkan-devel
-```
-
-After that, the environment variable `VULKAN_SDK` needs to be set to the installation directory of the Vulkan SDK, e.g.:
-
-```
-export VULKAN_SDK=/usr
-```
-
-NOTE: It seems like currently the vcpkg version of GLEW requires some packages to be already installed using the system
-package manager in order to compile it. On Ubuntu for example, the following command can help install all dependencies.
-
-```
-sudo apt install libxmu-dev libxi-dev libgl-dev libglu1-mesa-dev
-```
-
-
-### Setup on Windows
-
-As the first step, please call the following command in the directory which vcpkg has been cloned to (assuming the
-PowerShell is used and not cmd.exe).
-
-```
-$env:VCPKG_HOME = "${PWD}"
-./bootstrap-vcpkg.bat -disableMetrics
-```
-
-If the user wants to compile sgl with Vulkan support, the Vulkan SDK needs to be installed from:
-https://vulkan.lunarg.com/sdk/home#windows
-
-The installation process of the Vulkan SDK should set the environment variable `VULKAN_SDK` for vcpkg.
+As the first step, the library [sgl](https://github.com/chrismile/sgl) (https://github.com/chrismile/sgl) needs to be
+installed somewhere on the system. In the following steps, it is assumed you have set up sgl using vcpkg and installed
+all of its dependencies. Please follow the instructions in the file `docs/compilation_vcpkg.md` of sgl for that.
 
 
 ### Installing all Packages (All Systems)
 
-All necessary packages can be installed using the following command.
+All other necessary dependencies besides sgl can be installed using the following command.
 On Windows `--triplet=x64-windows` needs to be added if the 64-bit version of the packages should be installed.
 
 ```
-./vcpkg install boost-core boost-algorithm boost-filesystem boost-locale libpng sdl2[vulkan] sdl2-image \
-tinyxml2 glew glm libarchive[bzip2,core,lz4,lzma,zstd] vulkan vulkan-headers shaderc
+./vcpkg install boost-core boost-algorithm boost-filesystem sdl2[vulkan] glew glm jsoncpp openexr
 ```
-
-If Vulkan support should be disabled, remove `vulkan`, `vulkan-headers` and `shaderc` from the command above.
 
 
 ### Compilation on Linux
 
 To invoke the build process using CMake, the following commands can be used.
-Please adapt `CMAKE_INSTALL_PREFIX` depending on which path sgl should be installed to.
+Please adapt `sgl_DIR` depending on which path sgl was installed to.
 
 ```
 mkdir build
 cd build
 rm -rf *
-cmake -DCMAKE_TOOLCHAIN_FILE=$VCPKG_HOME/scripts/buildsystems/vcpkg.cmake -DCMAKE_INSTALL_PREFIX=<path> ..
+cmake -DCMAKE_TOOLCHAIN_FILE=$VCPKG_HOME/scripts/buildsystems/vcpkg.cmake -Dsgl_DIR=<path-to-sgl>/lib/cmake/sgl ..
 make -j
 make install
+```
+
+If the program was built out-of-source (i.e., the folder `build` does not lie in the source directory), the user must
+either create a symbolic link to the directory `Data` in the build folder (this only works on Linux and not Windows),
+or the CMake variable `DATA_PATH` must be set to the path pointing to the `Data` folder.
+
+If sgl was not installed globally on the system, the library path might need to be adapted before launching the
+application.
+
+```
+export LD_LIBRARY_PATH=<path-to-sgl>/lib
+./CloudRendering
 ```
 
 
@@ -105,10 +56,38 @@ Then, the program can be built using the following commands. Please adapt the pa
 ```
 mkdir build
 cd build
-cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_HOME/scripts/buildsystems/vcpkg.cmake" -DCMAKE_INSTALL_PREFIX=<path> ..
+cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_HOME/scripts/buildsystems/vcpkg.cmake" -Dsgl_DIR=<path-to-sgl>lib/cmake/sgl ..
 cmake --build . --parallel
-cmake --build . --target install
 ```
 
 Hint: To change the language of warnings and error messages to English even if your system uses another language,
 consider setting the environment variable `set VSLANG=1033`.
+
+To run the program, use the following commands on cmd.exe ...
+
+```
+set PATH=%PATH%;<path-to-sgl>/bin
+set PYTHONHOME=$VCPKG_HOME/installed/x64-windows/tools/python3
+
+# Debug
+set PATH=%PATH%;$VCPKG_HOME/installed/x64-windows/debug/bin
+
+# Release
+set PATH=%PATH%;$VCPKG_HOME/installed/x64-windows/bin
+
+CloudRendering.exe
+```
+
+... or the following commands on the PowerShell.
+
+```
+$env:Path += ";<path-to-sgl>/bin"
+
+# Debug
+$env:Path += ";$env:VCPKG_HOME/installed/x64-windows/debug/bin"
+
+# Release
+$env:Path += ";$env:VCPKG_HOME/installed/x64-windows/bin"
+
+./CloudRendering.exe
+```

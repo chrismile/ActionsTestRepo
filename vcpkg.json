@@ -1,32 +1,29 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
-    "name": "sgl",
+    "name": "cloud-rendering",
     "version": "0.1.0",
     "dependencies": [
         "boost-core",
         "boost-algorithm",
         "boost-filesystem",
-        "boost-locale",
         {
             "name": "boost-interprocess",
             "platform": "windows"
         },
-        "libpng",
         {
             "name": "sdl2",
             "features": [ "vulkan" ]
         },
-        "sdl2-image",
         "tinyxml2",
         "glew",
         "glm",
-        {
-            "name": "libarchive",
-            "default-features": true,
-            "features": [ "bzip2", "lz4", "lzma", "zstd" ]
-        },
-        "vulkan",
-        "vulkan-headers",
-        "shaderc"
-    ]
+        "jsoncpp",
+        "openexr"
+    ],
+    "features": {
+        "tests": {
+            "description": "Unit test cases for the volumetric path tracing algorithms.",
+            "dependencies": [ "gtest" ]
+        }
+    }
 }

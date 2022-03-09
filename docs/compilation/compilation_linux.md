@@ -4,49 +4,39 @@
 
 The build process was tested on Ubuntu 18.04 and Ubuntu 20.04.
 
-All obligatory dependencies can be installed using the following command.
+As the first step, the library [sgl](https://github.com/chrismile/sgl) (https://github.com/chrismile/sgl) needs to be
+installed somewhere on the system. In the following steps, it is assumed you have set up sgl and installed all of its
+dependencies.
+
+After that, all obligatory dependencies can be installed using the following command.
 
 ```
-sudo apt-get install git cmake libglm-dev libsdl2-dev libsdl2-image-dev libpng-dev libboost-filesystem-dev \
-libtinyxml2-dev libarchive-dev
+sudo apt-get install cmake libglm-dev libsdl2-dev libsdl2-image-dev libpng-dev libboost-filesystem-dev libtinyxml2-dev \
+libarchive-dev libjsoncpp-dev libopenexr-dev
 ```
 
-For OpenGL support (which is recommended), you also need the following libraries.
+Python 3 is an optional dependency necessary for enabling replay script support.
 
-```
-sudo apt-get install libglew-dev
-```
-
-For Vulkan support, the LunarG Vulkan SDK and shaderc need to be installed. Below, an example for installing release
-1.2.162 on Ubuntu 20.04 is given (see https://vulkan.lunarg.com/sdk/home#linux).
-
-```
-wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
-sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-1.2.162-focal.list \
-https://packages.lunarg.com/vulkan/1.2.162/lunarg-vulkan-1.2.162-focal.list
-sudo apt update
-sudo apt install vulkan-sdk
-sudo apt install shaderc
-```
-
-To start the compilation, launch the following commands in the directory of the project:
+After all dependencies have been set up, the following commands can be used to build the program.
 
 ```
 mkdir build
 cd build
-rm -rf *
-cmake ..
+cmake -Dsgl_DIR=<path-to-sgl> ..
 make -j
 ```
 
-To install the library to /usr/local, run
+If the program was built out-of-source (i.e., the folder `build` does not lie in the source directory), the user must
+either create a symbolic link to the directory `Data` in the build folder (this only works on Linux and not Windows),
+or the CMake variable `DATA_PATH` must be set to the path pointing to the `Data` folder.
+
+If sgl was not installed globally on the system, the library path might need to be adapted before launching the
+application.
 
 ```
-sudo make install
+export LD_LIBRARY_PATH=<path-to-sgl>/lib
+./CloudRendering
 ```
-
-In case you wish to install the library to any other directory, specify `-DCMAKE_INSTALL_PREFIX=<path>` when calling
-`cmake`.
 
 
 ### Arch Linux
@@ -54,10 +44,7 @@ In case you wish to install the library to any other directory, specify `-DCMAKE
 The following command can be used to install all dependencies on Arch Linux (last tested in May 2021).
 
 ```
-sudo pacman -S git cmake boost libarchive glm tinyxml2 sdl2 sdl2_image glew vulkan-devel shaderc
+sudo pacman -S cmake boost libarchive glm tinyxml2 sdl2 sdl2_image glew vulkan-devel shaderc jsoncpp openexr
 ```
-
-Vulkan support on Arch Linux was not yet thoroughly tested. Please open a bug report in the issue tracker in case you
-face any problems.
 
 All other build instructions are identical to the ones for Ubuntu provided above.

@@ -1,381 +1,417 @@
 cmake_minimum_required (VERSION 3.7)
 cmake_policy(VERSION 3.7...3.20)
-project(sgl)
+
+project (CloudRendering)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/CMake)
 #MESSAGE(STATUS "CMAKE_MODULE_PATH: " ${CMAKE_MODULE_PATH})
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_DEBUG_POSTFIX d)
 
-file(GLOB_RECURSE SOURCES src/*.cpp src/*.c src/*.hpp src/*.h)
+set(CMAKE_CXX_STANDARD 17)
+
+file(GLOB_RECURSE SOURCES src/*.cpp src/*.c src/*.hpp src/*.h Data/Shaders/*.glsl)
+file(GLOB_RECURSE PYTORCH_MODULE_SOURCES src/PyTorch/*.cpp src/PyTorch/*.c src/PyTorch/*.hpp src/PyTorch/*.h)
+file(GLOB_RECURSE PYTORCH_MODULE_SOURCES_CUDA src/PyTorch/*.cu src/PyTorch/*.cuh)
+include_directories(src)
+
+foreach(SOURCE_FILE ${PYTORCH_MODULE_SOURCES})
+    list(REMOVE_ITEM SOURCES ${SOURCE_FILE})
+endforeach()
+
+file(GLOB_RECURSE SHADER_FILES Data/Shaders/*.glsl)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/Data/Shaders" PREFIX "Shaders" FILES ${SHADER_FILES})
 
 if(MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Zc:__cplusplus")
+    # Avoid warning 'IMPORTED_IMPLIB not set for imported target "sgl" configuration "MinSizeRel/RelWithDebInfo".'
+    set(CMAKE_CONFIGURATION_TYPES Debug Release)
 endif()
 
 if(MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -W3 /EHsc")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -W3 /EHsc /Zc:__cplusplus")
 elseif(CMAKE_COMPILER_IS_GNUCXX)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
 endif()
 
-if(MSVC)
-    # Disable "[...] needs to have dll-interface to be used by clients of class [...]".
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /w44251")
-endif()
-if (APPLE)
-    # Disable '-Wnullability-completeness' warnings caused by VMA using '_Nonnull'.
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-nullability-completeness")
-endif()
+option(USE_GTEST "Build the GoogleTest test suites." OFF)
+option(BUILD_PYTORCH_MODULE "Build the PyTorch module." OFF)
 
-option(SUPPORT_OPENGL "Build with OpenGL support" ON)
-option(SUPPORT_VULKAN "Build with Vulkan support" ON)
-option(SUPPORT_CUDA "Build with Vulkan-CUDA interoperability support" ON)
-option(USE_BOOST_LOCALE "Build with Boost::Locale support" OFF)
-option(USE_LIBARCHIVE "Build with libarchive support" ON)
-option(TRACY_ENABLE "Build with Tracy Profiler support" OFF)
+set(DATA_PATH "${CMAKE_SOURCE_DIR}/Data" CACHE PATH "Location of folder 'Data'")
+add_definitions(-DDATA_PATH=\"${DATA_PATH}\")
 
-find_package(OpenGL QUIET)
-find_package(GLEW QUIET)
-if (${SUPPORT_OPENGL})
-    if ((NOT ${OpenGL_FOUND}) OR (NOT ${GLEW_FOUND}))
-        MESSAGE(WARNING "Warning: OpenGL support was enabled, but OpenGL or GLEW were not found. Disabling OpenGL support.")
-    else()
-        MESSAGE(STATUS "OpenGL and GLEW were found. Enabling OpenGL support.")
-    endif()
-endif()
-if ((NOT ${SUPPORT_OPENGL}) OR (NOT ${OpenGL_FOUND}) OR (NOT ${GLEW_FOUND}))
-    file(GLOB_RECURSE OPENGL_SOURCES src/Graphics/OpenGL/*.cpp src/Graphics/OpenGL/*.c src/Graphics/OpenGL/*.h src/Graphics/OpenGL/*.hpp)
-    foreach(source ${OPENGL_SOURCES})
-        list(REMOVE_ITEM SOURCES ${source})
-    endforeach()
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/ImGui/imgui_impl_opengl3.h)
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/ImGui/imgui_impl_opengl3.cpp)
-endif()
-
-find_package(Vulkan QUIET)
-if (${SUPPORT_VULKAN})
-    if (NOT ${Vulkan_FOUND})
-        MESSAGE(WARNING "Warning: Vulkan support was enabled, but Vulkan was not found. Disabling Vulkan support.")
-    else()
-        MESSAGE(STATUS "Vulkan was found. Enabling Vulkan support.")
-    endif()
-endif()
-if ((NOT ${SUPPORT_VULKAN}) OR (NOT ${Vulkan_FOUND}))
-    file(GLOB_RECURSE VULKAN_SOURCES src/Graphics/Vulkan/*.cpp src/Graphics/Vulkan/*.c src/Graphics/Vulkan/*.h src/Graphics/Vulkan/*.hpp)
-    foreach(source ${VULKAN_SOURCES})
-        list(REMOVE_ITEM SOURCES ${source})
-    endforeach()
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/ImGui/imgui_impl_vulkan.h)
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/ImGui/imgui_impl_vulkan.cpp)
-endif()
-
-find_package(OpenGL QUIET)
-find_package(GLEW QUIET)
-if (${SUPPORT_OPENGL} AND ${OpenGL_FOUND} AND ${GLEW_FOUND})
-    # GLEW 2.1.0 added GL_EXT_semaphore, GL_EXT_memory_object, GL_EXT_memory_object_fd, GL_EXT_memory_object_win32.
-    if (GLEW_VERSION)
-        if (${GLEW_VERSION} VERSION_GREATER_EQUAL "2.1.0")
-            set(GLEW_SUPPORTS_EXTERNAL_OBJECTS_EXT ON)
-        else()
-            set(GLEW_SUPPORTS_EXTERNAL_OBJECTS_EXT OFF)
-        endif()
-    else()
-        set(GLEW_SUPPORTS_EXTERNAL_OBJECTS_EXT OFF)
-    endif()
-
-    # vcpkg and MSYS2 GLEW does not set GLEW_VERSION, probably as config mode is used instead of module mode.
-    if (VCPKG_TOOLCHAIN OR MSYS)
-        set(GLEW_SUPPORTS_EXTERNAL_OBJECTS_EXT ON)
-    endif()
-
-    if (NOT ${GLEW_SUPPORTS_EXTERNAL_OBJECTS_EXT})
-        MESSAGE(STATUS "Warning: An old version of GLEW is used (< 2.1.0). Disabling Vulkan interoperability support.")
-        list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Graphics/Vulkan/Utils/Interop.hpp)
-        list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Graphics/Vulkan/Utils/Interop.cpp)
-    endif()
-endif()
-
-if (${SUPPORT_CUDA})
-    if(${CMAKE_VERSION} VERSION_LESS "3.18.0")
-        # https://cmake.org/cmake/help/git-stage/module/FindCUDA.html
-        find_package(CUDA QUIET)
-        if(${CUDA_FOUND})
-            set(USE_CUDA ON)
-        endif()
-    else()
-        # https://cmake.org/cmake/help/git-stage/module/FindCUDAToolkit.html
-        find_package(CUDAToolkit QUIET)
-        if(${CUDAToolkit_FOUND})
-            set(USE_CUDA ON)
-        endif()
-    endif()
-endif()
-if (NOT USE_CUDA)
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Graphics/Vulkan/Utils/DynlinkCuda.hpp)
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Graphics/Vulkan/Utils/InteropCuda.hpp)
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Graphics/Vulkan/Utils/InteropCuda.cpp)
-endif()
-
-if (${USE_LIBARCHIVE})
-    find_package(LibArchive QUIET)
-    if(${LibArchive_FOUND})
-        MESSAGE(STATUS "Found libarchive. Enabling archive file loading support.")
-    else()
-        MESSAGE(STATUS "Could not locate libarchive. Disabling archive file loading support.")
-        list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Utils/File/Archive.hpp)
-        list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Utils/File/Archive.cpp)
-    endif()
-else()
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Utils/File/Archive.hpp)
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Utils/File/Archive.cpp)
-endif()
-
-if (${TRACY_ENABLE})
-    list(APPEND SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/submodules/tracy/TracyClient.cpp)
-endif()
-
-add_library(sgl SHARED ${SOURCES})
-if (WIN32)
-    target_compile_definitions(sgl PRIVATE WIN32)
-endif()
-if (WIN32)
-    set(DLLIMPORT "__declspec(dllimport)")
-    set(DLLEXPORT "__declspec(dllexport)")
-    target_compile_definitions(sgl INTERFACE DLL_OBJECT=${DLLIMPORT})
-    target_compile_definitions(sgl PRIVATE DLL_OBJECT=${DLLEXPORT})
-    target_compile_definitions(sgl INTERFACE IMGUI_API=${DLLIMPORT})
-    target_compile_definitions(sgl PRIVATE IMGUI_API=${DLLEXPORT})
-else()
-    target_compile_definitions(sgl PUBLIC DLL_OBJECT=)
-endif()
-
-if (MSVC)
-	# Disable warnings concerning fopen. Unfortunately, fopen_s is not system-independent.
-    target_compile_definitions(sgl PRIVATE _CRT_SECURE_NO_WARNINGS)
-	
-	# Enable parallel build.
-	target_compile_options(sgl PRIVATE "/MP")
-endif()
-
-if (${TRACY_ENABLE})
-    target_compile_definitions(sgl PUBLIC TRACY_ENABLE)
-    target_compile_definitions(sgl INTERFACE TRACY_IMPORTS)
-    target_compile_definitions(sgl PRIVATE TRACY_EXPORTS)
-    target_include_directories(sgl PRIVATE submodules)
-else()
-    target_include_directories(sgl PRIVATE submodules/fallback)
-endif()
-
-#include_directories(src)
-target_include_directories(sgl PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-        $<INSTALL_INTERFACE:include/sgl> # <prefix>/include/sgl
+set(
+        VPT_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/CloudData.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/MomentUtils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/VolumetricPathTracingPass.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/SuperVoxelGrid.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/OpenExrLoader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Denoiser/Denoiser.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Denoiser/EAWDenoiser.cpp
 )
 
-# Prefer GLVND by default when available.
-if (${CMAKE_VERSION} VERSION_GREATER "3.11")
-    cmake_policy(SET CMP0072 NEW)
+if (${USE_GTEST})
+    set(
+            GTEST_SOURCES
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/VolumetricPathTracingTestData.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/VolumetricPathTracingTestRenderer.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/TestVolumetricPathTracing.cpp
+    )
 endif()
 
-find_package(OpenGL QUIET)
-find_package(GLEW QUIET)
-if (${SUPPORT_OPENGL} AND ${OpenGL_FOUND} AND ${GLEW_FOUND})
-    target_compile_definitions(sgl PUBLIC SUPPORT_OPENGL)
-    target_link_libraries(sgl PRIVATE ${OPENGL_LIBRARIES} GLEW::GLEW)
-    target_include_directories(sgl PRIVATE ${OPENGL_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS})
-
-    if (${GLEW_SUPPORTS_EXTERNAL_OBJECTS_EXT})
-        target_compile_definitions(sgl PUBLIC GLEW_SUPPORTS_EXTERNAL_OBJECTS_EXT)
-    endif()
+if (${BUILD_PYTORCH_MODULE})
+    find_package(Torch QUIET)
+endif()
+if (${BUILD_PYTORCH_MODULE} AND NOT Torch_FOUND)
+    MESSAGE(STATUS "The PyTorch module build was enabled, but PyTorch couldn't be found. Disabling PyTorch module.")
 endif()
 
-if (${SUPPORT_VULKAN} AND ${Vulkan_FOUND})
-    target_compile_definitions(sgl PUBLIC SUPPORT_VULKAN)
-    target_compile_definitions(sgl PUBLIC VK_NO_PROTOTYPES)
-    if (${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.21.0")
-        target_link_libraries(sgl PRIVATE Vulkan::Headers)
-    endif()
-    if(VCPKG_TOOLCHAIN)
-        # Fix for CMake generators with debug/release configuration available at the same time (e.g., Visual Studio).
-        # For more details see: https://github.com/Microsoft/vcpkg/issues/2979
-        find_path(VCPKG_INSTALL_ROOT_DIR include/spirv-tools/libspirv.h)
-        find_path(VCPKG_INCLUDE_DIR spirv-tools/libspirv.h)
-        set(VCPKG_DEBUG_LIB_DIR ${VCPKG_INSTALL_ROOT_DIR}/debug/lib)
-        set(VCPKG_RELEASE_LIB_DIR ${VCPKG_INSTALL_ROOT_DIR}/lib)
 
-        find_package(glslang CONFIG REQUIRED)
-
-        find_library(SPIRV_TOOLS_LIB_DEBUG SPIRV-Tools
-                PATHS ${VCPKG_DEBUG_LIB_DIR}
-                NO_DEFAULT_PATH)
-        find_library(SPIRV_TOOLS_LIB_RELEASE SPIRV-Tools
-                PATHS ${VCPKG_RELEASE_LIB_DIR}
-                NO_DEFAULT_PATH)
-        add_library(spirvtools STATIC IMPORTED)
-        set_target_properties(spirvtools PROPERTIES
-                IMPORTED_LOCATION ${SPIRV_TOOLS_LIB_DEBUG}
-                IMPORTED_LOCATION_DEBUG ${SPIRV_TOOLS_LIB_DEBUG}
-                IMPORTED_LOCATION_RELEASE ${SPIRV_TOOLS_LIB_RELEASE}
-                INTERFACE_INCLUDE_DIRECTORIES "${VCPKG_INCLUDE_DIR}")
-
-        find_library(SPIRV_TOOLS_OPT_LIB_DEBUG SPIRV-Tools-opt
-                PATHS ${VCPKG_DEBUG_LIB_DIR}
-                NO_DEFAULT_PATH)
-        find_library(SPIRV_TOOLS_OPT_LIB_RELEASE SPIRV-Tools-opt
-                PATHS ${VCPKG_RELEASE_LIB_DIR}
-                NO_DEFAULT_PATH)
-        add_library(spirvtoolsopt STATIC IMPORTED)
-        set_target_properties(spirvtoolsopt PROPERTIES
-                IMPORTED_LOCATION ${SPIRV_TOOLS_OPT_LIB_DEBUG}
-                IMPORTED_LOCATION_DEBUG ${SPIRV_TOOLS_OPT_LIB_DEBUG}
-                IMPORTED_LOCATION_RELEASE ${SPIRV_TOOLS_OPT_LIB_RELEASE}
-                INTERFACE_INCLUDE_DIRECTORIES "${VCPKG_INCLUDE_DIR}")
-
-        find_library(SPIRV_TOOLS_LINK_LIB_DEBUG SPIRV-Tools-link
-                PATHS ${VCPKG_DEBUG_LIB_DIR}
-                NO_DEFAULT_PATH)
-        find_library(SPIRV_TOOLS_LINK_LIB_RELEASE SPIRV-Tools-link
-                PATHS ${VCPKG_RELEASE_LIB_DIR}
-                NO_DEFAULT_PATH)
-
-        find_library(SHADERC_LIB_DEBUG shaderc
-                PATHS ${VCPKG_DEBUG_LIB_DIR}
-                NO_DEFAULT_PATH)
-        find_library(SHADERC_LIB_RELEASE shaderc
-                PATHS ${VCPKG_RELEASE_LIB_DIR}
-                NO_DEFAULT_PATH)
-        add_library(shaderc STATIC IMPORTED)
-        set_target_properties(shaderc PROPERTIES
-                IMPORTED_LOCATION ${SHADERC_LIB_DEBUG}
-                IMPORTED_LOCATION_DEBUG ${SHADERC_LIB_DEBUG}
-                IMPORTED_LOCATION_RELEASE ${SHADERC_LIB_RELEASE}
-                INTERFACE_INCLUDE_DIRECTORIES "${VCPKG_INCLUDE_DIR}")
-
-        find_library(SHADERC_UTIL_LIB_DEBUG shaderc_util
-                PATHS ${VCPKG_DEBUG_LIB_DIR}
-                NO_DEFAULT_PATH)
-        find_library(SHADERC_UTIL_LIB_RELEASE shaderc_util
-                PATHS ${VCPKG_RELEASE_LIB_DIR}
-                NO_DEFAULT_PATH)
-        add_library(shaderc_util STATIC IMPORTED)
-        set_target_properties(shaderc_util PROPERTIES
-                IMPORTED_LOCATION ${SHADERC_UTIL_LIB_DEBUG}
-                IMPORTED_LOCATION_DEBUG ${SHADERC_UTIL_LIB_DEBUG}
-                IMPORTED_LOCATION_RELEASE ${SHADERC_UTIL_LIB_RELEASE}
-                INTERFACE_INCLUDE_DIRECTORIES "${VCPKG_INCLUDE_DIR}")
-        target_link_libraries(spirvtoolsopt INTERFACE spirvtools)
-        target_link_libraries(shaderc INTERFACE spirvtoolsopt glslang OSDependent OGLCompiler HLSL SPIRV MachineIndependent)
-
-        target_link_libraries(sgl PRIVATE shaderc shaderc_util)
-    else()
-        find_package(PkgConfig REQUIRED)
-        pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
-        target_link_libraries(sgl PRIVATE PkgConfig::SHADERC)
-    endif()
+if (UNIX AND NOT APPLE)
+    find_package(PkgConfig REQUIRED)
 endif()
 
-if (${USE_CUDA})
-    target_compile_definitions(sgl INTERFACE SUPPORT_CUDA_INTEROP)
-    get_target_property(SGL_INTERFACE_COMPILE_DEFINITIONS sgl INTERFACE_COMPILE_DEFINITIONS)
-    if(${CUDAToolkit_FOUND})
-        MESSAGE(STATUS "Found CUDA. Using includes from: " ${CUDAToolkit_INCLUDE_DIRS})
-        target_include_directories(sgl PUBLIC ${CUDAToolkit_INCLUDE_DIRS})
-    elseif(${CUDA_FOUND})
-        MESSAGE(STATUS "Found CUDA. Using includes from: " ${CUDA_INCLUDE_DIRS})
-        target_include_directories(sgl PUBLIC ${CUDA_INCLUDE_DIRS})
-    endif()
-else()
-    MESSAGE(STATUS "CUDA Toolkit was not found. Disabling CUDA-Vulkan interoperability support.")
-endif()
-
-if (USE_BOOST_LOCALE)
-    target_compile_definitions(sgl PRIVATE USE_BOOST_LOCALE)
-    find_package(Boost COMPONENTS system filesystem locale REQUIRED)
-else()
-    find_package(Boost COMPONENTS system filesystem REQUIRED)
-endif()
-
-# Because of case sensitivity bug when glm and TinyXML2 call find_package_handle_standard_args.
 set(FPHSA_NAME_MISMATCHED TRUE)
 if(VCPKG_TOOLCHAIN)
     find_package(SDL2 CONFIG REQUIRED)
 else()
     find_package(SDL2 REQUIRED)
 endif()
-if(VCPKG_TOOLCHAIN)
-    find_package(sdl2-image CONFIG REQUIRED)
-else()
-    find_package(SDL2_image REQUIRED)
-endif()
-find_package(glm REQUIRED)
+
+find_package(sgl REQUIRED)
+find_package(Boost COMPONENTS system filesystem REQUIRED)
 set(FPHSA_NAME_MISMATCHED TRUE)
 if(VCPKG_TOOLCHAIN)
     find_package(tinyxml2 CONFIG REQUIRED)
+    find_package(jsoncpp CONFIG REQUIRED)
 else()
     find_package(TinyXML2 REQUIRED)
-endif()
-find_package(PNG REQUIRED)
-if((${CMAKE_GENERATOR} STREQUAL "MinGW Makefiles") OR (${CMAKE_GENERATOR} STREQUAL "MSYS Makefiles"))
-    target_link_libraries(sgl PUBLIC mingw32)
-endif()
-target_link_libraries(sgl PRIVATE PNG::PNG)
-if(VCPKG_TOOLCHAIN)
-    if(TARGET SDL2::SDL2-static)
-        target_link_libraries(sgl PUBLIC SDL2::SDL2-static)
-    else()
-        target_link_libraries(sgl PUBLIC SDL2::SDL2)
+    find_package(jsoncpp QUIET)
+    if (NOT jsoncpp_FOUND)
+        pkg_check_modules(JSONCPP jsoncpp)
     endif()
-else()
-    target_link_libraries(sgl PUBLIC SDL2::Core)
-endif()
-if(VCPKG_TOOLCHAIN)
-    target_link_libraries(sgl PRIVATE SDL2::SDL2_image)
-else()
-    target_link_libraries(sgl PRIVATE SDL2::Image)
 endif()
 
-if(VCPKG_TOOLCHAIN)
-    target_link_libraries(sgl PRIVATE tinyxml2::tinyxml2)
-else()
-    target_link_libraries(sgl PRIVATE ${TINYXML2_LIBRARIES})
+get_target_property(SGL_INTERFACE_COMPILE_DEFINITIONS sgl INTERFACE_COMPILE_DEFINITIONS)
+if ("SUPPORT_VULKAN" IN_LIST SGL_INTERFACE_COMPILE_DEFINITIONS)
+	set(SUPPORT_VULKAN ON)
 endif()
-target_include_directories(sgl PRIVATE ${TINYXML2_INCLUDE_DIR})
 
-IF (NOT WIN32 AND NOT (UNIX AND NOT APPLE))
-    find_package(efsw QUIET)
-    if(${efsw_FOUND})
-        if(UNIX AND NOT APPLE AND ("${efsw_DIR}" MATCHES "/home.*"))
-            set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+if ("SUPPORT_CUDA_INTEROP" IN_LIST SGL_INTERFACE_COMPILE_DEFINITIONS)
+    if (NOT OptiX_INSTALL_DIR)
+        if (WIN32 AND NOT OptiX_INSTALL_DIR)
+            file(GLOB OPTIX_DIR_LIST "C:/ProgramData/NVIDIA Corporation/OptiX*")
+            if (OPTIX_DIR_LIST)
+                list(LENGTH OPTIX_DIR_LIST OPTIX_DIR_LIST_LEN)
+                math(EXPR OPTIX_DIR_LIST_LAST "${OPTIX_DIR_LIST_LEN} - 1")
+                list(GET OPTIX_DIR_LIST ${OPTIX_DIR_LIST_LAST} OPTIX_DIR)
+            endif()
+        else()
+            file(GLOB OPTIX_DIR_LIST "$ENV{HOME}/nvidia/NVIDIA-OptiX-SDK*")
+            if (OPTIX_DIR_LIST)
+                list(LENGTH OPTIX_DIR_LIST OPTIX_DIR_LIST_LEN)
+                math(EXPR OPTIX_DIR_LIST_LAST "${OPTIX_DIR_LIST_LEN} - 1")
+                list(GET OPTIX_DIR_LIST ${OPTIX_DIR_LIST_LAST} OPTIX_DIR)
+            endif()
         endif()
-        file(APPEND "${CMAKE_BINARY_DIR}/sglConfig.cmake.tmp" "\nfind_package(efsw REQUIRED)\n")
+        if (OPTIX_DIR)
+            set(OptiX_INSTALL_DIR "${OPTIX_DIR}" CACHE PATH "Path to OptiX installation.")
+        endif()
     endif()
-endif()
-
-if(${GLM_FOUND})
-    target_compile_definitions(sgl PUBLIC USE_GLM)
-endif()
-
-if (${USE_LIBARCHIVE})
-    if(${LibArchive_FOUND})
-        add_definitions(-DUSE_LIBARCHIVE)
-        target_link_libraries(sgl PRIVATE ${LibArchive_LIBRARIES})
-        target_include_directories(sgl PRIVATE ${LibArchive_INCLUDE_DIRS})
+    if (OptiX_INSTALL_DIR)
+        list(APPEND CMAKE_MODULE_PATH ${OptiX_INSTALL_DIR}/SDK/CMake)
     endif()
-endif()
-
-target_link_libraries(sgl PRIVATE ${Boost_LIBRARIES})
-target_include_directories(sgl PRIVATE ${Boost_INCLUDE_DIR} ${GLM_INCLUDE_DIR})
-
-if(NOT WIN32 AND NOT (UNIX AND NOT APPLE))
-    if(${efsw_FOUND})
-        add_definitions(-DUSE_EFSW)
-        target_link_libraries(sgl PRIVATE efsw::efsw)
+    find_package(OptiX QUIET)
+    if (OptiX_FOUND OR OptiX_INCLUDE)
+        set(SUPPORT_OPTIX ON)
+        MESSAGE(STATUS "NVIDIA OptiX found. Enabling OptiX denoiser support.")
+        MESSAGE(STATUS "OptiX_INSTALL_DIR: " ${OptiX_INSTALL_DIR})
     else()
-        MESSAGE(STATUS "Could not locate esfw. Disabling filesystem watches.")
+        MESSAGE(STATUS "OptiX couldn't be found. Disabling OptiX denoiser support.")
+    endif()
+else()
+    MESSAGE(STATUS "sgl was not built with CUDA interoperability support. Disabling OptiX denoiser support.")
+endif()
+if (NOT SUPPORT_OPTIX)
+    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Denoiser/OptixVptDenoiser.hpp)
+    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Denoiser/OptixVptDenoiser.cpp)
+endif()
+
+find_package(Imath CONFIG QUIET)
+if (NOT TARGET Imath::Imath)
+    find_package(IlmBase CONFIG QUIET)
+endif()
+find_package(OpenEXR CONFIG QUIET)
+if (NOT OpenEXR_FOUND AND NOT Imath_FOUND AND UNIX AND NOT APPLE)
+    set(USE_OPENEXR_PKGCONFIG TRUE)
+    pkg_check_modules(OpenEXR OpenEXR QUIET)
+    pkg_check_modules(IlmBase IlmBase QUIET)
+else()
+    set(USE_OPENEXR_PKGCONFIG FALSE)
+endif()
+if (OpenEXR_FOUND AND (Imath_FOUND OR IlmBase_FOUND))
+    if (${OpenEXR_VERSION} VERSION_LESS "2.3.0")
+        MESSAGE(STATUS "Found OpenEXR version ${OpenEXR_VERSION} is too old. Please upgrade to version >= 2.3.0.")
+    else()
+        MESSAGE(STATUS "OpenEXR ${OpenEXR_VERSION} found. Enabling OpenEXR image loading support.")
+        set(SUPPORT_OPENEXR true)
+    endif()
+else()
+    MESSAGE(STATUS "OpenEXR not found. Disabling OpenEXR image loading support.")
+endif()
+if (NOT SUPPORT_OPENEXR)
+    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/OpenExrLoader.hpp)
+    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/OpenExrLoader.cpp)
+    list(REMOVE_ITEM VPT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/OpenExrLoader.hpp)
+    list(REMOVE_ITEM VPT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/OpenExrLoader.cpp)
+endif()
+
+
+if(WIN32)
+    add_executable(CloudRendering WIN32 ${SOURCES})
+else()
+    add_executable(CloudRendering ${SOURCES})
+endif()
+
+if (${USE_GTEST})
+    include(GoogleTest)
+    enable_testing()
+    add_executable(CloudRendering_test ${GTEST_SOURCES} ${VPT_SOURCES})
+    target_link_libraries(CloudRendering_test PRIVATE gtest gtest_main)
+    target_link_libraries(CloudRendering_test PRIVATE sgl ${Boost_LIBRARIES})
+    target_include_directories(CloudRendering_test PRIVATE ${sgl_INCLUDES} ${Boost_INCLUDE_DIR})
+    gtest_add_tests(TARGET CloudRendering_test)
+endif()
+
+if (${BUILD_PYTORCH_MODULE} AND Torch_FOUND)
+    set(PYTORCH_MODULE_ENABLED TRUE)
+    if ("SUPPORT_CUDA_INTEROP" IN_LIST SGL_INTERFACE_COMPILE_DEFINITIONS)
+        if(${CMAKE_VERSION} VERSION_LESS "3.18.0")
+            # https://cmake.org/cmake/help/git-stage/module/FindCUDA.html
+            find_package(CUDA QUIET)
+            add_library(vpt SHARED ${PYTORCH_MODULE_SOURCES} ${PYTORCH_MODULE_SOURCES_CUDA} ${VPT_SOURCES} ${SHADER_FILES})
+        else()
+            # https://cmake.org/cmake/help/git-stage/module/FindCUDAToolkit.html
+            find_package(CUDAToolkit QUIET)
+        endif()
+    else()
+        MESSAGE(STATUS "sgl was not built with CUDA interoperability support. Disabling PyTorch module CUDA support.")
+    endif()
+
+    if(${CUDAToolkit_FOUND} OR ${CUDA_FOUND})
+        add_library(vpt SHARED ${PYTORCH_MODULE_SOURCES} ${PYTORCH_MODULE_SOURCES_CUDA} ${VPT_SOURCES} ${SHADER_FILES})
+        enable_language(CUDA)
+        set_target_properties(vpt PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+        target_compile_definitions(vpt PRIVATE SUPPORT_CUDA_INTEROP)
+    else()
+        add_library(vpt SHARED ${PYTORCH_MODULE_SOURCES} ${VPT_SOURCES} ${SHADER_FILES})
+    endif()
+
+    if(${CUDAToolkit_FOUND})
+        # https://en.wikipedia.org/wiki/CUDA
+        # https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#compute-capability
+        if (${CUDAToolkit_VERSION} VERSION_GREATER_EQUAL "11.1")
+            set_property(TARGET vpt PROPERTY CUDA_ARCHITECTURES 61 75 86)
+        elseif (${CUDAToolkit_VERSION} VERSION_GREATER_EQUAL "10.0")
+            set_property(TARGET vpt PROPERTY CUDA_ARCHITECTURES 61 75)
+        else()
+            set_property(TARGET vpt PROPERTY CUDA_ARCHITECTURES 61)
+        endif()
+        set_target_properties(vpt PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+        MESSAGE(STATUS "CUDA toolkit version: " ${CUDAToolkit_VERSION})
+    endif()
+
+    target_link_libraries(vpt PRIVATE ${TORCH_LIBRARIES})
+    target_include_directories(vpt PRIVATE ${TORCH_INCLUDE_DIR})
+    target_link_libraries(vpt PRIVATE sgl ${Boost_LIBRARIES})
+    target_include_directories(vpt PRIVATE ${sgl_INCLUDES} ${Boost_INCLUDE_DIR})
+    install(
+            TARGETS vpt
+            ARCHIVE DESTINATION modules
+            LIBRARY DESTINATION modules
+            RUNTIME DESTINATION bin
+    )
+endif()
+
+
+# Hide console window in release build on Windows/MSVC.
+# See: https://gitlab.kitware.com/cmake/community/-/wikis/doc/cmake/recipe/VSConfigSpecificSettings
+if(MSVC)
+    set_target_properties(CloudRendering PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE")
+    set_target_properties(CloudRendering PROPERTIES COMPILE_DEFINITIONS_DEBUG "_CONSOLE")
+    set_target_properties(CloudRendering PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:CONSOLE")
+    set_target_properties(CloudRendering PROPERTIES COMPILE_DEFINITIONS_RELWITHDEBINFO "_CONSOLE")
+    set_target_properties(CloudRendering PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS")
+    set_target_properties(CloudRendering PROPERTIES LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS")
+endif()
+
+if(MSVC)
+    #target_compile_definitions(CloudRendering PRIVATE /wd4251)
+    set_target_properties(CloudRendering PROPERTIES COMPILE_FLAGS "/wd4251")
+endif()
+
+if (${SUPPORT_OPTIX})
+    set(CMAKE_MODULE_PATH ${OptiX_INSTALL_DIR}/SDK/CMake ${CMAKE_MODULE_PATH})
+    find_package(OptiX QUIET)
+    if (OptiX_FOUND OR OptiX_INCLUDE)
+        target_compile_definitions(CloudRendering PRIVATE SUPPORT_OPTIX)
+        target_include_directories(CloudRendering PRIVATE ${OptiX_INCLUDE})
+        if(UNIX AND NOT APPLE)
+            target_link_libraries(CloudRendering PRIVATE dl)
+        endif()
+		if (MSYS)
+		    # GetProcAddress in optix_stubs.h performs no function pointer conversion.
+		    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
+			# Compensate for "#pragma comment(lib, "Cfgmgr32.lib")" not working with MinGW.
+            target_link_libraries(LineVis PRIVATE cfgmgr32)
+		endif()
     endif()
 endif()
+
+if((${CMAKE_GENERATOR} STREQUAL "MinGW Makefiles") OR (${CMAKE_GENERATOR} STREQUAL "MSYS Makefiles"))
+    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mwindows")
+    target_link_libraries(CloudRendering PUBLIC mingw32)
+endif()
+if(VCPKG_TOOLCHAIN)
+    target_link_libraries(CloudRendering PUBLIC SDL2::SDL2main)
+else()
+    target_link_libraries(CloudRendering PUBLIC SDL2::Main)
+endif()
+
+find_package(Vulkan REQUIRED)
+if (${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.21.0")
+    target_link_libraries(CloudRendering PUBLIC Vulkan::Headers)
+endif()
+
+target_link_libraries(CloudRendering PUBLIC sgl ${Boost_LIBRARIES})
+include_directories(${sgl_INCLUDES} ${Boost_INCLUDE_DIR})
+
+if(VCPKG_TOOLCHAIN)
+    target_link_libraries(CloudRendering PRIVATE tinyxml2::tinyxml2)
+else()
+    target_link_libraries(CloudRendering PRIVATE ${TINYXML2_LIBRARIES})
+endif()
+target_include_directories(CloudRendering PRIVATE ${sgl_INCLUDES} ${TINYXML2_INCLUDE_DIR})
+
+if (JSONCPP_LIBRARIES)
+    target_link_libraries(CloudRendering PRIVATE ${JSONCPP_LIBRARIES})
+    if (${USE_GTEST})
+        target_link_libraries(CloudRendering_test PRIVATE ${JSONCPP_LIBRARIES})
+    endif()
+    if (${PYTORCH_MODULE_ENABLED})
+        target_link_libraries(vpt PRIVATE ${JSONCPP_LIBRARIES})
+    endif()
+endif()
+if (TARGET jsoncpp_lib)
+    get_target_property(jsoncpp_INCLUDES jsoncpp_lib INTERFACE_INCLUDE_DIRECTORIES)
+    target_link_libraries(CloudRendering PRIVATE jsoncpp_lib)
+    if (${USE_GTEST})
+        target_link_libraries(CloudRendering_test PRIVATE jsoncpp_lib)
+    endif()
+    if (${PYTORCH_MODULE_ENABLED})
+        target_link_libraries(vpt PRIVATE jsoncpp_lib)
+    endif()
+elseif(TARGET jsoncpp_static)
+    get_target_property(jsoncpp_INCLUDES jsoncpp_static INTERFACE_INCLUDE_DIRECTORIES)
+    target_link_libraries(CloudRendering PRIVATE jsoncpp_static)
+    if (${USE_GTEST})
+        target_link_libraries(CloudRendering_test PRIVATE jsoncpp_static)
+    endif()
+    if (${PYTORCH_MODULE_ENABLED})
+        target_link_libraries(vpt PRIVATE jsoncpp_static)
+    endif()
+endif()
+if (TARGET jsoncpp_object)
+    target_link_libraries(CloudRendering PRIVATE jsoncpp_object)
+    if (${USE_GTEST})
+        target_link_libraries(CloudRendering_test PRIVATE jsoncpp_object)
+    endif()
+    if (${PYTORCH_MODULE_ENABLED})
+        target_link_libraries(vpt PRIVATE jsoncpp_object)
+    endif()
+endif()
+target_include_directories(CloudRendering PRIVATE ${jsoncpp_INCLUDES})
+if (${USE_GTEST})
+    target_include_directories(CloudRendering_test PRIVATE ${jsoncpp_INCLUDES})
+endif()
+if (${PYTORCH_MODULE_ENABLED})
+    target_include_directories(vpt PRIVATE ${jsoncpp_INCLUDES})
+endif()
+
+if (SUPPORT_OPENEXR)
+    if (${USE_OPENEXR_PKGCONFIG})
+        if (OpenEXR_FOUND)
+            target_link_libraries(CloudRendering PRIVATE ${OpenEXR_LIBRARIES})
+            if (${USE_GTEST})
+                target_link_libraries(CloudRendering_test PRIVATE ${OpenEXR_LIBRARIES})
+            endif()
+            if (${PYTORCH_MODULE_ENABLED})
+                target_link_libraries(vpt PRIVATE ${OpenEXR_LIBRARIES})
+            endif()
+        endif()
+        if (IlmBase_FOUND)
+            target_link_libraries(CloudRendering PRIVATE ${IlmBase_LIBRARIES})
+            if (${USE_GTEST})
+                target_link_libraries(CloudRendering_test PRIVATE ${IlmBase_LIBRARIES})
+            endif()
+            if (${PYTORCH_MODULE_ENABLED})
+                target_link_libraries(vpt PRIVATE ${IlmBase_LIBRARIES})
+            endif()
+        endif()
+    else()
+        target_link_libraries(
+                CloudRendering PRIVATE
+                # For OpenEXR/Imath 3.x:
+                $<$<TARGET_EXISTS:OpenEXR::OpenEXR>:OpenEXR::OpenEXR>
+                $<$<TARGET_EXISTS:Imath::Imath>:Imath::Imath>
+                $<$<TARGET_EXISTS:Imath::Half>:Imath::Half>
+                # For OpenEXR 2.4/2.5:
+                $<$<TARGET_EXISTS:OpenEXR::IlmImf>:OpenEXR::IlmImf>
+                $<$<TARGET_EXISTS:IlmBase::Imath>:IlmBase::Imath>
+                $<$<TARGET_EXISTS:IlmBase::Half>:IlmBase::Half>
+                $<$<TARGET_EXISTS:IlmBase::IlmThread>:IlmBase::IlmThread>
+                $<$<TARGET_EXISTS:IlmBase::Iex>:IlmBase::Iex>
+        )
+        if (${USE_GTEST})
+            target_link_libraries(
+                    CloudRendering_test PRIVATE
+                    # For OpenEXR/Imath 3.x:
+                    $<$<TARGET_EXISTS:OpenEXR::OpenEXR>:OpenEXR::OpenEXR>
+                    $<$<TARGET_EXISTS:Imath::Imath>:Imath::Imath>
+                    $<$<TARGET_EXISTS:Imath::Half>:Imath::Half>
+                    # For OpenEXR 2.4/2.5:
+                    $<$<TARGET_EXISTS:OpenEXR::IlmImf>:OpenEXR::IlmImf>
+                    $<$<TARGET_EXISTS:IlmBase::Imath>:IlmBase::Imath>
+                    $<$<TARGET_EXISTS:IlmBase::Half>:IlmBase::Half>
+                    $<$<TARGET_EXISTS:IlmBase::IlmThread>:IlmBase::IlmThread>
+                    $<$<TARGET_EXISTS:IlmBase::Iex>:IlmBase::Iex>
+            )
+        endif()
+        if (${PYTORCH_MODULE_ENABLED})
+            target_link_libraries(
+                    vpt PRIVATE
+                    # For OpenEXR/Imath 3.x:
+                    $<$<TARGET_EXISTS:OpenEXR::OpenEXR>:OpenEXR::OpenEXR>
+                    $<$<TARGET_EXISTS:Imath::Imath>:Imath::Imath>
+                    $<$<TARGET_EXISTS:Imath::Half>:Imath::Half>
+                    # For OpenEXR 2.4/2.5:
+                    $<$<TARGET_EXISTS:OpenEXR::IlmImf>:OpenEXR::IlmImf>
+                    $<$<TARGET_EXISTS:IlmBase::Imath>:IlmBase::Imath>
+                    $<$<TARGET_EXISTS:IlmBase::Half>:IlmBase::Half>
+                    $<$<TARGET_EXISTS:IlmBase::IlmThread>:IlmBase::IlmThread>
+                    $<$<TARGET_EXISTS:IlmBase::Iex>:IlmBase::Iex>
+            )
+        endif()
+    endif()
+    target_compile_definitions(CloudRendering PRIVATE SUPPORT_OPENEXR)
+    if (${USE_GTEST})
+        target_compile_definitions(CloudRendering_test PRIVATE SUPPORT_OPENEXR)
+    endif()
+    if (${PYTORCH_MODULE_ENABLED})
+        target_compile_definitions(vpt PRIVATE SUPPORT_OPENEXR)
+    endif()
+endif()
+
 
 # According to https://devblogs.microsoft.com/cppblog/improved-openmp-support-for-cpp-in-visual-studio/,
 # support for LLVM OpenMP was added with Visual Studio 2019 version 16.9. According to
@@ -401,108 +437,10 @@ if(MSVC)
             set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /w44005")
         endif()
     endif()
-elseif(NOT TARGET OpenMP::OpenMP_CXX)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
 else()
-    target_link_libraries(sgl PUBLIC OpenMP::OpenMP_CXX)
-endif()
-
-
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/sglConfig.cmake.in" CONTENTS)
-file(WRITE "${CMAKE_BINARY_DIR}/sglConfig.cmake.tmp" "${CONTENTS}")
-if(${efsw_FOUND})
-    file(APPEND "${CMAKE_BINARY_DIR}/sglConfig.cmake.tmp" "\nfind_package(efsw REQUIRED)\n")
-endif()
-
-
-# For creating sglConfig.cmake.in
-include(GenerateExportHeader)
-generate_export_header(sgl)
-install(
-        TARGETS sgl EXPORT sglTargets
-        ARCHIVE DESTINATION lib
-        LIBRARY DESTINATION lib
-        RUNTIME DESTINATION bin
-        INCLUDES DESTINATION include/sgl
-)
-
-if (${TRACY_ENABLE} AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/submodules/tracy/Tracy.hpp")
-    install(
-            DIRECTORY ${CMAKE_SOURCE_DIR}/submodules/tracy/
-            DESTINATION include/sgl/tracy
-            FILES_MATCHING PATTERN "*.h*"
-            PATTERN ".github" EXCLUDE
-            PATTERN ".vscode" EXCLUDE
-            PATTERN "capture" EXCLUDE
-            PATTERN "csvexport" EXCLUDE
-            PATTERN "doc" EXCLUDE
-            PATTERN "examples" EXCLUDE
-            PATTERN "extra" EXCLUDE
-            PATTERN "getopt" EXCLUDE
-            PATTERN "icon" EXCLUDE
-            PATTERN "imgui" EXCLUDE
-            PATTERN "import-chrome" EXCLUDE
-            PATTERN "libbacktrace" EXCLUDE
-            PATTERN "library" EXCLUDE
-            PATTERN "manual" EXCLUDE
-            PATTERN "nfd" EXCLUDE
-            PATTERN "profiler" EXCLUDE
-            PATTERN "server" EXCLUDE
-            PATTERN "test" EXCLUDE
-            PATTERN "update" EXCLUDE
-            PATTERN "vcpkg" EXCLUDE
-            PATTERN "zstd" EXCLUDE
-    )
-else()
-    # If the submodule does not exist or Tracy was not enabled, add empty compile definitions as a fallback.
-    if (NOT ${TRACY_ENABLE} OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/submodules/tracy/Tracy.hpp")
-        install(
-                DIRECTORY ${CMAKE_SOURCE_DIR}/submodules/fallback/tracy/
-                DESTINATION include/sgl/tracy
-                FILES_MATCHING PATTERN "*.h*"
-        )
+    if(OPENMP_FOUND)
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
     endif()
-endif()
-
-install(
-        DIRECTORY ${CMAKE_SOURCE_DIR}/src/
-        DESTINATION include/sgl
-        FILES_MATCHING PATTERN "*.h*"
-)
-
-include(CMakePackageConfigHelpers)
-#write_basic_package_version_file()
-
-export(
-        EXPORT sglTargets
-        FILE "${CMAKE_CURRENT_BINARY_DIR}/sgl/sglTargets.cmake"
-)
-configure_file(
-        "${CMAKE_BINARY_DIR}/sglConfig.cmake.tmp"
-        "${CMAKE_CURRENT_BINARY_DIR}/sgl/sglConfig.cmake"
-        COPYONLY
-)
-
-#if(WIN32 AND NOT CYGWIN)
-#    set(ConfigPackageLocation CMake)
-#else()
-#    set(ConfigPackageLocation lib/cmake/sgl)
-#endif()
-set(ConfigPackageLocation lib/cmake/sgl)
-install(
-        EXPORT sglTargets
-        FILE sglTargets.cmake
-        DESTINATION ${ConfigPackageLocation}
-)
-install(
-        FILES "${CMAKE_CURRENT_BINARY_DIR}/sgl/sglConfig.cmake"
-        DESTINATION ${ConfigPackageLocation}
-)
-if (WIN32 AND ((CMAKE_CXX_COMPILER_ID STREQUAL "MSVC") OR (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")))
-    install(
-            FILES $<TARGET_PDB_FILE:sgl>
-            DESTINATION bin OPTIONAL
-    )
 endif()
