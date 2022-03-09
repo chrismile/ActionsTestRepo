@@ -1,28 +1,8 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
-    "name": "linevis",
-    "version": "0.1.0",
+    "name": "actionsrepotest",
+    "version": "0.1.0-dev",
     "dependencies": [
-        "boost-core",
-        "boost-algorithm",
-        "boost-filesystem",
-        {
-            "name": "boost-interprocess",
-            "platform": "windows"
-        },
-        {
-            "name": "sdl2",
-            "features": [ "vulkan" ]
-        },
-        "tinyxml2",
-        "glew",
-        "vulkan-headers",
-        "glm",
-        "eigen3",
-        "jsoncpp",
-        "python3",
-        "cppzmq",
-        "netcdf-c",
-        "openexr"
+        "cppzmq"
     ]
 }
