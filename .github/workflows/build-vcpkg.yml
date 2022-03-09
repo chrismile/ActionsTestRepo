@@ -96,6 +96,11 @@ jobs:
         elif [ "$RUNNER_OS" == "Windows" ]; then
           export VULKAN_SDK="C:/VulkanSDK/$(ls C:/VulkanSDK)"
         elif [ "$RUNNER_OS" == "macOS" ]; then
+          ls -al "~/"
+          ls -al "/Users/runner"
+          ls -al "/Users/runner/VulkanSDK"
+          ls -al "/Users/runner/VulkanSDK/1.3.204.1"
+          ls "/Users/runner/VulkanSDK/1.3.204.1"
           ls "~/VulkanSDK/$(ls ~/VulkanSDK)"
           source "~/VulkanSDK/$(ls ~/VulkanSDK)/setup-env.sh"
         fi
