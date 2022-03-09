@@ -100,9 +100,9 @@ jobs:
           ls -al "/Users/runner/VulkanSDK"
           ls -al "/Users/runner/VulkanSDK/1.3.204.1"
           ls "/Users/runner/VulkanSDK/1.3.204.1"
-          ls "~/VulkanSDK"
-          ls "~/VulkanSDK/$(ls ~/VulkanSDK)"
-          source "~/VulkanSDK/$(ls ~/VulkanSDK)/setup-env.sh"
+          ls "$HOME/VulkanSDK"
+          ls "$HOME/VulkanSDK/$(ls ~/VulkanSDK)"
+          source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
         fi
         cmake -B "${{github.workspace}}/build" -DCMAKE_TOOLCHAIN_FILE="${{env.VCPKG_ROOT}}/scripts/buildsystems/vcpkg.cmake" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DVCPKG_TARGET_TRIPLET=${{env.VCPKG_DEFAULT_TRIPLET}}
 
