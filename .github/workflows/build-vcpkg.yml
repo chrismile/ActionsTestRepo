@@ -2,12 +2,11 @@ name: Build using vcpkg
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
 
 env:
-  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
   BUILD_TYPE: Release
 
 jobs:
@@ -15,10 +14,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, windows-2022, macos-latest]
+        os: [ macos-latest ]
 
     runs-on: ${{ matrix.os }}
-    name: ${{ matrix.os }}-${{ github.workflow }}
+    name: "${{ github.workflow }}: ${{ matrix.os }}"
 
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
@@ -78,6 +77,7 @@ jobs:
       uses: lukka/run-vcpkg@v10
       with:
         vcpkgGitCommitId: 'be5c4ef68b51142ba705f0678b45d284977de677'
+        #doNotCacheOnWorkflowFailure: true
 
     - name: Create custom vcpkg triplet
       run: |
@@ -86,8 +86,6 @@ jobs:
 
     - name: Configure CMake
       shell: bash
-      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
-      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
       run: |
         if [ "$RUNNER_OS" == "Linux" ]; then
           export VULKAN_SDK="/usr"
@@ -99,7 +97,7 @@ jobs:
         cmake -B "${{github.workspace}}/build" -DCMAKE_TOOLCHAIN_FILE="${{env.VCPKG_ROOT}}/scripts/buildsystems/vcpkg.cmake" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DVCPKG_TARGET_TRIPLET=${{env.VCPKG_DEFAULT_TRIPLET}}
 
     - name: Build
-      run: cmake --build "${{github.workspace}}/build" --config ${{env.BUILD_TYPE}}
+      run: cmake --build "${{github.workspace}}/build" --config ${{env.BUILD_TYPE}} --parallel 4
 
     - name: Remove symbolic links before caching (Windows only)
       if: runner.os == 'Windows'
