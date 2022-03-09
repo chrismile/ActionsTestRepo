@@ -39,6 +39,14 @@ where cmake >NUL 2>&1 || echo cmake was not found but is required to build the p
 if not exist .\third_party\ mkdir .\third_party\
 pushd third_party
 
+if not exist .\submodules\IsosurfaceCpp\src (
+   echo ------------------------
+   echo initializing submodules
+   echo ------------------------
+   git submodule init   || exit /b 1
+   git submodule update || exit /b 1
+)
+
 if not exist .\vcpkg (
    echo ------------------------
    echo    fetching vkpkg
@@ -93,7 +101,9 @@ echo       generating
 echo ------------------------
 
 set cmake_args=-DCMAKE_TOOLCHAIN_FILE="third_party/vcpkg/scripts/buildsystems/vcpkg.cmake" ^
-               -DCMAKE_CXX_FLAGS="/MP" -Dsgl_DIR="third_party/sgl/install/lib/cmake/sgl/"
+               -DPYTHONHOME="./python3"                                                    ^
+               -DCMAKE_CXX_FLAGS="/MP"                                                     ^
+               -Dsgl_DIR="third_party/sgl/install/lib/cmake/sgl/"
 if not %optix_install_dir% == "" (
    echo using custom optix path
    set cmake_args=%cmake_args% -DOptiX_INSTALL_DIR=%optix_install_dir%
@@ -109,6 +119,9 @@ cmake --build %build_dir% --config %cmake_config% -- /m || exit /b 1
 echo ------------------------
 echo    copying new files
 echo ------------------------
+robocopy .build\vcpkg_installed\x64-windows\tools\python3 ^
+         %destination_dir%\python3 /e >NUL
+
 if %debug% == true (
    if not exist %destination_dir%\*.pdb (
       del %destination_dir%\*.dll
@@ -128,4 +141,4 @@ echo.
 echo All done!
 
 pushd %destination_dir%
-CloudRendering.exe
+LineVis.exe

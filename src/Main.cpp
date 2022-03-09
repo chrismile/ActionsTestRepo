@@ -26,7 +26,20 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef USE_PYTHON
+#ifdef PYTHONHOME_PATH
+#include <cstdlib>
+#endif
+#include <Python.h>
+#endif
+
+#ifdef USE_OSPRAY
+#include <ospray/ospray.h>
+#include "Renderers/Ospray/OsprayRenderer.hpp"
+#endif
+
 #include <Utils/File/FileUtils.hpp>
+#include <Utils/File/Logfile.hpp>
 #include <Utils/AppSettings.hpp>
 #include <Utils/AppLogic.hpp>
 #include <Graphics/Window.hpp>
@@ -37,21 +50,16 @@
 
 int main(int argc, char *argv[]) {
     // Initialize the filesystem utilities.
-    sgl::FileUtils::get()->initialize("Cloud Rendering", argc, argv);
+    sgl::FileUtils::get()->initialize("LineVis", argc, argv);
 
     // Load the file containing the app settings
     std::string settingsFile = sgl::FileUtils::get()->getConfigDirectory() + "settings.txt";
     sgl::AppSettings::get()->loadSettings(settingsFile.c_str());
     sgl::AppSettings::get()->getSettings().addKeyValue("window-multisamples", 0);
+    sgl::AppSettings::get()->getSettings().addKeyValue("window-debugContext", true);
     sgl::AppSettings::get()->getSettings().addKeyValue("window-vSync", true);
     sgl::AppSettings::get()->getSettings().addKeyValue("window-resizable", true);
     sgl::AppSettings::get()->getSettings().addKeyValue("window-savePosition", true);
-#ifdef NDEBUG
-    sgl::AppSettings::get()->getSettings().addKeyValue("window-debugContext", false);
-#else
-    sgl::AppSettings::get()->getSettings().addKeyValue("window-debugContext", true);
-#endif
-
 #ifdef DATA_PATH
     if (!sgl::FileUtils::get()->directoryExists("Data") && !sgl::FileUtils::get()->directoryExists("../Data")) {
         sgl::AppSettings::get()->setDataDirectory(DATA_PATH);
@@ -71,34 +79,76 @@ int main(int argc, char *argv[]) {
 #ifdef SUPPORT_OPTIX
     optionalDeviceExtensions = sgl::vk::Device::getCudaInteropDeviceExtensions();
 #endif
+    std::vector<const char*> raytracingDeviceExtensions = {
+            VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+            VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+            VK_KHR_MAINTENANCE3_EXTENSION_NAME,
+            VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
+            VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+            VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+            VK_KHR_RAY_QUERY_EXTENSION_NAME
+    };
+    optionalDeviceExtensions.insert(
+            optionalDeviceExtensions.end(),
+            raytracingDeviceExtensions.begin(), raytracingDeviceExtensions.end());
+    optionalDeviceExtensions.push_back(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
 
     sgl::vk::Instance* instance = sgl::AppSettings::get()->getVulkanInstance();
     sgl::vk::Device* device = new sgl::vk::Device;
+    sgl::vk::DeviceFeatures requestedDeviceFeatures{};
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.geometryShader = VK_TRUE; // For a rasterizer mode.
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.sampleRateShading = VK_TRUE; // For OpaqueLineRenderer.
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.independentBlend = VK_TRUE; // For WBOITRenderer.
+    // For PerPixelLinkedListRenderer, OpacityOptimizationRenderer, DepthComplexityRenderer, ...
+    requestedDeviceFeatures.requestedPhysicalDeviceFeatures.fragmentStoresAndAtomics = VK_TRUE;
     device->createDeviceSwapchain(
             instance, window,
             {
-                    //VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-                    //VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
-                    //VK_KHR_MAINTENANCE3_EXTENSION_NAME,
-                    //VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
-                    //VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-                    //VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
-                    //VK_KHR_RAY_QUERY_EXTENSION_NAME,
                     VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
                     VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME
             },
-            optionalDeviceExtensions);
+            optionalDeviceExtensions, requestedDeviceFeatures);
     sgl::vk::Swapchain* swapchain = new sgl::vk::Swapchain(device);
     swapchain->create(window);
     sgl::AppSettings::get()->setPrimaryDevice(device);
     sgl::AppSettings::get()->setSwapchain(swapchain);
     sgl::AppSettings::get()->initializeSubsystems();
 
+#ifdef USE_PYTHON
+#ifdef PYTHONHOME
+    const char* pythonhomeEnvVar = getenv("PYTHONHOME");
+    if (!pythonhomeEnvVar || strlen(pythonhomeEnvVar) == 0) {
+        Py_SetPythonHome(PYTHONHOME);
+        // As of 2022-01-25, "lib-dynload" is not automatically found when using MSYS2 together with MinGW.
+#if defined(__MINGW32__) && defined(PYTHONPATH)
+        Py_SetPath(PYTHONPATH ";" PYTHONPATH "/site-packages;" PYTHONPATH "/lib-dynload");
+#endif
+    }
+#endif
+    wchar_t** argvWidestr = (wchar_t**)PyMem_Malloc(sizeof(wchar_t*) * argc);
+    for (int i = 0; i < argc; i++) {
+        wchar_t* argWidestr = Py_DecodeLocale(argv[i], nullptr);
+        argvWidestr[i] = argWidestr;
+    }
+    Py_Initialize();
+    PySys_SetArgv(argc, argvWidestr);
+#endif
+
     auto app = new MainApp();
     app->run();
     delete app;
 
     sgl::AppSettings::get()->release();
+
+#ifdef USE_PYTHON
+    Py_Finalize();
+#endif
+
+#ifdef USE_OSPRAY
+    if (OsprayRenderer::getIsOsprayInitialized()) {
+        ospShutdown();
+    }
+#endif
 
     return 0;
 }

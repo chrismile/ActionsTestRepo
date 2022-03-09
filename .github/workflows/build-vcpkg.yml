@@ -2,9 +2,9 @@ name: Build using vcpkg
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
 
 env:
   BUILD_TYPE: Release
@@ -112,17 +112,19 @@ jobs:
     - name: Install (sgl)
       run: cmake --build ${{env.sgl_REPO_DIR}}/build --config ${{env.BUILD_TYPE}} --target install
 
-    - name: Configure CMake (CloudRendering)
+    - name: Configure CMake (LineVis)
       shell: bash
       run: |
         if [ "$RUNNER_OS" == "Linux" ]; then
           export VULKAN_SDK="/usr"
         elif [ "$RUNNER_OS" == "Windows" ]; then
           export VULKAN_SDK="C:/VulkanSDK/$(ls C:/VulkanSDK)"
+        elif [ "$RUNNER_OS" == "macOS" ]; then
+          source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
         fi
         cmake -B "${{github.workspace}}/build" -DCMAKE_TOOLCHAIN_FILE="${{env.VCPKG_ROOT}}/scripts/buildsystems/vcpkg.cmake" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DVCPKG_TARGET_TRIPLET=${{env.VCPKG_DEFAULT_TRIPLET}} -Dsgl_DIR=${{env.sgl_DIR}}/lib/cmake/sgl
 
-    - name: Build (CloudRendering)
+    - name: Build (LineVis)
       run: cmake --build "${{github.workspace}}/build" --config ${{env.BUILD_TYPE}} --parallel 4
 
     - name: Remove symbolic links before caching (Windows only)

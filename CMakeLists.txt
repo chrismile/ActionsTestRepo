@@ -1,20 +1,14 @@
 cmake_minimum_required (VERSION 3.7)
 cmake_policy(VERSION 3.7...3.20)
 
-project (CloudRendering)
+project (LineVis)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/CMake)
 #MESSAGE(STATUS "CMAKE_MODULE_PATH: " ${CMAKE_MODULE_PATH})
 
 set(CMAKE_CXX_STANDARD 17)
 
 file(GLOB_RECURSE SOURCES src/*.cpp src/*.c src/*.hpp src/*.h Data/Shaders/*.glsl)
-file(GLOB_RECURSE PYTORCH_MODULE_SOURCES src/PyTorch/*.cpp src/PyTorch/*.c src/PyTorch/*.hpp src/PyTorch/*.h)
-file(GLOB_RECURSE PYTORCH_MODULE_SOURCES_CUDA src/PyTorch/*.cu src/PyTorch/*.cuh)
 include_directories(src)
-
-foreach(SOURCE_FILE ${PYTORCH_MODULE_SOURCES})
-    list(REMOVE_ITEM SOURCES ${SOURCE_FILE})
-endforeach()
 
 file(GLOB_RECURSE SHADER_FILES Data/Shaders/*.glsl)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/Data/Shaders" PREFIX "Shaders" FILES ${SHADER_FILES})
@@ -33,43 +27,68 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
 endif()
 
+# Prefer GLVND by default when available.
+if (${CMAKE_VERSION} VERSION_GREATER "3.11")
+    cmake_policy(SET CMP0072 NEW)
+endif()
+
 option(USE_GTEST "Build the GoogleTest test suites." OFF)
-option(BUILD_PYTORCH_MODULE "Build the PyTorch module." OFF)
+option(USE_PYTHON "Build with Python 3 support for replay scripts." ON)
 
 set(DATA_PATH "${CMAKE_SOURCE_DIR}/Data" CACHE PATH "Location of folder 'Data'")
 add_definitions(-DDATA_PATH=\"${DATA_PATH}\")
 
-set(
-        VPT_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/CloudData.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/MomentUtils.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/VolumetricPathTracingPass.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/SuperVoxelGrid.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/OpenExrLoader.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Denoiser/Denoiser.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Denoiser/EAWDenoiser.cpp
-)
-
-if (${USE_GTEST})
+if (USE_GTEST)
     set(
             GTEST_SOURCES
+            # Test 1: Kd-tree functionality.
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/TestKdTreeNearestNeighbor.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/LineData/SearchStructures/NearestNeighborNaive.cpp
+            # Test 2: Volumetric path tracing.
             ${CMAKE_CURRENT_SOURCE_DIR}/test/VolumetricPathTracingTestData.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/test/VolumetricPathTracingTestRenderer.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/test/TestVolumetricPathTracing.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/LineData/Scattering/CloudData.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/OIT/MBOITUtils.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/Scattering/PathTracer/VolumetricPathTracingPass.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/Scattering/PathTracer/SuperVoxelGrid.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/Scattering/PathTracer/OpenExrLoader.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/Scattering/Denoiser/Denoiser.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/Scattering/Denoiser/EAWDenoiser.cpp
     )
 endif()
 
-if (${BUILD_PYTORCH_MODULE})
-    find_package(Torch QUIET)
-endif()
-if (${BUILD_PYTORCH_MODULE} AND NOT Torch_FOUND)
-    MESSAGE(STATUS "The PyTorch module build was enabled, but PyTorch couldn't be found. Disabling PyTorch module.")
+if(VCPKG_TOOLCHAIN)
+    find_package(cppzmq CONFIG QUIET)
+else()
+    find_package(cppzmq QUIET)
 endif()
 
-
-if (UNIX AND NOT APPLE)
+if ((UNIX AND NOT APPLE) OR MSYS)
     find_package(PkgConfig REQUIRED)
 endif()
+
+
+if (USE_PYTHON)
+    if (${CMAKE_VERSION} VERSION_GREATER "3.11")
+        # 2021-05-06: CMake won't find vcpkg version if we don't search for the interpreter.
+        if(VCPKG_TOOLCHAIN)
+            find_package(Python3 COMPONENTS Development Interpreter REQUIRED)
+        else()
+            find_package(Python3 COMPONENTS Development REQUIRED)
+        endif()
+    else()
+        pkg_check_modules(Python3 QUIET python3)
+    endif()
+endif()
+
+if (Python3_FOUND AND USE_PYTHON)
+    MESSAGE(STATUS "Found Python 3. Enabling replay script support.")
+else()
+    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ReplayWidget.cpp)
+    MESSAGE(STATUS "Python 3 couldn't be found. Switching off replay script support.")
+endif()
+
 
 set(FPHSA_NAME_MISMATCHED TRUE)
 if(VCPKG_TOOLCHAIN)
@@ -80,11 +99,15 @@ endif()
 
 find_package(sgl REQUIRED)
 find_package(Boost COMPONENTS system filesystem REQUIRED)
+find_package(GLEW REQUIRED)
+find_package(OpenGL REQUIRED)
 set(FPHSA_NAME_MISMATCHED TRUE)
 if(VCPKG_TOOLCHAIN)
+    find_package(netCDF CONFIG REQUIRED)
     find_package(tinyxml2 CONFIG REQUIRED)
     find_package(jsoncpp CONFIG REQUIRED)
 else()
+    find_package(NetCDF REQUIRED)
     find_package(TinyXML2 REQUIRED)
     find_package(jsoncpp QUIET)
     if (NOT jsoncpp_FOUND)
@@ -93,8 +116,37 @@ else()
 endif()
 
 get_target_property(SGL_INTERFACE_COMPILE_DEFINITIONS sgl INTERFACE_COMPILE_DEFINITIONS)
-if ("SUPPORT_VULKAN" IN_LIST SGL_INTERFACE_COMPILE_DEFINITIONS)
-	set(SUPPORT_VULKAN ON)
+if (NOT "SUPPORT_VULKAN" IN_LIST SGL_INTERFACE_COMPILE_DEFINITIONS)
+    message(FATAL_ERROR "sgl was not built with Vulkan support enabled.")
+endif()
+
+# Embree version 3.12.1-2 shipped by msys2 seems to be buggy and crashes on rtcCommitScene :(
+if(NOT "${CMAKE_GENERATOR}" STREQUAL "MSYS Makefiles")
+    if(VCPKG_TOOLCHAIN)
+        find_package(TBB QUIET)
+        find_package(embree 3 QUIET)
+    else()
+        find_package(embree 3.0 QUIET)
+    endif()
+endif()
+if(embree_FOUND)
+    MESSAGE(STATUS "Found Embree. Enabling Embree as as a ray-mesh intersection library for RTAO pre-baking.")
+else()
+    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/AmbientOcclusion/EmbreeAmbientOcclusionBaker.cpp)
+    MESSAGE(STATUS "Embree couldn't be found. Disabling Embree RTAO pre-baking support.")
+endif()
+
+if(embree_FOUND)
+    find_package(ospray QUIET)
+    if(ospray_FOUND)
+        MESSAGE(STATUS "Found OSPRay. Enabling CPU ray tracing using OSPRay.")
+    endif()
+endif()
+
+if(NOT embree_FOUND OR NOT ospray_FOUND)
+    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/Ospray/OsprayRenderer.cpp)
+    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/Ospray/OsprayRenderer.hpp)
+    MESSAGE(STATUS "OSPRay couldn't be found. Disabling CPU ray tracing.")
 endif()
 
 if ("SUPPORT_CUDA_INTEROP" IN_LIST SGL_INTERFACE_COMPILE_DEFINITIONS)
@@ -133,8 +185,7 @@ else()
     MESSAGE(STATUS "sgl was not built with CUDA interoperability support. Disabling OptiX denoiser support.")
 endif()
 if (NOT SUPPORT_OPTIX)
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Denoiser/OptixVptDenoiser.hpp)
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Denoiser/OptixVptDenoiser.cpp)
+    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/Scattering/Denoiser/OptixVptDenoiser.cpp)
 endif()
 
 find_package(Imath CONFIG QUIET)
@@ -160,207 +211,249 @@ else()
     MESSAGE(STATUS "OpenEXR not found. Disabling OpenEXR image loading support.")
 endif()
 if (NOT SUPPORT_OPENEXR)
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/OpenExrLoader.hpp)
-    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/OpenExrLoader.cpp)
-    list(REMOVE_ITEM VPT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/OpenExrLoader.hpp)
-    list(REMOVE_ITEM VPT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/PathTracer/OpenExrLoader.cpp)
+    list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/Scattering/PathTracer/OpenExrLoader.cpp)
+    if (USE_GTEST)
+        list(REMOVE_ITEM GTEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/Renderers/Scattering/PathTracer/OpenExrLoader.cpp)
+    endif()
 endif()
 
 
 if(WIN32)
-    add_executable(CloudRendering WIN32 ${SOURCES})
+    add_executable(LineVis WIN32 ${SOURCES})
 else()
-    add_executable(CloudRendering ${SOURCES})
+    add_executable(LineVis ${SOURCES})
 endif()
 
-if (${USE_GTEST})
+if (USE_GTEST)
     include(GoogleTest)
     enable_testing()
-    add_executable(CloudRendering_test ${GTEST_SOURCES} ${VPT_SOURCES})
-    target_link_libraries(CloudRendering_test PRIVATE gtest gtest_main)
-    target_link_libraries(CloudRendering_test PRIVATE sgl ${Boost_LIBRARIES})
-    target_include_directories(CloudRendering_test PRIVATE ${sgl_INCLUDES} ${Boost_INCLUDE_DIR})
-    gtest_add_tests(TARGET CloudRendering_test)
-endif()
-
-if (${BUILD_PYTORCH_MODULE} AND Torch_FOUND)
-    set(PYTORCH_MODULE_ENABLED TRUE)
-    if ("SUPPORT_CUDA_INTEROP" IN_LIST SGL_INTERFACE_COMPILE_DEFINITIONS)
-        if(${CMAKE_VERSION} VERSION_LESS "3.18.0")
-            # https://cmake.org/cmake/help/git-stage/module/FindCUDA.html
-            find_package(CUDA QUIET)
-            add_library(vpt SHARED ${PYTORCH_MODULE_SOURCES} ${PYTORCH_MODULE_SOURCES_CUDA} ${VPT_SOURCES} ${SHADER_FILES})
-        else()
-            # https://cmake.org/cmake/help/git-stage/module/FindCUDAToolkit.html
-            find_package(CUDAToolkit QUIET)
-        endif()
-    else()
-        MESSAGE(STATUS "sgl was not built with CUDA interoperability support. Disabling PyTorch module CUDA support.")
-    endif()
-
-    if(${CUDAToolkit_FOUND} OR ${CUDA_FOUND})
-        add_library(vpt SHARED ${PYTORCH_MODULE_SOURCES} ${PYTORCH_MODULE_SOURCES_CUDA} ${VPT_SOURCES} ${SHADER_FILES})
-        enable_language(CUDA)
-        set_target_properties(vpt PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-        target_compile_definitions(vpt PRIVATE SUPPORT_CUDA_INTEROP)
-    else()
-        add_library(vpt SHARED ${PYTORCH_MODULE_SOURCES} ${VPT_SOURCES} ${SHADER_FILES})
-    endif()
-
-    if(${CUDAToolkit_FOUND})
-        # https://en.wikipedia.org/wiki/CUDA
-        # https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#compute-capability
-        if (${CUDAToolkit_VERSION} VERSION_GREATER_EQUAL "11.1")
-            set_property(TARGET vpt PROPERTY CUDA_ARCHITECTURES 61 75 86)
-        elseif (${CUDAToolkit_VERSION} VERSION_GREATER_EQUAL "10.0")
-            set_property(TARGET vpt PROPERTY CUDA_ARCHITECTURES 61 75)
-        else()
-            set_property(TARGET vpt PROPERTY CUDA_ARCHITECTURES 61)
-        endif()
-        set_target_properties(vpt PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-        MESSAGE(STATUS "CUDA toolkit version: " ${CUDAToolkit_VERSION})
-    endif()
-
-    target_link_libraries(vpt PRIVATE ${TORCH_LIBRARIES})
-    target_include_directories(vpt PRIVATE ${TORCH_INCLUDE_DIR})
-    target_link_libraries(vpt PRIVATE sgl ${Boost_LIBRARIES})
-    target_include_directories(vpt PRIVATE ${sgl_INCLUDES} ${Boost_INCLUDE_DIR})
-    install(
-            TARGETS vpt
-            ARCHIVE DESTINATION modules
-            LIBRARY DESTINATION modules
-            RUNTIME DESTINATION bin
-    )
+    add_executable(LineVis_test ${GTEST_SOURCES})
+    target_link_libraries(LineVis_test PRIVATE gtest gtest_main)
+    target_link_libraries(LineVis_test PRIVATE sgl ${Boost_LIBRARIES})
+    target_include_directories(LineVis_test PRIVATE ${sgl_INCLUDES} ${Boost_INCLUDE_DIR})
+    gtest_add_tests(TARGET LineVis_test)
 endif()
 
 
 # Hide console window in release build on Windows/MSVC.
 # See: https://gitlab.kitware.com/cmake/community/-/wikis/doc/cmake/recipe/VSConfigSpecificSettings
 if(MSVC)
-    set_target_properties(CloudRendering PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE")
-    set_target_properties(CloudRendering PROPERTIES COMPILE_DEFINITIONS_DEBUG "_CONSOLE")
-    set_target_properties(CloudRendering PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:CONSOLE")
-    set_target_properties(CloudRendering PROPERTIES COMPILE_DEFINITIONS_RELWITHDEBINFO "_CONSOLE")
-    set_target_properties(CloudRendering PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS")
-    set_target_properties(CloudRendering PROPERTIES LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS")
+    set_target_properties(LineVis PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE")
+    set_target_properties(LineVis PROPERTIES COMPILE_DEFINITIONS_DEBUG "_CONSOLE")
+    set_target_properties(LineVis PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:CONSOLE")
+    set_target_properties(LineVis PROPERTIES COMPILE_DEFINITIONS_RELWITHDEBINFO "_CONSOLE")
+    set_target_properties(LineVis PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS")
+    set_target_properties(LineVis PROPERTIES LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS")
 endif()
 
 if(MSVC)
-    #target_compile_definitions(CloudRendering PRIVATE /wd4251)
-    set_target_properties(CloudRendering PROPERTIES COMPILE_FLAGS "/wd4251")
+    #target_compile_definitions(LineVis PRIVATE /wd4251)
+    set_target_properties(LineVis PROPERTIES COMPILE_FLAGS "/wd4251")
+    target_compile_options(LineVis PRIVATE "/MP")
+endif()
+
+add_subdirectory(submodules/IsosurfaceCpp)
+if("TRACY_ENABLE" IN_LIST SGL_INTERFACE_COMPILE_DEFINITIONS)
+    target_compile_definitions(IsosurfaceCpp PUBLIC TRACY_ENABLE)
+    target_compile_definitions(IsosurfaceCpp PUBLIC TRACY_IMPORTS)
+    target_include_directories(IsosurfaceCpp PUBLIC $<TARGET_PROPERTY:sgl,INTERFACE_INCLUDE_DIRECTORIES>)
+endif()
+target_link_libraries(LineVis PRIVATE IsosurfaceCpp)
+target_include_directories(LineVis PRIVATE submodules)
+
+if (NOT MSVC)
+    if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        target_compile_definitions(LineVis PRIVATE NDEBUG)
+    endif()
+endif()
+
+if((${CMAKE_GENERATOR} STREQUAL "MinGW Makefiles") OR (${CMAKE_GENERATOR} STREQUAL "MSYS Makefiles"))
+    if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mconsole")
+    else()
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mwindows")
+    endif()
+    target_link_libraries(LineVis PUBLIC mingw32)
+endif()
+if(VCPKG_TOOLCHAIN)
+    target_link_libraries(LineVis PUBLIC SDL2::SDL2main)
+else()
+    target_link_libraries(LineVis PUBLIC SDL2::Main)
+endif()
+
+target_link_libraries(LineVis PUBLIC sgl ${Boost_LIBRARIES} ${OPENGL_LIBRARIES} GLEW::GLEW)
+include_directories(${sgl_INCLUDES} ${Boost_INCLUDE_DIR} ${OPENGL_INCLUDE_DIRS} ${GLEW_INCLUDES})
+
+if(VCPKG_TOOLCHAIN)
+    target_link_libraries(LineVis PRIVATE tinyxml2::tinyxml2 netCDF::netcdf)
+else()
+    target_link_libraries(LineVis PRIVATE ${TINYXML2_LIBRARIES} ${NETCDF_LIBRARIES})
+    target_include_directories(LineVis PRIVATE ${NETCDF_INCLUDE_DIR})
+endif()
+target_include_directories(LineVis PRIVATE ${sgl_INCLUDES} ${TINYXML2_INCLUDE_DIR})
+
+if (JSONCPP_LIBRARIES)
+    target_link_libraries(LineVis PRIVATE ${JSONCPP_LIBRARIES})
+    if (USE_GTEST)
+        target_link_libraries(LineVis_test PRIVATE ${JSONCPP_LIBRARIES})
+    endif()
+endif()
+if (TARGET jsoncpp_lib)
+    get_target_property(jsoncpp_INCLUDES jsoncpp_lib INTERFACE_INCLUDE_DIRECTORIES)
+    target_link_libraries(LineVis PRIVATE jsoncpp_lib)
+    if (USE_GTEST)
+        target_link_libraries(LineVis_test PRIVATE jsoncpp_lib)
+    endif()
+elseif(TARGET jsoncpp_static)
+    get_target_property(jsoncpp_INCLUDES jsoncpp_static INTERFACE_INCLUDE_DIRECTORIES)
+    target_link_libraries(LineVis PRIVATE jsoncpp_static)
+    if (USE_GTEST)
+        target_link_libraries(LineVis_test PRIVATE jsoncpp_static)
+    endif()
+endif()
+if (TARGET jsoncpp_object)
+    target_link_libraries(LineVis PRIVATE jsoncpp_object)
+    if (USE_GTEST)
+        target_link_libraries(LineVis_test PRIVATE jsoncpp_object)
+    endif()
+endif()
+target_include_directories(LineVis PRIVATE ${jsoncpp_INCLUDES})
+if (USE_GTEST)
+    target_include_directories(LineVis_test PRIVATE ${jsoncpp_INCLUDES})
+endif()
+
+if(VCPKG_TOOLCHAIN)
+    find_package(cppzmq CONFIG QUIET)
+else()
+    find_package(cppzmq QUIET)
+endif()
+if (${cppzmq_FOUND})
+    target_link_libraries(LineVis PRIVATE cppzmq)
+    if (${CMAKE_VERSION} VERSION_LESS "3.12")
+        target_compile_definitions(LineVis PRIVATE USE_ZEROMQ)
+    else()
+        add_compile_definitions(USE_ZEROMQ)
+    endif()
+else()
+    # https://stackoverflow.com/questions/41251474/how-to-import-zeromq-libraries-in-cmake/41252437
+    pkg_check_modules(PC_ZeroMQ QUIET zmq)
+    #if (${PC_ZeroMQ_FOUND})
+        find_path(ZeroMQ_INCLUDE_DIRS NAMES zmq.hpp PATHS ${PC_ZeroMQ_INCLUDE_DIRS})
+        find_library(ZeroMQ_LIBRARIES NAMES zmq PATHS ${PC_ZeroMQ_LIBRARY_DIRS})
+        target_include_directories(LineVis PRIVATE ${ZeroMQ_INCLUDE_DIRS})
+        target_link_libraries(LineVis PRIVATE ${ZeroMQ_LIBRARIES})
+        if (${CMAKE_VERSION} VERSION_LESS "3.12")
+            target_compile_definitions(LineVis PRIVATE USE_ZEROMQ)
+        else()
+            add_compile_definitions(USE_ZEROMQ)
+        endif()
+    #endif()
+endif()
+
+# Eigen is an optional dependency for eigenvalue solving.
+if(VCPKG_TOOLCHAIN)
+    find_package(Eigen3 CONFIG QUIET)
+else()
+    find_package(Eigen3 QUIET)
+endif()
+if (Eigen3_FOUND)
+    if(NOT (EIGEN3_VERSION_STRING LESS 3.3))
+        target_link_libraries(LineVis PRIVATE Eigen3::Eigen)
+    else()
+        include_directories(${EIGEN3_INCLUDE_DIR})
+    endif()
+   target_compile_definitions(LineVis PRIVATE USE_EIGEN)
+endif()
+
+if (Python3_FOUND AND USE_PYTHON)
+    target_compile_definitions(LineVis PRIVATE USE_PYTHON)
+    if (${CMAKE_VERSION} VERSION_GREATER "3.11")
+        target_link_libraries(LineVis PRIVATE Python3::Python)
+    else()
+        target_link_libraries(LineVis PRIVATE ${Python3_LIBRARIES})
+    endif()
+    target_include_directories(LineVis PRIVATE ${Python3_INCLUDE_DIRS})
+
+    # Add default PYTHONHOME path for vcpkg if no environment variable is set.
+    if(DEFINED ENV{PYTHONHOME})
+        set(PYTHONHOME "$ENV{PYTHONHOME}")
+    endif()
+    if(VCPKG_TOOLCHAIN)
+        if(NOT DEFINED ENV{PYTHONHOME})
+            find_path(PYTHONHOME_PATH tools/python3 HINTS ${PYTHONHOME_PATH})
+            if (MSVC)
+                set(PYTHONHOME "${PYTHONHOME_PATH}/tools/python3")
+            else()
+                set(PYTHONHOME "${PYTHONHOME_PATH}")
+            endif()
+        endif()
+    endif()
+    if (PYTHONHOME)
+        set(PYTHONHOME "${PYTHONHOME}" CACHE STRING "PYTHONHOME path.")
+        target_compile_definitions(LineVis PRIVATE PYTHONHOME=L\"${PYTHONHOME}\")
+    endif()
+    if (PYTHONPATH)
+        set(PYTHONPATH "${PYTHONPATH}" CACHE STRING "PYTHONPATH path.")
+        target_compile_definitions(LineVis PRIVATE PYTHONPATH=L\"${PYTHONPATH}\")
+    endif()
+endif()
+
+find_package(Vulkan REQUIRED)
+if (${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.21.0")
+    target_link_libraries(LineVis PUBLIC Vulkan::Headers)
+endif()
+
+if(embree_FOUND)
+    if(VCPKG_TOOLCHAIN)
+        target_link_libraries(LineVis PRIVATE embree)
+    else()
+        target_link_libraries(LineVis PRIVATE ${EMBREE_LIBRARIES})
+    endif()
+    target_include_directories(LineVis PRIVATE ${EMBREE_INCLUDE_DIRS})
+    target_compile_definitions(LineVis PRIVATE USE_EMBREE)
+endif()
+
+if(ospray_FOUND)
+    target_link_libraries(LineVis PRIVATE ospray::ospray)
+    target_include_directories(LineVis PRIVATE ${OSPRAY_INCLUDE_DIRS})
+    target_compile_definitions(LineVis PRIVATE USE_OSPRAY)
 endif()
 
 if (${SUPPORT_OPTIX})
     set(CMAKE_MODULE_PATH ${OptiX_INSTALL_DIR}/SDK/CMake ${CMAKE_MODULE_PATH})
     find_package(OptiX QUIET)
     if (OptiX_FOUND OR OptiX_INCLUDE)
-        target_compile_definitions(CloudRendering PRIVATE SUPPORT_OPTIX)
-        target_include_directories(CloudRendering PRIVATE ${OptiX_INCLUDE})
+        target_compile_definitions(LineVis PRIVATE SUPPORT_OPTIX)
+        target_include_directories(LineVis PRIVATE ${OptiX_INCLUDE})
         if(UNIX AND NOT APPLE)
-            target_link_libraries(CloudRendering PRIVATE dl)
+            target_link_libraries(LineVis PRIVATE dl)
         endif()
-		if (MSYS)
-		    # GetProcAddress in optix_stubs.h performs no function pointer conversion.
-		    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
-			# Compensate for "#pragma comment(lib, "Cfgmgr32.lib")" not working with MinGW.
+        if (MSYS)
+            # GetProcAddress in optix_stubs.h performs no function pointer conversion.
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
+            # Compensate for "#pragma comment(lib, "Cfgmgr32.lib")" not working with MinGW.
             target_link_libraries(LineVis PRIVATE cfgmgr32)
-		endif()
+        endif()
     endif()
-endif()
-
-if((${CMAKE_GENERATOR} STREQUAL "MinGW Makefiles") OR (${CMAKE_GENERATOR} STREQUAL "MSYS Makefiles"))
-    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mwindows")
-    target_link_libraries(CloudRendering PUBLIC mingw32)
-endif()
-if(VCPKG_TOOLCHAIN)
-    target_link_libraries(CloudRendering PUBLIC SDL2::SDL2main)
-else()
-    target_link_libraries(CloudRendering PUBLIC SDL2::Main)
-endif()
-
-find_package(Vulkan REQUIRED)
-if (${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.21.0")
-    target_link_libraries(CloudRendering PUBLIC Vulkan::Headers)
-endif()
-
-target_link_libraries(CloudRendering PUBLIC sgl ${Boost_LIBRARIES})
-include_directories(${sgl_INCLUDES} ${Boost_INCLUDE_DIR})
-
-if(VCPKG_TOOLCHAIN)
-    target_link_libraries(CloudRendering PRIVATE tinyxml2::tinyxml2)
-else()
-    target_link_libraries(CloudRendering PRIVATE ${TINYXML2_LIBRARIES})
-endif()
-target_include_directories(CloudRendering PRIVATE ${sgl_INCLUDES} ${TINYXML2_INCLUDE_DIR})
-
-if (JSONCPP_LIBRARIES)
-    target_link_libraries(CloudRendering PRIVATE ${JSONCPP_LIBRARIES})
-    if (${USE_GTEST})
-        target_link_libraries(CloudRendering_test PRIVATE ${JSONCPP_LIBRARIES})
-    endif()
-    if (${PYTORCH_MODULE_ENABLED})
-        target_link_libraries(vpt PRIVATE ${JSONCPP_LIBRARIES})
-    endif()
-endif()
-if (TARGET jsoncpp_lib)
-    get_target_property(jsoncpp_INCLUDES jsoncpp_lib INTERFACE_INCLUDE_DIRECTORIES)
-    target_link_libraries(CloudRendering PRIVATE jsoncpp_lib)
-    if (${USE_GTEST})
-        target_link_libraries(CloudRendering_test PRIVATE jsoncpp_lib)
-    endif()
-    if (${PYTORCH_MODULE_ENABLED})
-        target_link_libraries(vpt PRIVATE jsoncpp_lib)
-    endif()
-elseif(TARGET jsoncpp_static)
-    get_target_property(jsoncpp_INCLUDES jsoncpp_static INTERFACE_INCLUDE_DIRECTORIES)
-    target_link_libraries(CloudRendering PRIVATE jsoncpp_static)
-    if (${USE_GTEST})
-        target_link_libraries(CloudRendering_test PRIVATE jsoncpp_static)
-    endif()
-    if (${PYTORCH_MODULE_ENABLED})
-        target_link_libraries(vpt PRIVATE jsoncpp_static)
-    endif()
-endif()
-if (TARGET jsoncpp_object)
-    target_link_libraries(CloudRendering PRIVATE jsoncpp_object)
-    if (${USE_GTEST})
-        target_link_libraries(CloudRendering_test PRIVATE jsoncpp_object)
-    endif()
-    if (${PYTORCH_MODULE_ENABLED})
-        target_link_libraries(vpt PRIVATE jsoncpp_object)
-    endif()
-endif()
-target_include_directories(CloudRendering PRIVATE ${jsoncpp_INCLUDES})
-if (${USE_GTEST})
-    target_include_directories(CloudRendering_test PRIVATE ${jsoncpp_INCLUDES})
-endif()
-if (${PYTORCH_MODULE_ENABLED})
-    target_include_directories(vpt PRIVATE ${jsoncpp_INCLUDES})
 endif()
 
 if (SUPPORT_OPENEXR)
     if (${USE_OPENEXR_PKGCONFIG})
         if (OpenEXR_FOUND)
-            target_link_libraries(CloudRendering PRIVATE ${OpenEXR_LIBRARIES})
-            if (${USE_GTEST})
-                target_link_libraries(CloudRendering_test PRIVATE ${OpenEXR_LIBRARIES})
-            endif()
-            if (${PYTORCH_MODULE_ENABLED})
-                target_link_libraries(vpt PRIVATE ${OpenEXR_LIBRARIES})
+            target_link_libraries(LineVis PRIVATE ${OpenEXR_LIBRARIES})
+            if (USE_GTEST)
+                target_link_libraries(LineVis_test PRIVATE ${OpenEXR_LIBRARIES})
             endif()
         endif()
         if (IlmBase_FOUND)
-            target_link_libraries(CloudRendering PRIVATE ${IlmBase_LIBRARIES})
-            if (${USE_GTEST})
-                target_link_libraries(CloudRendering_test PRIVATE ${IlmBase_LIBRARIES})
-            endif()
-            if (${PYTORCH_MODULE_ENABLED})
-                target_link_libraries(vpt PRIVATE ${IlmBase_LIBRARIES})
+            target_link_libraries(LineVis PRIVATE ${IlmBase_LIBRARIES})
+            if (USE_GTEST)
+                target_link_libraries(LineVis_test PRIVATE ${IlmBase_LIBRARIES})
             endif()
         endif()
     else()
         target_link_libraries(
-                CloudRendering PRIVATE
+                LineVis PRIVATE
                 # For OpenEXR/Imath 3.x:
                 $<$<TARGET_EXISTS:OpenEXR::OpenEXR>:OpenEXR::OpenEXR>
                 $<$<TARGET_EXISTS:Imath::Imath>:Imath::Imath>
@@ -372,24 +465,9 @@ if (SUPPORT_OPENEXR)
                 $<$<TARGET_EXISTS:IlmBase::IlmThread>:IlmBase::IlmThread>
                 $<$<TARGET_EXISTS:IlmBase::Iex>:IlmBase::Iex>
         )
-        if (${USE_GTEST})
+        if (USE_GTEST)
             target_link_libraries(
-                    CloudRendering_test PRIVATE
-                    # For OpenEXR/Imath 3.x:
-                    $<$<TARGET_EXISTS:OpenEXR::OpenEXR>:OpenEXR::OpenEXR>
-                    $<$<TARGET_EXISTS:Imath::Imath>:Imath::Imath>
-                    $<$<TARGET_EXISTS:Imath::Half>:Imath::Half>
-                    # For OpenEXR 2.4/2.5:
-                    $<$<TARGET_EXISTS:OpenEXR::IlmImf>:OpenEXR::IlmImf>
-                    $<$<TARGET_EXISTS:IlmBase::Imath>:IlmBase::Imath>
-                    $<$<TARGET_EXISTS:IlmBase::Half>:IlmBase::Half>
-                    $<$<TARGET_EXISTS:IlmBase::IlmThread>:IlmBase::IlmThread>
-                    $<$<TARGET_EXISTS:IlmBase::Iex>:IlmBase::Iex>
-            )
-        endif()
-        if (${PYTORCH_MODULE_ENABLED})
-            target_link_libraries(
-                    vpt PRIVATE
+                    LineVis_test PRIVATE
                     # For OpenEXR/Imath 3.x:
                     $<$<TARGET_EXISTS:OpenEXR::OpenEXR>:OpenEXR::OpenEXR>
                     $<$<TARGET_EXISTS:Imath::Imath>:Imath::Imath>
@@ -403,12 +481,9 @@ if (SUPPORT_OPENEXR)
             )
         endif()
     endif()
-    target_compile_definitions(CloudRendering PRIVATE SUPPORT_OPENEXR)
-    if (${USE_GTEST})
-        target_compile_definitions(CloudRendering_test PRIVATE SUPPORT_OPENEXR)
-    endif()
-    if (${PYTORCH_MODULE_ENABLED})
-        target_compile_definitions(vpt PRIVATE SUPPORT_OPENEXR)
+    target_compile_definitions(LineVis PRIVATE SUPPORT_OPENEXR)
+    if (USE_GTEST)
+        target_compile_definitions(LineVis_test PRIVATE SUPPORT_OPENEXR)
     endif()
 endif()
 
@@ -437,10 +512,13 @@ if(MSVC)
             set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /w44005")
         endif()
     endif()
+elseif(NOT TARGET OpenMP::OpenMP_CXX)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
 else()
-    if(OPENMP_FOUND)
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
+    target_link_libraries(LineVis PUBLIC OpenMP::OpenMP_CXX)
+    if (USE_GTEST)
+        target_link_libraries(LineVis_test PUBLIC OpenMP::OpenMP_CXX)
     endif()
 endif()

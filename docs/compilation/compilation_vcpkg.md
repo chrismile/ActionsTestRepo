@@ -11,7 +11,7 @@ All other necessary dependencies besides sgl can be installed using the followin
 On Windows `--triplet=x64-windows` needs to be added if the 64-bit version of the packages should be installed.
 
 ```
-./vcpkg install boost-core boost-algorithm boost-filesystem sdl2[vulkan] glew glm jsoncpp openexr
+./vcpkg install boost-core boost-algorithm boost-filesystem sdl2[vulkan] glew glm eigen3 jsoncpp python3 cppzmq netcdf-c openexr
 ```
 
 
@@ -38,7 +38,7 @@ application.
 
 ```
 export LD_LIBRARY_PATH=<path-to-sgl>/lib
-./CloudRendering
+./LineVis
 ```
 
 
@@ -75,13 +75,14 @@ set PATH=%PATH%;$VCPKG_HOME/installed/x64-windows/debug/bin
 # Release
 set PATH=%PATH%;$VCPKG_HOME/installed/x64-windows/bin
 
-CloudRendering.exe
+LineVis.exe
 ```
 
 ... or the following commands on the PowerShell.
 
 ```
 $env:Path += ";<path-to-sgl>/bin"
+$env:PYTHONHOME = "$env:VCPKG_HOME/installed/x64-windows/tools/python3"
 
 # Debug
 $env:Path += ";$env:VCPKG_HOME/installed/x64-windows/debug/bin"
@@ -89,5 +90,5 @@ $env:Path += ";$env:VCPKG_HOME/installed/x64-windows/debug/bin"
 # Release
 $env:Path += ";$env:VCPKG_HOME/installed/x64-windows/bin"
 
-./CloudRendering.exe
+./LineVis.exe
 ```

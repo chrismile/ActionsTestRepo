@@ -96,6 +96,14 @@ if ! command -v pkg-config &> /dev/null; then
     exit 1
 fi
 
+if [ ! -d "submodules/IsosurfaceCpp/src" ]; then
+    echo "------------------------"
+    echo "initializing submodules "
+    echo "------------------------"
+    git submodule init
+    git submodule update
+fi
+
 [ -d "./third_party/" ] || mkdir "./third_party/"
 pushd third_party > /dev/null
 
@@ -210,7 +218,9 @@ echo "      generating        "
 echo "------------------------"
 pushd $build_dir >/dev/null
 cmake -DCMAKE_TOOLCHAIN_FILE="$PROJECTPATH/third_party/vcpkg/scripts/buildsystems/vcpkg.cmake" \
-      -DCMAKE_BUILD_TYPE=$cmake_config -Dsgl_DIR="$PROJECTPATH/third_party/sgl/install/lib/cmake/sgl/" ..
+      -DPYTHONHOME="./python3" \
+      -DCMAKE_BUILD_TYPE=$cmake_config \
+      -Dsgl_DIR="$PROJECTPATH/third_party/sgl/install/lib/cmake/sgl/" ..
 popd >/dev/null
 
 echo "------------------------"
@@ -223,8 +233,11 @@ echo "   copying new files    "
 echo "------------------------"
 
 [ -d $destination_dir ]             || mkdir $destination_dir
+[ -d $destination_dir/python3 ]     || mkdir $destination_dir/python3
+[ -d $destination_dir/python3/lib ] || mkdir $destination_dir/python3/lib
 
-rsync -a $build_dir/CloudRendering $destination_dir
+rsync -a "$(eval echo vcpkg_installed/x64-linux/lib/python*)" $destination_dir/python3/lib
+rsync -a $build_dir/LineVis $destination_dir
 
 echo ""
 echo "All done!"
@@ -237,4 +250,4 @@ if [[ -z "${LD_LIBRARY_PATH+x}" ]]; then
 elif [[ ! "${LD_LIBRARY_PATH}" == *"${PROJECTPATH}/third_party/sgl/install/lib"* ]]; then
     export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${PROJECTPATH}/third_party/sgl/install/lib"
 fi
-./CloudRendering
+./LineVis

@@ -15,6 +15,8 @@ mingw64/mingw-w64-x86_64-boost mingw64/mingw-w64-x86_64-libarchive \
 mingw64/mingw-w64-x86_64-SDL2 mingw64/mingw-w64-x86_64-SDL2_image mingw64/mingw-w64-x86_64-glew \
 mingw64/mingw-w64-x86_64-vulkan-headers mingw64/mingw-w64-x86_64-vulkan-loader \
 mingw64/mingw-w64-x86_64-vulkan-validation-layers mingw64/mingw-w64-x86_64-shaderc \
+mingw64/mingw-w64-x86_64-jsoncpp mingw64/mingw-w64-x86_64-netcdf mingw64/mingw-w64-x86_64-zeromq \
+mingw64/mingw-w64-x86_64-eigen3 mingw64/mingw-w64-x86_64-python mingw64/mingw-w64-x86_64-python-numpy \
 mingw64/mingw-w64-x86_64-openexr
 ```
 
@@ -24,7 +26,7 @@ After all dependencies have been set up, the following commands can be used to b
 mkdir build
 cd build
 rm -rf *
-cmake -G "MSYS Makefiles" -Dsgl_DIR=<path-to-sgl> ..
+cmake -G "MSYS Makefiles" -Dsgl_DIR=<path-to-sgl> -DPython3_FIND_REGISTRY=NEVER ..
 make -j
 make install
 export PATH=$PATH:"/c/msys64/usr/local/bin"
@@ -33,7 +35,8 @@ export PATH=$PATH:"/c/msys64/usr/local/bin"
 To run the program, please execute the following commands.
 
 ```
-./CloudRendering
+export PYTHONHOME="/mingw64"
+./LineVis
 ```
 
 Please note that, when launching programs using sgl on Windows, either the library path of sgl
@@ -62,12 +65,13 @@ the standard directory C:\msys64).
 Then, add the following CMake options to the used build profiles (assuming sgl was installed to `/usr/local`).
 
 ```
--G "MSYS Makefiles" -Dsgl_DIR=/usr/local/lib/cmake/sgl
+-G "MSYS Makefiles" -DPython3_FIND_REGISTRY=NEVER -Dsgl_DIR=/usr/local/lib/cmake/sgl
 ```
 
 Finally, in order for Windows to find the .dll files at runtime, add the following environment variables to the run
 configurations.
 
 ```
-PATH=C:/msys64/mingw64/bin\;C:/msys64/usr/local/bin
+PYTHONHOME=C:/msys64/mingw64;PATH=C:/msys64/mingw64/bin\;C:/msys64/usr/local/bin
 ```
+

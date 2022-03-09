@@ -5,7 +5,7 @@
 *.slo
 *.lo
 *.o
-*.obj
+#*.obj Commented out, as project uses .obj model files
 
 # Precompiled Headers
 *.gch
@@ -78,7 +78,8 @@ cmake-build-*/
 *.vtk
 *.mesh
 
-Data/CloudDataSets/*
+Data/LineDataSets
+Data/LineDataSets/*
 Data/CameraPaths/*
 Data/Checkpoints/*
 Data/Screenshots/*

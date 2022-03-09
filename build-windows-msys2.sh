@@ -70,6 +70,11 @@ if command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_
             || ! is_installed_pacman "mingw-w64-x86_64-vulkan-validation-layers" \
             || ! is_installed_pacman "mingw-w64-x86_64-shaderc" \
             || ! is_installed_pacman "mingw-w64-x86_64-jsoncpp" \
+            || ! is_installed_pacman "mingw-w64-x86_64-netcdf" \
+            || ! is_installed_pacman "mingw-w64-x86_64-zeromq" \
+            || ! is_installed_pacman "mingw-w64-x86_64-eigen3" \
+            || ! is_installed_pacman "mingw-w64-x86_64-python" \
+            || ! is_installed_pacman "mingw-w64-x86_64-python-numpy" \
             || ! is_installed_pacman "mingw-w64-x86_64-openexr"; then
         echo "------------------------"
         echo "installing dependencies "
@@ -80,7 +85,9 @@ if command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_
         mingw64/mingw-w64-x86_64-SDL2 mingw64/mingw-w64-x86_64-SDL2_image mingw64/mingw-w64-x86_64-glew \
         mingw64/mingw-w64-x86_64-vulkan-headers mingw64/mingw-w64-x86_64-vulkan-loader \
         mingw64/mingw-w64-x86_64-vulkan-validation-layers mingw64/mingw-w64-x86_64-shaderc \
-        mingw64/mingw-w64-x86_64-jsoncpp mingw64/mingw-w64-x86_64-openexr
+        mingw64/mingw-w64-x86_64-jsoncpp mingw64/mingw-w64-x86_64-netcdf mingw64/mingw-w64-x86_64-zeromq \
+        mingw64/mingw-w64-x86_64-eigen3 mingw64/mingw-w64-x86_64-python mingw64/mingw-w64-x86_64-python-numpy \
+        mingw64/mingw-w64-x86_64-openexr
     fi
 fi
 
@@ -173,11 +180,15 @@ ls "$build_dir"
 echo "------------------------"
 echo "      generating        "
 echo "------------------------"
+python_name="$(find "$MSYSTEM_PREFIX/lib/" -maxdepth 1 -type d -name 'python*' -printf "%f" -quit)"
 pushd $build_dir >/dev/null
 cmake .. \
     -G "MSYS Makefiles" \
+    -DPython3_FIND_REGISTRY=NEVER \
     -DCMAKE_BUILD_TYPE=$cmake_config \
-    -Dsgl_DIR="$PROJECTPATH/third_party/sgl/install/lib/cmake/sgl/"
+    -Dsgl_DIR="$PROJECTPATH/third_party/sgl/install/lib/cmake/sgl/" \
+    -DPYTHONHOME="./python3" \
+    -DPYTHONPATH="./python3/lib/$python_name"
 popd >/dev/null
 
 echo "------------------------"
@@ -202,12 +213,28 @@ else
     cp "./third_party/sgl/install/bin/libsgl.dll" "$destination_dir/bin"
 fi
 
-# Copy CloudRendering to the destination directory.
-cp "$build_dir/CloudRendering.exe" "$destination_dir/bin"
+# Copy LineVis to the destination directory.
+cp "$build_dir/LineVis.exe" "$destination_dir/bin"
 cp "README.md" "$destination_dir"
 
-# Copy all dependencies of CloudRendering to the destination directory.
-ldd_output="$(ldd $destination_dir/bin/CloudRendering.exe)"
+# Copy all dependencies of LineVis to the destination directory.
+ldd_output="$(ldd $destination_dir/bin/LineVis.exe)"
+for library in $ldd_output
+do
+    if [[ $library == "$MSYSTEM_PREFIX"* ]] ;
+    then
+		cp "$library" "$destination_dir/bin"
+    fi
+    if [[ $library == libpython* ]] ;
+    then
+	    tmp=${library#*lib}
+	    python_name=${tmp%.dll}
+    fi
+done
+
+# Copy libopenblas (needed by numpy) and its dependencies to the destination directory.
+cp "$MSYSTEM_PREFIX/bin/libopenblas.dll" "$destination_dir/bin"
+ldd_output="$(ldd "$MSYSTEM_PREFIX/bin/libopenblas.dll")"
 for library in $ldd_output
 do
     if [[ $library == "$MSYSTEM_PREFIX"* ]] ;
@@ -216,17 +243,23 @@ do
     fi
 done
 
+# Copy python3 to the destination directory.
+if [ ! -d "$destination_dir/bin/python3" ]; then
+    mkdir -p "$destination_dir/bin/python3/lib"
+    cp -r "$MSYSTEM_PREFIX/lib/$python_name" "$destination_dir/bin/python3/lib"
+fi
 if [ ! -d "$destination_dir/LICENSE" ]; then
     mkdir -p "$destination_dir/LICENSE"
     cp -r "docs/license-libraries/." "$destination_dir/LICENSE/"
-    cp -r "LICENSE" "$destination_dir/LICENSE/LICENSE-cloudrendering.txt"
+    cp -r "LICENSE" "$destination_dir/LICENSE/LICENSE-linevis.txt"
+    cp -r "submodules/IsosurfaceCpp/LICENSE" "$destination_dir/LICENSE/graphics/LICENSE-isosurfacecpp.txt"
 fi
 if [ ! -d "$destination_dir/docs" ]; then
     cp -r "docs" "$destination_dir"
 fi
 
 # Create a run script.
-printf "@echo off\npushd %%~dp0\npushd bin\nstart \"\" CloudRendering.exe\n" > "$destination_dir/run.bat"
+printf "@echo off\npushd %%~dp0\npushd bin\nstart \"\" LineVis.exe\n" > "$destination_dir/run.bat"
 
 
 
@@ -240,5 +273,6 @@ if [[ -z "${PATH+x}" ]]; then
 elif [[ ! "${PATH}" == *"${PROJECTPATH}/third_party/sgl/install/bin"* ]]; then
     export PATH="${PROJECTPATH}/third_party/sgl/install/bin:$PATH"
 fi
-./CloudRendering
+export PYTHONHOME="/mingw64"
+./LineVis
 

@@ -29,7 +29,7 @@
 #include <Utils/AppSettings.hpp>
 #include <ImGui/imgui.h>
 
-#include "PathTracer/VolumetricPathTracingPass.hpp"
+#include "Renderers/Scattering/PathTracer/VolumetricPathTracingPass.hpp"
 #include "VolumetricPathTracingTestRenderer.hpp"
 
 VolumetricPathTracingTestRenderer::VolumetricPathTracingTestRenderer(sgl::vk::Renderer* renderer) : renderer(renderer) {
@@ -56,7 +56,7 @@ VolumetricPathTracingTestRenderer::~VolumetricPathTracingTestRenderer() {
 }
 
 void VolumetricPathTracingTestRenderer::setCloudData(const CloudDataPtr& cloudData) {
-    vptPass->setCloudData(cloudData);
+    vptPass->setCloudData(cloudData, true);
 }
 
 void VolumetricPathTracingTestRenderer::setRenderingResolution(uint32_t width, uint32_t height) {
