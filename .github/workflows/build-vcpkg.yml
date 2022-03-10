@@ -39,6 +39,7 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v10
       with:
+        vcpkgGitURL: https://github.com/zmughal/vcpkg/tree/fix-zeromq-patch-hash
         vcpkgGitCommitId: 'af06f79f8d4e6dc5aca80c77565a729f54797f44'
         #doNotCacheOnWorkflowFailure: true
 
