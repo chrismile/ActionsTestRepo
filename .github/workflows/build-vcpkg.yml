@@ -39,7 +39,7 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v10
       with:
-        vcpkgGitCommitId: '198b84f4276e96af5a08455810548a8a8a55de03'
+        vcpkgGitCommitId: 'af06f79f8d4e6dc5aca80c77565a729f54797f44'
         #doNotCacheOnWorkflowFailure: true
 
     - name: Configure CMake
