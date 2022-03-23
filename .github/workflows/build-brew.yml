@@ -46,6 +46,14 @@ jobs:
         fi
         brew install cmake zlib libpng glm sdl2 sdl2_image libarchive boost tinyxml2
 
+    - name: Print Directories
+      shell: bash
+      run: |
+        ls "$(brew --prefix)"
+        ls "$(brew --prefix)/lib"
+        ls "$(brew --prefix)/share"
+        ls "$(brew --prefix)/share/cmake"
+
     - name: Configure CMake
       shell: bash
       run: |
@@ -57,7 +65,7 @@ jobs:
         #elif [ "$RUNNER_OS" == "macOS" ]; then
         #  source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
         #fi
-        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False
+        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never
 
     - name: Build
       run: cmake --build "${{github.workspace}}/build" --config ${{env.BUILD_TYPE}} --parallel 4
