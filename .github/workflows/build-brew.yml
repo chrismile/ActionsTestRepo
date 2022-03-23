@@ -51,8 +51,6 @@ jobs:
     - name: Print Directories
       shell: bash
       run: |
-        echo "PRINT /usr/local/opt/zlib"
-        ls /usr/local/opt/zlib
         echo "PRINT ."
         ls "$(brew --prefix)"
         echo "PRINT lib"
@@ -64,6 +62,8 @@ jobs:
         if [ "$RUNNER_OS" == "macOS" ]; then
           echo "PRINT lib/cmake"
           ls "$(brew --prefix)/lib/cmake"
+          echo "PRINT /usr/local/opt/zlib"
+          ls /usr/local/opt/zlib
         fi
 
     - name: Configure CMake
@@ -79,10 +79,10 @@ jobs:
         #fi
         params=()
         if [ "$RUNNER_OS" == "macOS" ]; then
-          params+=(-DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never) -DZLIB_ROOT="/usr/local/opt/zlib"
+          params+=(-DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never -DZLIB_ROOT="/usr/local/opt/zlib")
         fi
-        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False
-        #-DZLIB_ROOT="$(brew --prefix)" "${params[@]}"
+        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False "${params[@]}"
+        #-DZLIB_ROOT="$(brew --prefix)"
 
     - name: Build
       run: cmake --build "${{github.workspace}}/build" --config ${{env.BUILD_TYPE}} --parallel 4
