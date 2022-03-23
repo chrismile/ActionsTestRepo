@@ -49,9 +49,13 @@ jobs:
     - name: Print Directories
       shell: bash
       run: |
+        echo "PRINT ."
         ls "$(brew --prefix)"
+        echo "PRINT lib"
         ls "$(brew --prefix)/lib"
+        echo "PRINT share"
         ls "$(brew --prefix)/share"
+        echo "PRINT share/cmake"
         ls "$(brew --prefix)/share/cmake"
 
     - name: Configure CMake
