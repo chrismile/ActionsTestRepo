@@ -1,4 +1,4 @@
-name: Build using vcpkg
+name: Build using Homebrew
 
 on:
   push:
@@ -57,7 +57,7 @@ jobs:
         #elif [ "$RUNNER_OS" == "macOS" ]; then
         #  source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
         #fi
-        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False
 
     - name: Build
       run: cmake --build "${{github.workspace}}/build" --config ${{env.BUILD_TYPE}} --parallel 4
