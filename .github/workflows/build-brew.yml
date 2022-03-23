@@ -44,11 +44,12 @@ jobs:
           echo "$RUNNER_OS is not supported."
           exit 1
         fi
-        brew install cmake sdl2 sdl2_image libarchive boost tinyxml2
+        brew install cmake libpng glm sdl2 sdl2_image libarchive boost tinyxml2
 
     - name: Configure CMake
       shell: bash
       run: |
+        export VULKAN_SDK="$(brew --prefix)"
         #if [ "$RUNNER_OS" == "Linux" ]; then
         #  export VULKAN_SDK="/usr"
         #elif [ "$RUNNER_OS" == "Windows" ]; then
