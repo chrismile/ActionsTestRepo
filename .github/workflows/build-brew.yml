@@ -69,7 +69,11 @@ jobs:
         #elif [ "$RUNNER_OS" == "macOS" ]; then
         #  source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
         #fi
-        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never
+        params=()
+        if [ "$RUNNER_OS" == "macOS" ]; then
+          params+=(-DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never)
+        fi
+        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False -DZLIB_ROOT="$(brew --prefix)" "${params[@]}"
 
     - name: Build
       run: cmake --build "${{github.workspace}}/build" --config ${{env.BUILD_TYPE}} --parallel 4
