@@ -45,6 +45,7 @@ jobs:
           exit 1
         fi
         brew install cmake zlib libpng glm sdl2 sdl2_image libarchive boost tinyxml2
+        brew reinstall zlib
 
     - name: Print Directories
       shell: bash
@@ -57,6 +58,10 @@ jobs:
         ls "$(brew --prefix)/share"
         echo "PRINT share/cmake"
         ls "$(brew --prefix)/share/cmake"
+        if [ "$RUNNER_OS" == "macOS" ]; then
+          echo "PRINT lib/cmake"
+          ls "$(brew --prefix)/lib/cmake"
+        fi
 
     - name: Configure CMake
       shell: bash
