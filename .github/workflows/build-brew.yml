@@ -19,10 +19,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: "${{ github.workflow }}: ${{ matrix.os }}"
 
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg/bincache
-
     steps:
     - uses: actions/checkout@v2
       with:
@@ -55,7 +51,7 @@ jobs:
           echo "$RUNNER_OS is not supported."
           exit 1
         fi
-        brew install vulkan-headers
+        #brew install vulkan-headers
         brew install cmake zlib libpng glm sdl2 sdl2_image libarchive boost tinyxml2
 
     - name: Install Vulkan SDK
