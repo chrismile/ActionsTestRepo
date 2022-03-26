@@ -95,6 +95,7 @@ jobs:
         #export VULKAN_SDK="$(brew --prefix)"
         if [ "$RUNNER_OS" == "Linux" ]; then
           export VULKAN_SDK="/usr"
+          export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig"
         elif [ "$RUNNER_OS" == "macOS" ]; then
           source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
         fi
