@@ -34,20 +34,17 @@ jobs:
         # https://stackoverflow.com/questions/25128546/how-to-automate-homebrew-installation
         if [ "$RUNNER_OS" == "Linux" ]; then
           brew install gcc
-          sudo apt install cmake
         elif [ "$RUNNER_OS" == "macOS" ]; then
           brew install llvm libomp
           #brew install molten-vk
           # xcode-select: error: command line tools are already installed, use "Software Update" to install updates
           #xcode-select --install
-          brew install cmake
         else
           echo "$RUNNER_OS is not supported."
           exit 1
         fi
         #brew install vulkan-headers
-        #brew install cmake zlib libpng glm sdl2 sdl2_image libarchive boost tinyxml2
-        brew install zlib libpng glm sdl2 sdl2_image libarchive boost tinyxml2
+        brew install cmake zlib libpng glm sdl2 sdl2_image libarchive boost tinyxml2
 
     - name: Install Vulkan SDK
       shell: bash
@@ -58,7 +55,6 @@ jobs:
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-${distro_code_name}.list https://packages.lunarg.com/vulkan/lunarg-vulkan-${distro_code_name}.list
           sudo apt update
           sudo apt install vulkan-sdk shaderc
-          sudo apt-get install git cmake libglm-dev libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev libpng-dev libboost-filesystem-dev libtinyxml2-dev libarchive-dev libglew-dev
         elif [ "$RUNNER_OS" == "macOS" ]; then
           VULKAN_SDK_VERSION=1.3.204.1
           curl -O https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/mac/vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
@@ -106,7 +102,8 @@ jobs:
         if [ "$RUNNER_OS" == "macOS" ]; then
           params+=(-DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never -DZLIB_ROOT="/usr/local/opt/zlib")
         fi
-        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False "${params[@]}"
+        #cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False "${params[@]}"
+        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" "${params[@]}"
         #-DZLIB_ROOT="$(brew --prefix)"
 
     - name: Build
