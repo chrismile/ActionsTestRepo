@@ -79,9 +79,9 @@ jobs:
         ls "$(brew --prefix)/lib"
         echo "PRINT share"
         ls "$(brew --prefix)/share"
-        echo "PRINT share/cmake"
-        ls "$(brew --prefix)/share/cmake"
         if [ "$RUNNER_OS" == "macOS" ]; then
+          echo "PRINT share/cmake"
+          ls "$(brew --prefix)/share/cmake"
           echo "PRINT lib/cmake"
           ls "$(brew --prefix)/lib/cmake"
           echo "PRINT /usr/local/opt/zlib"
