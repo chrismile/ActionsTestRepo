@@ -56,7 +56,7 @@ if ((NOT ${SUPPORT_OPENGL}) OR (NOT ${OpenGL_FOUND}) OR (NOT ${GLEW_FOUND}))
     list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/ImGui/imgui_impl_opengl3.cpp)
 endif()
 
-find_package(Vulkan QUIET)
+find_package(Vulkan REQUIRED)
 if (${SUPPORT_VULKAN})
     if (NOT ${Vulkan_FOUND})
         MESSAGE(WARNING "Warning: Vulkan support was enabled, but Vulkan was not found. Disabling Vulkan support.")
