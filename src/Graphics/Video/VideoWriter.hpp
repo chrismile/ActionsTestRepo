@@ -107,6 +107,8 @@ private:
         GLsync fence = nullptr;
     };
     ReadBackBuffer readBackBuffers[NUM_RB_BUFFERS];
+#endif
+#if defined(SUPPORT_OPENGL) || defined(SUPPORT_VULKAN)
     size_t startPointer = 0, endPointer = 0;
     size_t queueCapacity = NUM_RB_BUFFERS;
     size_t queueSize = 0;
