@@ -24,7 +24,7 @@ jobs:
       with:
         submodules: true
 
-    - uses: lukka/get-cmake@latest
+    #- uses: lukka/get-cmake@latest
 
     - name: Install Dependencies via Homebrew
       shell: bash
@@ -34,11 +34,13 @@ jobs:
         # https://stackoverflow.com/questions/25128546/how-to-automate-homebrew-installation
         if [ "$RUNNER_OS" == "Linux" ]; then
           brew install gcc
+          sudo apt install cmake
         elif [ "$RUNNER_OS" == "macOS" ]; then
           brew install llvm libomp
           #brew install molten-vk
           # xcode-select: error: command line tools are already installed, use "Software Update" to install updates
           #xcode-select --install
+          brew install cmake
         else
           echo "$RUNNER_OS is not supported."
           exit 1
