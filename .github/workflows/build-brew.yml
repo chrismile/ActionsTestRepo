@@ -36,7 +36,7 @@ jobs:
           brew install gcc
         elif [ "$RUNNER_OS" == "macOS" ]; then
           brew install llvm libomp
-          #brew install molten-vk
+          brew install molten-vk
           # xcode-select: error: command line tools are already installed, use "Software Update" to install updates
           #xcode-select --install
         else
@@ -56,14 +56,14 @@ jobs:
           sudo apt update
           sudo apt install vulkan-sdk shaderc
         elif [ "$RUNNER_OS" == "macOS" ]; then
-          VULKAN_SDK_VERSION=1.3.204.1
-          curl -O https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/mac/vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
-          sudo hdiutil attach vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
-          sudo /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION/InstallVulkan.app/Contents/MacOS/InstallVulkan \
-          --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
-          cd ~/VulkanSDK/$VULKAN_SDK_VERSION
-          sudo ./install_vulkan.py
-          sudo hdiutil unmount /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION
+          #VULKAN_SDK_VERSION=1.3.204.1
+          #curl -O https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/mac/vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
+          #sudo hdiutil attach vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
+          #sudo /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION/InstallVulkan.app/Contents/MacOS/InstallVulkan \
+          #--root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
+          #cd ~/VulkanSDK/$VULKAN_SDK_VERSION
+          #sudo ./install_vulkan.py
+          #sudo hdiutil unmount /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION
         else
           echo "$RUNNER_OS is not supported."
           exit 1
@@ -93,19 +93,16 @@ jobs:
       shell: bash
       run: |
         #export VULKAN_SDK="$(brew --prefix)"
+        params=()
         if [ "$RUNNER_OS" == "Linux" ]; then
           export VULKAN_SDK="/usr"
           export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig"
         elif [ "$RUNNER_OS" == "macOS" ]; then
-          source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
+          #source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
+          export VULKAN_SDK="/usr/local"
+          params+=(-DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never -DZLIB_ROOT="/usr/local/opt/zlib")
         fi
-        params=()
-        if [ "$RUNNER_OS" == "macOS" ]; then
-          params+=(-DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never -DZLIB_ROOT="/usr/local/opt/zlib")
-        fi
-        #cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False "${params[@]}"
         cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" "${params[@]}"
-        #-DZLIB_ROOT="$(brew --prefix)"
 
     - name: Build
       run: cmake --build "${{github.workspace}}/build" --config ${{env.BUILD_TYPE}} --parallel 4
