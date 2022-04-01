@@ -28,6 +28,12 @@ jobs:
       with:
         submodules: true
 
+    - uses: actions/checkout@v2
+      with:
+        repository: chrismile/sgl
+        path: sgl-repo
+        submodules: true
+
     - name: Install Dependencies via Homebrew
       shell: bash
       run: |
