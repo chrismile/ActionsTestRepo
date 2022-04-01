@@ -63,7 +63,7 @@ jobs:
           exit 1
         fi
 
-    - name: Configure CMake
+    - name: Configure CMake (sgl)
       shell: bash
       run: |
         params=()
@@ -74,7 +74,26 @@ jobs:
           source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
           params+=(-DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never -DZLIB_ROOT="/usr/local/opt/zlib")
         fi
-        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" "${params[@]}"
+        cmake "${{env.sgl_REPO_DIR}}" -B "${{env.sgl_REPO_DIR}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_INSTALL_PREFIX="${{env.sgl_DIR}}" -DCMAKE_PREFIX_PATH="$(brew --prefix)" "${params[@]}"
 
-    - name: Build
+
+    - name: Build (sgl)
+      run: cmake --build ${{env.sgl_REPO_DIR}}/build --config ${{env.BUILD_TYPE}} --parallel 4
+
+    - name: Install (sgl)
+      run: cmake --build ${{env.sgl_REPO_DIR}}/build --config ${{env.BUILD_TYPE}} --target install
+
+    - name: Configure CMake (LineVis)
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" == "Linux" ]; then
+          export VULKAN_SDK="/usr"
+          export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig"
+        elif [ "$RUNNER_OS" == "macOS" ]; then
+          source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
+          params+=(-DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never -DZLIB_ROOT="/usr/local/opt/zlib")
+        fi
+        cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DVCPKG_TARGET_TRIPLET=${{env.VCPKG_DEFAULT_TRIPLET}} -Dsgl_DIR=${{env.sgl_DIR}}/lib/cmake/sgl -DCMAKE_PREFIX_PATH="$(brew --prefix)" "${params[@]}"
+
+    - name: Build (LineVis)
       run: cmake --build "${{github.workspace}}/build" --config ${{env.BUILD_TYPE}} --parallel 4
