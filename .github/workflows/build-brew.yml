@@ -19,6 +19,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: "${{ github.workflow }}: ${{ matrix.os }}"
 
+    env:
+      sgl_REPO_DIR: ${{ github.workspace }}/sgl-repo
+      sgl_DIR: ${{ github.workspace }}/sgl
+
     steps:
     - uses: actions/checkout@v2
       with:
