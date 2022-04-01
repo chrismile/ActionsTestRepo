@@ -100,7 +100,6 @@ jobs:
         elif [ "$RUNNER_OS" == "macOS" ]; then
           #source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
           export VULKAN_SDK="/usr/local"
-          Vulkan_LIBRARY Vulkan_INCLUDE_DIR
           params+=(-DZLIB_ROOT="/usr/local/opt/zlib" -DVulkan_LIBRARY=/usr/local/lib/libvulkan.dylib -DVulkan_INCLUDE_DIR=/usr/local/include)
           #params+=(-DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never -DZLIB_ROOT="/usr/local/opt/zlib")
         fi
