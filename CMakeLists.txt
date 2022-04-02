@@ -58,7 +58,7 @@ if (USE_GTEST)
     )
 endif()
 
-if ((UNIX AND NOT APPLE) OR MSYS)
+if ((UNIX OR MSYS) AND (NOT APPLE OR NOT VCPKG_TOOLCHAIN))
     find_package(PkgConfig REQUIRED)
 endif()
 

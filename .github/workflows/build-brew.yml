@@ -49,7 +49,7 @@ jobs:
           exit 1
         fi
         brew install cmake zlib libpng glm sdl2 sdl2_image libarchive boost tinyxml2 \
-        jsoncpp eigen openexr netcdf zeromq cppzmq python@3.10
+        jsoncpp eigen openexr netcdf zeromq cppzmq python@3.9
 
     - name: Install Vulkan SDK
       shell: bash
@@ -83,7 +83,7 @@ jobs:
           export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig"
         elif [ "$RUNNER_OS" == "macOS" ]; then
           source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
-          params+=(-DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=Last -DCMAKE_FIND_APPBUNDLE=Never -DZLIB_ROOT="/usr/local/opt/zlib")
+          params+=(-DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=LAST -DCMAKE_FIND_APPBUNDLE=NEVER -DZLIB_ROOT="/usr/local/opt/zlib")
         fi
         cmake "${{env.sgl_REPO_DIR}}" -B "${{env.sgl_REPO_DIR}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_INSTALL_PREFIX="${{env.sgl_DIR}}" -DCMAKE_PREFIX_PATH="$(brew --prefix)" "${params[@]}"
 
