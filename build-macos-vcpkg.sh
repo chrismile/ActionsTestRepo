@@ -63,53 +63,6 @@ if command -v brew &> /dev/null; then
     if ! is_installed_brew "libomp"; then
         brew install libomp
     fi
-
-    if ! is_installed_brew "molten-vk"; then
-        brew install molten-vk
-    fi
-    if ! is_installed_brew "libpng"; then
-        brew install libpng
-    fi
-    if ! is_installed_brew "glm"; then
-        brew install glm
-    fi
-    if ! is_installed_brew "sdl2"; then
-        brew install sdl2
-    fi
-    if ! is_installed_brew "sdl2_image"; then
-        brew install sdl2_image
-    fi
-    if ! is_installed_brew "libarchive"; then
-        brew install libarchive
-    fi
-    if ! is_installed_brew "boost"; then
-        brew install boost
-    fi
-    if ! is_installed_brew "tinyxml2"; then
-        brew install tinyxml2
-    fi
-
-    if ! is_installed_brew "jsoncpp"; then
-        brew install jsoncpp
-    fi
-    if ! is_installed_brew "eigen"; then
-        brew install eigen
-    fi
-    if ! is_installed_brew "openexr"; then
-        brew install openexr
-    fi
-    if ! is_installed_brew "netcdf"; then
-        brew install netcdf
-    fi
-    if ! is_installed_brew "zeromq"; then
-        brew install zeromq
-    fi
-    if ! is_installed_brew "cppzmq"; then
-        brew install cppzmq
-    fi
-    if ! is_installed_brew "python@3.9"; then
-        brew install python@3.9
-    fi
 fi
 
 if ! command -v cmake &> /dev/null; then

@@ -64,9 +64,10 @@ if command -v brew &> /dev/null; then
         brew install libomp
     fi
 
-    if ! is_installed_brew "molten-vk"; then
-        brew install molten-vk
-    fi
+    # Homebrew MoltenVK does not contain script for setting environment variables, unfortunately.
+    #if ! is_installed_brew "molten-vk"; then
+    #    brew install molten-vk
+    #fi
     if ! is_installed_brew "libpng"; then
         brew install libpng
     fi
