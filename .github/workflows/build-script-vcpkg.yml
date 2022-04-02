@@ -1,4 +1,4 @@
-name: Build using vcpkg
+name: Build using vcpkg Script
 
 on:
   push:

@@ -132,7 +132,7 @@ fi
 [ -d "./third_party/" ] || mkdir "./third_party/"
 pushd third_party > /dev/null
 
-if [ -n "${VULKAN_SDK+1}" ]; then
+if [ -z "${VULKAN_SDK+1}" ]; then
     echo "------------------------"
     echo "searching for Vulkan SDK"
     echo "------------------------"
@@ -160,19 +160,6 @@ if [ -n "${VULKAN_SDK+1}" ]; then
         echo "Please refer to https://vulkan.lunarg.com/sdk/home#mac for instructions on how to install the Vulkan SDK."
         exit 1
     fi
-fi
-
-if [ ! -d "./vcpkg" ]; then
-    echo "------------------------"
-    echo "   fetching vcpkg       "
-    echo "------------------------"
-    if [ -n "${VULKAN_SDK+1}" ]; then
-        echo "The environment variable VULKAN_SDK is not set but is required in the installation process."
-        exit 1
-    fi
-    git clone --depth 1 https://github.com/Microsoft/vcpkg.git
-    vcpkg/bootstrap-vcpkg.sh -disableMetrics
-    vcpkg/vcpkg install
 fi
 
 if [ ! -d "./sgl" ]; then
