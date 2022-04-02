@@ -1,7 +1,7 @@
 cmake_minimum_required (VERSION 3.7)
 cmake_policy(VERSION 3.7...3.20)
 
-project (LineVis)
+project(LineVis)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/CMake)
 #MESSAGE(STATUS "CMAKE_MODULE_PATH: " ${CMAKE_MODULE_PATH})
 
@@ -285,8 +285,12 @@ target_include_directories(LineVis PRIVATE ${sgl_INCLUDES} ${TINYXML2_INCLUDE_DI
 
 if (JSONCPP_LIBRARIES)
     target_link_libraries(LineVis PRIVATE ${JSONCPP_LIBRARIES})
+    target_link_directories(LineVis PRIVATE ${JSONCPP_LIBRARY_DIRS})
+    target_include_directories(LineVis PRIVATE ${JSONCPP_INCLUDE_DIRS})
     if (USE_GTEST)
         target_link_libraries(LineVis_test PRIVATE ${JSONCPP_LIBRARIES})
+        target_link_directories(LineVis_test PRIVATE ${JSONCPP_LIBRARY_DIRS})
+        target_include_directories(LineVis_test PRIVATE ${JSONCPP_INCLUDE_DIRS})
     endif()
 endif()
 if (TARGET jsoncpp_lib)
