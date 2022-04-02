@@ -101,8 +101,9 @@ if [ -z "${VULKAN_SDK+1}" ]; then
       sudo hdiutil attach vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
       sudo /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION/InstallVulkan.app/Contents/MacOS/InstallVulkan \
       --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
-      cd ~/VulkanSDK/$VULKAN_SDK_VERSION
+      pushd ~/VulkanSDK/$VULKAN_SDK_VERSION
       sudo ./install_vulkan.py
+      popd
       sudo hdiutil unmount /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION
       source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
       found_vulkan=true
