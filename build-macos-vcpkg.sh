@@ -2,7 +2,7 @@
 
 # BSD 2-Clause License
 #
-# Copyright (c) 2021-2022, Felix Brendel, Christoph Neuhauser
+# Copyright (c) 2021-2022, Christoph Neuhauser, Felix Brendel
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -132,7 +132,7 @@ fi
 [ -d "./third_party/" ] || mkdir "./third_party/"
 pushd third_party > /dev/null
 
-if [[ ! -v VULKAN_SDK ]]; then
+if [ ! -v VULKAN_SDK ]; then
     echo "------------------------"
     echo "searching for Vulkan SDK"
     echo "------------------------"
@@ -265,9 +265,21 @@ echo "All done!"
 
 pushd $build_dir >/dev/null
 
-if [[ -z "${LD_LIBRARY_PATH+x}" ]]; then
-    export LD_LIBRARY_PATH="${PROJECTPATH}/third_party/sgl/install/lib"
-elif [[ ! "${LD_LIBRARY_PATH}" == *"${PROJECTPATH}/third_party/sgl/install/lib"* ]]; then
-    export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${PROJECTPATH}/third_party/sgl/install/lib"
+# https://stackoverflow.com/questions/2829613/how-do-you-tell-if-a-string-contains-another-string-in-posix-sh
+contains() {
+    string="$1"
+    substring="$2"
+    if test "${string#*$substring}" != "$string"
+    then
+        return 0
+    else
+        return 1
+    fi
+}
+
+if [ -z "${DYLD_LIBRARY_PATH+x}" ]; then
+    export DYLD_LIBRARY_PATH="${PROJECTPATH}/third_party/sgl/install/lib"
+elif contains "${DYLD_LIBRARY_PATH}" "${PROJECTPATH}/third_party/sgl/install/lib"; then
+    export DYLD_LIBRARY_PATH="DYLD_LIBRARY_PATH:${PROJECTPATH}/third_party/sgl/install/lib"
 fi
 ./LineVis
