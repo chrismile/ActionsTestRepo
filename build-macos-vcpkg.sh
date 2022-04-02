@@ -107,8 +107,8 @@ if command -v brew &> /dev/null; then
     if ! is_installed_brew "cppzmq"; then
         brew install cppzmq
     fi
-    if ! is_installed_brew "python@3.10"; then
-        brew install python@3.10
+    if ! is_installed_brew "python@3.9"; then
+        brew install python@3.9
     fi
 fi
 
@@ -139,39 +139,25 @@ if [[ ! -v VULKAN_SDK ]]; then
 
     found_vulkan=false
 
-    VULKAN_SDK_VERSION=1.3.204.1
-    curl -O https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/mac/vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
-    sudo hdiutil attach vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
-    sudo /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION/InstallVulkan.app/Contents/MacOS/InstallVulkan \
-    --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
-    cd ~/VulkanSDK/$VULKAN_SDK_VERSION
-    sudo ./install_vulkan.py
-    sudo hdiutil unmount /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION
-
-    if lsb_release -a 2> /dev/null | grep -q 'Ubuntu'; then
-        if ! compgen -G "/etc/apt/sources.list.d/lunarg-vulkan-*" > /dev/null; then
-            distro_code_name=$(lsb_release -c | grep -oP "\:\s+\K\S+")
-            echo "Setting up Vulkan SDK for Ubuntu $(lsb_release -r | grep -oP "\:\s+\K\S+")..."
-            wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
-            sudo curl --silent --show-error --fail \
-            https://packages.lunarg.com/vulkan/1.2.198/lunarg-vulkan-1.2.198-${distro_code_name}.list \
-            --output /etc/apt/sources.list.d/lunarg-vulkan-1.2.198-${distro_code_name}.list
-            sudo apt update
-            sudo apt install vulkan-sdk shaderc
-        fi
-    fi
-
-    if [ -d "/usr/include/vulkan" ]; then
-        if ! grep -q VULKAN_SDK ~/.bashrc; then
-            echo 'export VULKAN_SDK="/usr"' >> ~/.bashrc
-        fi
-        VULKAN_SDK="/usr"
+    if [ -d "$HOME/VulkanSDK" ]; then
+        source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
         found_vulkan=true
+    else
+      VULKAN_SDK_VERSION=1.3.204.1
+      curl -O https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/mac/vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
+      sudo hdiutil attach vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
+      sudo /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION/InstallVulkan.app/Contents/MacOS/InstallVulkan \
+      --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
+      cd ~/VulkanSDK/$VULKAN_SDK_VERSION
+      sudo ./install_vulkan.py
+      sudo hdiutil unmount /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION
+      source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
+      found_vulkan=true
     fi
 
     if ! $found_vulkan; then
         echo "The environment variable VULKAN_SDK is not set but is required in the installation process."
-        echo "Please refer to https://vulkan.lunarg.com/sdk/home#linux for instructions on how to install the Vulkan SDK."
+        echo "Please refer to https://vulkan.lunarg.com/sdk/home#mac for instructions on how to install the Vulkan SDK."
         exit 1
     fi
 fi
@@ -270,7 +256,7 @@ echo "------------------------"
 [ -d $destination_dir/python3 ]     || mkdir $destination_dir/python3
 [ -d $destination_dir/python3/lib ] || mkdir $destination_dir/python3/lib
 
-rsync -a "$(eval echo vcpkg_installed/x64-linux/lib/python*)" $destination_dir/python3/lib
+rsync -a "$(eval echo "vcpkg_installed/$(ls --ignore=vcpkg vcpkg_installed)/lib/python*")" $destination_dir/python3/lib
 rsync -a $build_dir/LineVis $destination_dir
 
 echo ""
