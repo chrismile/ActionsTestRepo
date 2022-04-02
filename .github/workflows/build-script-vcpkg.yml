@@ -1,4 +1,4 @@
-name: Build using Homebrew
+name: Build using vcpkg
 
 on:
   push:
