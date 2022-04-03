@@ -245,7 +245,7 @@ echo "------------------------"
 echo "   copying new files    "
 echo "------------------------"
 
-#[ -d $destination_dir ]             || mkdir $destination_dir
+[ -d $destination_dir ]             || mkdir $destination_dir
 #[ -d $destination_dir/python3 ]     || mkdir $destination_dir/python3
 #[ -d $destination_dir/python3/lib ] || mkdir $destination_dir/python3/lib
 
@@ -276,4 +276,4 @@ if [ -z "${DYLD_LIBRARY_PATH+x}" ]; then
 elif contains "${DYLD_LIBRARY_PATH}" "${PROJECTPATH}/third_party/sgl/install/lib"; then
     export DYLD_LIBRARY_PATH="DYLD_LIBRARY_PATH:${PROJECTPATH}/third_party/sgl/install/lib"
 fi
-./LineVis
+#./LineVis
