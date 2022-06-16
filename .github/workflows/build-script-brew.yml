@@ -2,9 +2,9 @@ name: Build using Homebrew
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 env:
   BUILD_TYPE: Release
@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-20.04, macos-latest ]
+        os: [ macos-latest ]
 
     runs-on: ${{ matrix.os }}
     name: "${{ github.workflow }}: ${{ matrix.os }}"
