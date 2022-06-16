@@ -74,6 +74,8 @@ jobs:
               sed -i '' 's;^prefix=.*;prefix=\"'$prefix_path'\";' "$shaderc_pkgconfig_file"
               sed -i '' 's;^libdir=.*;libdir=${prefix}/lib;' "$shaderc_pkgconfig_file"
               export PKG_CONFIG_PATH="$(realpath "VulkanSDK/$(ls VulkanSDK)/macOS/lib/pkgconfig")"
+              echo $PKG_CONFIG_PATH
+              cat $shaderc_pkgconfig_file
             fi
           elif [ "$RUNNER_OS" == "macOS" ]; then
             vulkansdk_filename=$(curl -sIkL https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg | sed -r '/filename=/!d;s/.*filename=(.*)$/\1/')
