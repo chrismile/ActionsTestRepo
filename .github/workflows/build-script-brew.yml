@@ -87,6 +87,11 @@ jobs:
             cd ~/VulkanSDK/$VULKAN_SDK_VERSION
             sudo ./install_vulkan.py || true
             sudo hdiutil unmount /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION
+            # Fix pkgconfig file.
+            shaderc_pkgconfig_file="$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/macOS/lib/pkgconfig/shaderc.pc"
+            prefix_path=$(realpath "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/macOS")
+            sed -i '' 's;^prefix=.*;prefix=\"'$prefix_path'\";' "$shaderc_pkgconfig_file"
+            sed -i '' 's;^libdir=.*;libdir=${prefix}/lib;' "$shaderc_pkgconfig_file"
           else
             echo "$RUNNER_OS is not supported."
             exit 1
