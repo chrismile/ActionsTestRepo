@@ -47,15 +47,24 @@ is_installed_brew() {
 }
 
 if ! command -v brew &> /dev/null; then
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    if [ ! -d "/opt/homebrew/bin" ]; then
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    fi
+    if [ -d "/opt/homebrew/bin" ]; then
+        #echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> /Users/$USER/.zprofile
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    fi
 fi
 
-if command -v brew &> /dev/null; then
+if command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_dir_release ]; then
     if ! is_installed_brew "git"; then
         brew install git
     fi
     if ! is_installed_brew "cmake"; then
         brew install cmake
+    fi
+    if ! is_installed_brew "pkg-config"; then
+        brew install pkg-config
     fi
     if ! is_installed_brew "llvm"; then
         brew install llvm
@@ -92,17 +101,18 @@ if [ -z "${VULKAN_SDK+1}" ]; then
 
     found_vulkan=false
 
-    if [ -d "$HOME/VulkanSDK" ]; then
+    if [ -d "$HOME/VulkanSDK" ] && [ ! -z "$(ls -A "$HOME/VulkanSDK")" ]; then
         source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
         found_vulkan=true
     else
-      VULKAN_SDK_VERSION=1.3.204.1
-      curl -O https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/mac/vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
-      sudo hdiutil attach vulkansdk-macos-$VULKAN_SDK_VERSION.dmg
+      vulkansdk_filename=$(curl -sIkL https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg | sed -r '/filename=/!d;s/.*filename=(.*)$/\1/')
+      VULKAN_SDK_VERSION=$(echo $vulkansdk_filename | sed -r 's/^.*vulkansdk-macos-(.*)\.dmg.*$/\1/')
+      curl -O https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg
+      sudo hdiutil attach vulkan-sdk.dmg
       sudo /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION/InstallVulkan.app/Contents/MacOS/InstallVulkan \
       --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
       pushd ~/VulkanSDK/$VULKAN_SDK_VERSION
-      sudo ./install_vulkan.py
+      sudo python3 ./install_vulkan.py || true
       popd
       sudo hdiutil unmount /Volumes/vulkansdk-macos-$VULKAN_SDK_VERSION
       source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
@@ -159,13 +169,55 @@ if [ ! -d "./sgl/install" ]; then
         -DCMAKE_INSTALL_PREFIX="../install"
     popd >/dev/null
 
-    cmake --build $build_dir_debug --parallel
+    cmake --build $build_dir_debug --parallel $(sysctl -n hw.ncpu)
     cmake --build $build_dir_debug --target install
 
-    cmake --build $build_dir_release --parallel
+    cmake --build $build_dir_release --parallel $(sysctl -n hw.ncpu)
     cmake --build $build_dir_release --target install
 
     popd >/dev/null
+fi
+
+# CMake parameters for building the application.
+params=()
+
+if [ -d "./ospray/ospray/lib/cmake" ]; then
+    is_ospray_installed=true
+else
+    is_ospray_installed=false
+
+    # Make sure we have no leftovers from a failed build attempt.
+    if [ -d "./ospray-repo" ]; then
+        rm -rf "./ospray-repo"
+    fi
+    if [ -d "./ospray-build" ]; then
+        rm -rf "./ospray-build"
+    fi
+    if [ -d "./ospray" ]; then
+        rm -rf "./ospray"
+    fi
+
+    params_ospray=()
+    if [[ $(uname -m) == 'arm64' ]]; then
+        params_ospray+=(-DBUILD_TBB_FROM_SOURCE=On)
+    fi
+
+    # Build OSPRay and its dependencies.
+    git clone https://github.com/ospray/ospray.git ospray-repo
+    mkdir ospray-build
+    pushd "./ospray-build" >/dev/null
+    cmake ../ospray-repo/scripts/superbuild -DCMAKE_INSTALL_PREFIX="$PROJECTPATH/third_party/ospray" \
+    -DBUILD_JOBS=$(sysctl -n hw.ncpu) -DBUILD_OSPRAY_APPS=Off ${params_ospray[0]+"${params_ospray[@]}"}
+    cmake --build . --parallel $(sysctl -n hw.ncpu)
+    cmake --build . --parallel $(sysctl -n hw.ncpu)
+    popd >/dev/null
+
+    is_ospray_installed=true
+fi
+
+if $is_ospray_installed; then
+    params+=(-Dembree_DIR="${PROJECTPATH}/third_party/ospray/embree/lib/cmake/$(ls "${PROJECTPATH}/third_party/ospray/embree/lib/cmake")")
+    params+=(-Dospray_DIR="${PROJECTPATH}/third_party/ospray/ospray/lib/cmake/$(ls "${PROJECTPATH}/third_party/ospray/ospray/lib/cmake")")
 fi
 
 popd >/dev/null # back to project root
@@ -194,13 +246,14 @@ pushd $build_dir >/dev/null
 cmake -DCMAKE_TOOLCHAIN_FILE="$PROJECTPATH/third_party/vcpkg/scripts/buildsystems/vcpkg.cmake" \
       -DPYTHONHOME="./python3" \
       -DCMAKE_BUILD_TYPE=$cmake_config \
-      -Dsgl_DIR="$PROJECTPATH/third_party/sgl/install/lib/cmake/sgl/" ..
+      -Dsgl_DIR="$PROJECTPATH/third_party/sgl/install/lib/cmake/sgl/" ${params[0]+"${params[@]}"} ..
+Python3_VERSION=$(cat pythonversion.txt)
 popd >/dev/null
 
 echo "------------------------"
 echo "      compiling         "
 echo "------------------------"
-cmake --build $build_dir --parallel
+cmake --build $build_dir --parallel $(sysctl -n hw.ncpu)
 
 echo "------------------------"
 echo "   copying new files    "
@@ -210,8 +263,9 @@ echo "------------------------"
 [ -d $destination_dir/python3 ]     || mkdir $destination_dir/python3
 [ -d $destination_dir/python3/lib ] || mkdir $destination_dir/python3/lib
 
-rsync -a "$(eval echo "vcpkg_installed/$(ls vcpkg_installed | grep -Ewv 'vcpkg')/lib/python*")" $destination_dir/python3/lib
-rsync -a $build_dir/LineVis $destination_dir
+rsync -a "vcpkg_installed/$(ls vcpkg_installed | grep -Ewv 'vcpkg')/lib/$Python3_VERSION" $destination_dir/python3/lib
+#rsync -a "$(eval echo "vcpkg_installed/$(ls vcpkg_installed | grep -Ewv 'vcpkg')/lib/python*")" $destination_dir/python3/lib
+rsync -a "$build_dir/LineVis.app/Contents/MacOS/LineVis" $destination_dir
 
 echo ""
 echo "All done!"
@@ -236,4 +290,8 @@ if [ -z "${DYLD_LIBRARY_PATH+x}" ]; then
 elif contains "${DYLD_LIBRARY_PATH}" "${PROJECTPATH}/third_party/sgl/install/lib"; then
     export DYLD_LIBRARY_PATH="DYLD_LIBRARY_PATH:${PROJECTPATH}/third_party/sgl/install/lib"
 fi
-#./LineVis
+export PYTHONHOME="../$destination_dir/python3"
+#open ./LineVis.app
+#open ./LineVis.app --args --perf
+./LineVis.app/Contents/MacOS/LineVis
+#./LineVis.app/Contents/MacOS/LineVis --perf

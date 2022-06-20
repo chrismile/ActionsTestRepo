@@ -147,7 +147,7 @@ void main() {
     vec3 tangent0 = normalize(lineTangent[0]);
     vec3 tangent1 = normalize(lineTangent[1]);
 
-#if defined(USE_PRINCIPAL_STRESS_DIRECTION_INDEX) || defined(IS_PSL_DATA)
+#if defined(USE_PRINCIPAL_STRESS_DIRECTION_INDEX) || defined(IS_PSL_DATA) || defined(USE_LINE_HIERARCHY_LEVEL)
     int useBandValue = psUseBands[linePrincipalStressIndex[0]];
 #else
     int useBandValue = 1;
@@ -404,18 +404,18 @@ void main() {
         if (interpolationFactor < 0.0) {
             interpolationFactor = -interpolationFactor;
         }
-        phi = interpolationFactor * M_PI * 0.5;
+        phi = asin(interpolationFactor);
 #endif
     } else {
         // Compute the normal of the billboard tube for shading.
         float interpolationFactor = fragmentNormalFloat;
         vec3 normalCos = normalize(normal0);
         vec3 normalSin = normalize(normal1);
-        if (interpolationFactor < 0.0) {
-            normalSin = -normalSin;
-            interpolationFactor = -interpolationFactor;
-        }
-        float angle = interpolationFactor * M_PI * 0.5;
+        //if (interpolationFactor < 0.0) {
+        //    normalSin = -normalSin;
+        //    interpolationFactor = -interpolationFactor;
+        //}
+        float angle = asin(interpolationFactor);
         fragmentNormal = cos(angle) * normalCos + sin(angle) * normalSin;
 #ifdef USE_AMBIENT_OCCLUSION
         phi = angle;
@@ -430,9 +430,6 @@ void main() {
 #endif
 
 #if defined(USE_LINE_HIERARCHY_LEVEL) && defined(USE_TRANSPARENCY)
-    //float lower = lineHierarchySliderLower[fragmentPrincipalStressIndex];
-    //float upper = lineHierarchySliderUpper[fragmentPrincipalStressIndex];
-    //fragmentColor.a *= (upper - lower) * fragmentLineHierarchyLevel + lower;
     fragmentColor.a *= texture(
             lineHierarchyImportanceMap, vec2(fragmentLineHierarchyLevel, float(fragmentPrincipalStressIndex))).r;
 #endif
@@ -450,46 +447,5 @@ void main() {
             smoothstep(WHITE_THRESHOLD - EPSILON_WHITE, WHITE_THRESHOLD + EPSILON_WHITE, absCoords)),
             fragmentColor.a * coverage);
 
-#if defined(DIRECT_BLIT_GATHER)
-    // To counteract depth fighting with overlay wireframe.
-    float depthOffset = -0.00001;
-    if (absCoords >= WHITE_THRESHOLD - EPSILON_WHITE) {
-        depthOffset = 0.002;
-    }
-    //gl_FragDepth = clamp(gl_FragCoord.z + depthOffset, 0.0, 0.999);
-    gl_FragDepth = convertLinearDepthToDepthBufferValue(
-            convertDepthBufferValueToLinearDepth(gl_FragCoord.z) + fragmentDepth
-            - length(fragmentPositionWorld - cameraPosition) - 0.0001);
-    if (colorOut.a < 0.01) {
-        discard;
-    }
-    colorOut.a = 1.0;
-    fragColor = colorOut;
-#elif defined(USE_SYNC_FRAGMENT_SHADER_INTERLOCK)
-    // Area of mutual exclusion for fragments mapping to the same pixel
-    beginInvocationInterlockARB();
-    gatherFragment(colorOut);
-    endInvocationInterlockARB();
-#elif defined(USE_SYNC_SPINLOCK)
-    uint x = uint(gl_FragCoord.x);
-    uint y = uint(gl_FragCoord.y);
-    uint pixelIndex = addrGen(uvec2(x,y));
-    /**
-     * Spinlock code below based on code in:
-     * Brüll, Felix. (2018). Order-Independent Transparency Acceleration. 10.13140/RG.2.2.17568.84485.
-     */
-    if (!gl_HelperInvocation) {
-        bool keepWaiting = true;
-        while (keepWaiting) {
-            if (atomicCompSwap(spinlockViewportBuffer[pixelIndex], 0, 1) == 0) {
-                gatherFragment(colorOut);
-                memoryBarrier();
-                atomicExchange(spinlockViewportBuffer[pixelIndex], 0);
-                keepWaiting = false;
-            }
-        }
-    }
-#else
-    gatherFragment(colorOut);
-#endif
+#include "LinePassGather.glsl"
 }

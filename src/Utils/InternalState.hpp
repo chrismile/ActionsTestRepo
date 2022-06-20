@@ -49,7 +49,7 @@ public:
     inline float getFloatValue(const char *key) const { return sgl::fromString<float>(getValue(key)); }
     inline bool getBoolValue(const char *key) const { std::string val = getValue(key); if (val == "false" || val == "0") return false; return val.length() > 0; }
     inline void addKeyValue(const std::string &key, const std::string &value) { settings[key] = value; }
-    template<typename T> inline void addKeyValue(const std::string &key, const T &value) { settings[key] = toString(value); }
+    template<typename T> inline void addKeyValue(const std::string &key, const T &value) { settings[key] = sgl::toString(value); }
     inline void clear() { settings.clear(); }
 
     bool getValueOpt(const char *key, std::string &toset) const {
@@ -125,7 +125,7 @@ private:
 };
 
 struct DataSetDescriptor {
-    DataSetDescriptor() {}
+    DataSetDescriptor() = default;
     DataSetDescriptor(DataSetType type, const std::string& name, const std::string& filename)
             : type(type), name(name) {
         const std::string lineDataSetsDirectory = sgl::AppSettings::get()->getDataDirectory() + "LineDataSets/";
@@ -161,7 +161,7 @@ struct DataSetDescriptor {
         return !(*this == rhs);
     }
 
-    DataSetType type;
+    DataSetType type = DATA_SET_TYPE_NONE;
     std::string name;
     std::vector<std::string> filenames;
     std::vector<bool> enabledFileIndices;
@@ -172,6 +172,7 @@ struct InternalState {
         return this->dataSetDescriptor == rhs.dataSetDescriptor && this->name == rhs.name
                && this->renderingMode == rhs.renderingMode
                && this->rendererSettings == rhs.rendererSettings
+               && this->dataSetSettings == rhs.dataSetSettings
                && this->filterSettings == rhs.filterSettings
                && this->tilingWidth == rhs.tilingWidth && this->tilingHeight == rhs.tilingHeight
                && this->useMortonCodeForTiling == rhs.useMortonCodeForTiling
@@ -184,9 +185,10 @@ struct InternalState {
     }
 
     DataSetDescriptor dataSetDescriptor;
-    std::string name;
-    RenderingMode renderingMode;
+    std::string name, nameRaw;
+    RenderingMode renderingMode = RENDERING_MODE_ALL_LINES_OPAQUE;
     SettingsMap rendererSettings;
+    SettingsMap dataSetSettings;
     std::vector<SettingsMap> filterSettings;
     int tilingWidth = 2;
     int tilingHeight = 8;
@@ -195,6 +197,6 @@ struct InternalState {
     glm::ivec2 windowResolution = glm::ivec2(0, 0);
 };
 
-std::vector<InternalState> getTestModesPaper();
+std::vector<InternalState> getTestModes();
 
 #endif //HEXVOLUMERENDERER_INTERNALSTATE_HPP

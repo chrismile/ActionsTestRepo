@@ -82,9 +82,11 @@ public:
     size_t getNumLines() override;
     size_t getNumLinePoints() override;
     size_t getNumLineSegments() override;
+    size_t getBaseSizeInBytes() override;
 
     // Public interface for filtering trajectories.
     void iterateOverTrajectories(std::function<void(const Trajectory&)> callback) override;
+    void iterateOverTrajectoriesNotFiltered(std::function<void(const Trajectory&)> callback) override;
     void filterTrajectories(std::function<bool(const Trajectory&)> callback) override;
     void resetTrajectoryFilter() override;
 
@@ -101,15 +103,15 @@ public:
     void setRasterDataBindings(sgl::vk::RasterDataPtr& rasterData) override;
 
     // --- Retrieve data for rendering. ---
-    TubeRenderData getTubeRenderData() override;
-    TubeRenderDataProgrammableFetch getTubeRenderDataProgrammableFetch() override;
+    LinePassTubeRenderData getLinePassTubeRenderData() override;
     TubeRenderDataOpacityOptimization getTubeRenderDataOpacityOptimization() override;
     PointRenderData getDegeneratePointsRenderData();
-    BandRenderData getBandRenderData() override;
-
-    // --- Retrieve data for rendering for Vulkan. ---
-    VulkanTubeTriangleRenderData getVulkanTubeTriangleRenderData(LineRenderer* lineRenderer, bool raytracing) override;
-    VulkanTubeAabbRenderData getVulkanTubeAabbRenderData(LineRenderer* lineRenderer) override;
+    LinePassTubeRenderDataMeshShader getLinePassTubeRenderDataMeshShader() override;
+    LinePassTubeRenderDataProgrammablePull getLinePassTubeRenderDataProgrammablePull() override;
+    LinePassQuadsRenderData getLinePassQuadsRenderData() override;
+    LinePassQuadsRenderDataProgrammablePull getLinePassQuadsRenderDataProgrammablePull() override;
+    TubeTriangleRenderData getLinePassTubeTriangleMeshRenderData(bool isRasterizer, bool vulkanRayTracing) override;
+    TubeAabbRenderData getLinePassTubeAabbRenderData(bool isRasterizer) override;
     void getVulkanShaderPreprocessorDefines(
             std::map<std::string, std::string>& preprocessorDefines, bool isRasterizer) override;
     void setVulkanRenderDataDescriptors(const sgl::vk::RenderDataPtr& renderData) override;
@@ -174,6 +176,25 @@ private:
     void recomputeColorLegend() override;
     void recomputeColorLegendPositions();
 
+    /**
+     * Function used by, e.g., @see getLinePassTubeRenderData, @see getLinePassTubeRenderDataMeshShader and
+     * @see getLinePassTubeRenderDataProgrammablePull.
+     * It encapsulates shared code for creating line vertex and index data.
+     * @param indexOffsetFunctor A functor that returns the line index offset for the next points to be pushed.
+     * @param pointPushFunctor A functor that accepts a new point.
+     * @param pointPopFunctor A functor that gets called when the previous point needs to be removed. This usually
+     * happens when a line doesn't have at least two valid points.
+     * @param indicesPushFunctor A functor that creates line index data for the previously pushed points.
+     */
+    void getLinePassTubeRenderDataGeneral(
+            const std::function<uint32_t()>& indexOffsetFunctor,
+            const std::function<void(
+                    const glm::vec3& lineCenter, const glm::vec3& normal, const glm::vec3& tangent, float lineAttribute,
+                    uint32_t indexOffset, int principalStressIndex, float lineHierarchyLevel, int lineAppearanceOrder,
+                    float majorStress, float mediumStress, float minorStress)>& pointPushFunctor,
+            const std::function<void()>& pointPopFunctor,
+            const std::function<void(int numSegments, uint32_t indexOffset)>& indicesPushFunctor);
+
     // Should we show major, medium and/or minor principal stress lines?
     static bool useMajorPS, useMediumPS, useMinorPS;
     /// Should we use the principal direction ID for rendering?
@@ -198,6 +219,11 @@ private:
     };
     static BandRenderMode bandRenderMode;
 
+#ifdef USE_EIGEN
+    void computeMaxPrincipalStress();
+#endif
+    float maxPrincipalStressMagnitude = 0.0f;
+
     // Rendering mode settings.
     bool rendererSupportsTransparency = false;
 
@@ -215,9 +241,6 @@ private:
     bool shallRenderSeedingProcess = false;
     int currentSeedIdx = 0;
     std::vector<glm::vec3> seedPoints;
-
-    /// Stores line point data if useProgrammableFetch is true.
-    sgl::vk::BufferPtr lineHierarchyLevelsSSBO;
 
     // Color legend widgets for different principal stress directions.
     StressLineHierarchyMappingWidget stressLineHierarchyMappingWidget;

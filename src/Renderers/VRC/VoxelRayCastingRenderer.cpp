@@ -33,6 +33,7 @@
 #include <ImGui/imgui_custom.h>
 #include <ImGui/Widgets/PropertyEditor.hpp>
 
+#include "Utils/AutomaticPerformanceMeasurer.hpp"
 #include "VoxelRayCastingRenderer.hpp"
 
 VoxelRayCastingRenderer::VoxelRayCastingRenderer(
@@ -70,6 +71,11 @@ void VoxelRayCastingRenderer::reloadGatherShader() {
 
 void VoxelRayCastingRenderer::setLineData(LineDataPtr& lineData, bool isNewData) {
     updateNewLineData(lineData, isNewData);
+
+    if (!gridResolutionSetManually) {
+        double avgLineSegsPerAxis = std::cbrt(lineData->getNumLineSegments());
+        gridResolution1D = glm::clamp(sgl::nextPowerOfTwo(int(avgLineSegsPerAxis)) * 2, 64, 512);
+    }
 
     voxelCurveDiscretizer.loadLineData(lineData, gridResolution1D, quantizationResolution1D);
     if (useGpuForVoxelization) {
@@ -139,6 +145,13 @@ void VoxelRayCastingRenderer::setRenderDataBindings(const sgl::vk::RenderDataPtr
     }
     //renderData->setStaticTextureOptional(densityTexture, "densityTexture");
     //renderData->setStaticTextureOptional(aoTexture, "aoTexture");
+    if ((*sceneData->performanceMeasurer)) {
+        if (renderData->getShaderStages()->getShaderModules().front()->getShaderModuleId() == "VoxelRayCasting.Vertex") {
+            auto renderDataSize = renderData->getRenderDataSize();
+            (*sceneData->performanceMeasurer)->setCurrentDataSetBufferSizeBytes(
+                    renderDataSize.storageBufferSize);
+        }
+    }
 }
 
 void VoxelRayCastingRenderer::updateVulkanUniformBuffers() {
@@ -218,7 +231,14 @@ void VoxelRayCastingRenderer::render() {
     }
 
     // 2. Execute the VRC rendering pass.
-    voxelRayCastingPass->render();
+    if (voxelGridLineSegmentsBuffer) {
+        voxelRayCastingPass->render();
+    } else {
+        renderer->transitionImageLayout(
+                (*sceneData->sceneTexture)->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        (*sceneData->sceneTexture)->getImageView()->clearColor(
+                sceneData->clearColor->getFloatColorRGBA(), renderer->getVkCommandBuffer());
+    }
 }
 
 void VoxelRayCastingRenderer::renderGuiPropertyEditorNodes(sgl::PropertyEditor& propertyEditor) {
@@ -238,10 +258,43 @@ void VoxelRayCastingRenderer::renderGuiPropertyEditorNodes(sgl::PropertyEditor& 
 
     if (propertyEditor.addSliderInt("Grid Resolution", &gridResolution1D, 4, 256)) {
         voxelGridDirty = true;
+        gridResolutionSetManually = true;
     }
     if (propertyEditor.addSliderIntPowerOfTwo(
             "Quantization Resolution", &quantizationResolution1D, 1, 64)) {
         voxelGridDirty = true;
+        gridResolutionSetManually = true;
+    }
+
+    if (voxelGridDirty) {
+        dirty = true;
+        internalReRender = true;
+        reRender = true;
+    }
+}
+
+void VoxelRayCastingRenderer::setNewState(const InternalState& newState) {
+    bool voxelGridDirty = false;
+
+    if (newState.rendererSettings.getValueOpt("useGpuForVoxelization", useGpuForVoxelization)) {
+        voxelGridDirty = true;
+    }
+
+    if (newState.rendererSettings.getValueOpt(
+            "computeNearestFurthestHitsUsingHull", computeNearestFurthestHitsUsingHull)) {
+        reloadGatherShader();
+        internalReRender = true;
+        reRender = true;
+    }
+
+    if (newState.rendererSettings.getValueOpt("gridResolution", gridResolution1D)) {
+        voxelGridDirty = true;
+        gridResolutionSetManually = true;
+    }
+    if (newState.rendererSettings.getValueOpt(
+            "quantizationResolution", quantizationResolution1D)) {
+        voxelGridDirty = true;
+        gridResolutionSetManually = true;
     }
 
     if (voxelGridDirty) {
@@ -310,6 +363,9 @@ void LineHullRasterPass::createRasterData(sgl::vk::Renderer* renderer, sgl::vk::
     rasterData = std::make_shared<sgl::vk::RasterData>(renderer, graphicsPipeline);
     lineData->setVulkanRenderDataDescriptors(rasterData);
     rasterData->setStaticBuffer(uniformDataBuffer, "UniformDataBuffer");
+    if (!voxelCurveDiscretizer->getLineHullIndexBuffer()) {
+        return;
+    }
     rasterData->setIndexBuffer(voxelCurveDiscretizer->getLineHullIndexBuffer());
     rasterData->setVertexBuffer(voxelCurveDiscretizer->getLineHullVertexBuffer(), 0);
 }

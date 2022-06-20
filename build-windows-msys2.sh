@@ -2,7 +2,7 @@
 
 # BSD 2-Clause License
 #
-# Copyright (c) 2021, Christoph Neuhauser, Felix Brendel
+# Copyright (c) 2021-2022, Christoph Neuhauser, Felix Brendel
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -75,7 +75,8 @@ if command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_
             || ! is_installed_pacman "mingw-w64-x86_64-eigen3" \
             || ! is_installed_pacman "mingw-w64-x86_64-python" \
             || ! is_installed_pacman "mingw-w64-x86_64-python-numpy" \
-            || ! is_installed_pacman "mingw-w64-x86_64-openexr"; then
+            || ! is_installed_pacman "mingw-w64-x86_64-openexr" \
+            || ! is_installed_pacman "mingw-w64-x86_64-eccodes"; then
         echo "------------------------"
         echo "installing dependencies "
         echo "------------------------"
@@ -87,7 +88,7 @@ if command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_
         mingw64/mingw-w64-x86_64-vulkan-validation-layers mingw64/mingw-w64-x86_64-shaderc \
         mingw64/mingw-w64-x86_64-jsoncpp mingw64/mingw-w64-x86_64-netcdf mingw64/mingw-w64-x86_64-zeromq \
         mingw64/mingw-w64-x86_64-eigen3 mingw64/mingw-w64-x86_64-python mingw64/mingw-w64-x86_64-python-numpy \
-        mingw64/mingw-w64-x86_64-openexr
+        mingw64/mingw-w64-x86_64-openexr mingw64/mingw-w64-x86_64-eccodes
     fi
 fi
 
@@ -157,6 +158,44 @@ if [ ! -d "./sgl/install" ]; then
     popd >/dev/null
 fi
 
+# CMake parameters for building the application.
+params=()
+
+#if [ -d "./ospray/ospray/lib/cmake" ]; then
+#    is_ospray_installed=true
+#else
+#    is_ospray_installed=false
+#
+#    # Make sure we have no leftovers from a failed build attempt.
+#    if [ -d "./ospray-repo" ]; then
+#        rm -rf "./ospray-repo"
+#    fi
+#    if [ -d "./ospray-build" ]; then
+#        rm -rf "./ospray-build"
+#    fi
+#    if [ -d "./ospray" ]; then
+#        rm -rf "./ospray"
+#    fi
+#
+#    # Build OSPRay and its dependencies.
+#    git clone https://github.com/ospray/ospray.git ospray-repo
+#    mkdir ospray-build
+#    pushd "./ospray-build" >/dev/null
+#    cmake ../ospray-repo/scripts/superbuild -G "MSYS Makefiles" \
+#    -DCMAKE_INSTALL_PREFIX="$PROJECTPATH/third_party/ospray" \
+#    -DBUILD_JOBS=$(nproc) -DBUILD_OSPRAY_APPS=Off
+#    cmake --build . --parallel $(nproc)
+#    cmake --build . --parallel $(nproc)
+#    popd >/dev/null
+#
+#    is_ospray_installed=true
+#fi
+#
+#if $is_ospray_installed; then
+#    params+=(-Dembree_DIR="${PROJECTPATH}/third_party/ospray/embree/lib/cmake/$(ls "${PROJECTPATH}/third_party/ospray/embree/lib/cmake")")
+#    params+=(-Dospray_DIR="${PROJECTPATH}/third_party/ospray/ospray/lib/cmake/$(ls "${PROJECTPATH}/third_party/ospray/ospray/lib/cmake")")
+#fi
+
 popd >/dev/null # back to project root
 
 if [ $debug = true ] ; then
@@ -180,15 +219,17 @@ ls "$build_dir"
 echo "------------------------"
 echo "      generating        "
 echo "------------------------"
-python_name="$(find "$MSYSTEM_PREFIX/lib/" -maxdepth 1 -type d -name 'python*' -printf "%f" -quit)"
 pushd $build_dir >/dev/null
+Python3_VERSION="$(find "$MSYSTEM_PREFIX/lib/" -maxdepth 1 -type d -name 'python*' -printf "%f" -quit)"
 cmake .. \
     -G "MSYS Makefiles" \
     -DPython3_FIND_REGISTRY=NEVER \
     -DCMAKE_BUILD_TYPE=$cmake_config \
     -Dsgl_DIR="$PROJECTPATH/third_party/sgl/install/lib/cmake/sgl/" \
     -DPYTHONHOME="./python3" \
-    -DPYTHONPATH="./python3/lib/$python_name"
+    -DPYTHONPATH="./python3/lib/$Python3_VERSION" \
+    "${params[@]}"
+Python3_VERSION=$(cat pythonversion.txt)
 popd >/dev/null
 
 echo "------------------------"
@@ -223,12 +264,12 @@ for library in $ldd_output
 do
     if [[ $library == "$MSYSTEM_PREFIX"* ]] ;
     then
-		cp "$library" "$destination_dir/bin"
+		    cp "$library" "$destination_dir/bin"
     fi
     if [[ $library == libpython* ]] ;
     then
-	    tmp=${library#*lib}
-	    python_name=${tmp%.dll}
+	      tmp=${library#*lib}
+	      Python3_VERSION=${tmp%.dll}
     fi
 done
 
@@ -239,14 +280,14 @@ for library in $ldd_output
 do
     if [[ $library == "$MSYSTEM_PREFIX"* ]] ;
     then
-		cp "$library" "$destination_dir/bin"
+		    cp "$library" "$destination_dir/bin"
     fi
 done
 
 # Copy python3 to the destination directory.
 if [ ! -d "$destination_dir/bin/python3" ]; then
     mkdir -p "$destination_dir/bin/python3/lib"
-    cp -r "$MSYSTEM_PREFIX/lib/$python_name" "$destination_dir/bin/python3/lib"
+    cp -r "$MSYSTEM_PREFIX/lib/$Python3_VERSION" "$destination_dir/bin/python3/lib"
 fi
 if [ ! -d "$destination_dir/LICENSE" ]; then
     mkdir -p "$destination_dir/LICENSE"
@@ -260,8 +301,6 @@ fi
 
 # Create a run script.
 printf "@echo off\npushd %%~dp0\npushd bin\nstart \"\" LineVis.exe\n" > "$destination_dir/run.bat"
-
-
 
 
 # Run the program as the last step.

@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2020, Christoph Neuhauser
+ * Copyright (c) 2022, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,12 +26,24 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef NETCDFIMPORTER_NETCDFCONVERTER_HPP
-#define NETCDFIMPORTER_NETCDFCONVERTER_HPP
+#ifndef LINEVIS_AMIRAMESHLOADER_HPP
+#define LINEVIS_AMIRAMESHLOADER_HPP
 
 #include <string>
-#include "TrajectoryFile.hpp"
 
-BinLinesData loadTrajectoriesFromNetCdf(const std::string& filename);
+class StreamlineTracingGrid;
 
-#endif //NETCDFIMPORTER_NETCDFCONVERTER_HPP
+/**
+ * For more details on the AmiraMesh format see: https://www.csc.kth.se/~weinkauf/notes/amiramesh.html
+ */
+class AmiraMeshLoader {
+public:
+    static void load(
+            const std::string& dataSourceFilename, const GridDataSetMetaData& gridDataSetMetaData,
+            StreamlineTracingGrid* grid);
+
+private:
+    static char* skipLine(const std::string& dataSourceFilename, char* fileBuffer, char* fileBufferEnd);
+};
+
+#endif //LINEVIS_AMIRAMESHLOADER_HPP

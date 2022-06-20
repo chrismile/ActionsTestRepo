@@ -75,6 +75,9 @@ public:
     /// Renders the entries in the property editor.
     void renderGuiPropertyEditorNodes(sgl::PropertyEditor& propertyEditor) override;
 
+    /// For changing performance measurement modes.
+    void setNewState(const InternalState& newState) override;
+
 protected:
     void reloadGatherShader() override;
     void setUniformData();
@@ -109,6 +112,7 @@ private:
 
     // Rendering settings.
     int gridResolution1D = 64, quantizationResolution1D = 64;
+    bool gridResolutionSetManually = false;
     int maxNumLinesPerVoxel = 32;
     int maxNumHits = 8;
     bool useGpuForVoxelization = true;

@@ -81,19 +81,23 @@ layout(std430, binding = 7) readonly buffer TubeTriangleVertexDataBuffer {
     TubeTriangleVertexData tubeTriangleVertexDataBuffer[];
 };
 
-struct TubeLinePointData {
+#ifdef USE_INSTANCE_TRIANGLE_INDEX_OFFSET
+layout(std430, binding = 10) readonly buffer InstanceTriangleIndexOffsetBuffer {
+    uint instanceTriangleIndexOffsets[];
+};
+#endif
+
+struct LinePointData {
     vec3 linePosition;
     float lineAttribute;
     vec3 lineTangent;
-    float lineHierarchyLevel; ///< Zero for flow lines.
+    float lineRotation;
     vec3 lineNormal;
-    float lineAppearanceOrder; ///< Zero for flow lines.
-    uvec3 padding;
-    uint principalStressIndex; ///< Zero for flow lines.
+    uint lineStartIndex;
 };
 
-layout(std430, binding = 8) readonly buffer TubeLinePointDataBuffer {
-    TubeLinePointData tubeLinePointDataBuffer[];
+layout(std430, binding = 8) readonly buffer LinePointDataBuffer {
+    LinePointData linePoints[];
 };
 
 
@@ -139,7 +143,8 @@ void main() {
     }
 
     // 1. Trace primary ray to tube and get the closest hit.
-    vec3 rayOrigin = (inverseViewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+    vec3 cameraPosition = (inverseViewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+    vec3 rayOrigin = cameraPosition;
 
     uint seed = tea(gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * outputImageSize.x, frameNumber);
 
@@ -155,13 +160,21 @@ void main() {
             rayOrigin, 0.0001, rayDirection, 1000.0);
     while(rayQueryProceedEXT(rayQueryPrimary)) {}
 
-    const float offsetFactor = subdivisionCorrectionFactor + 0.001;
+    //const float offsetFactor = subdivisionCorrectionFactor + 0.001;
 
     float aoFactor = 1.0;
     if (rayQueryGetIntersectionTypeEXT(rayQueryPrimary, true) != gl_RayQueryCommittedIntersectionNoneEXT) {
         // 2. Get the surface normal of the hit tube.
         int primitiveId = rayQueryGetIntersectionPrimitiveIndexEXT(rayQueryPrimary, true);
+#ifdef USE_INSTANCE_TRIANGLE_INDEX_OFFSET
+        // rayQueryGetIntersectionInstanceCustomIndexEXT and rayQueryGetIntersectionInstanceIdEXT should be the same,
+        // as hull instances are always specified last.
+        int instanceId = rayQueryGetIntersectionInstanceIdEXT(rayQueryPrimary, true);
+        uint instanceTriangleIndexOffset = instanceTriangleIndexOffsets[instanceId];
+        uvec3 triangleIndices = indexBuffer[instanceTriangleIndexOffset + primitiveId];
+#else
         uvec3 triangleIndices = indexBuffer[primitiveId];
+#endif
         vec2 attribs = rayQueryGetIntersectionBarycentricsEXT(rayQueryPrimary, true);
         const vec3 barycentricCoordinates = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
 
@@ -178,9 +191,9 @@ void main() {
         //    uint vertexLinePointIndex1 = vertexData1.vertexLinePointIndex;
         //    uint vertexLinePointIndex2 = vertexData2.vertexLinePointIndex;
         //#endif
-        TubeLinePointData linePointData0 = tubeLinePointDataBuffer[vertexLinePointIndex0];
-        TubeLinePointData linePointData1 = tubeLinePointDataBuffer[vertexLinePointIndex1];
-        TubeLinePointData linePointData2 = tubeLinePointDataBuffer[vertexLinePointIndex2];
+        LinePointData linePointData0 = linePoints[vertexLinePointIndex0];
+        LinePointData linePointData1 = linePoints[vertexLinePointIndex1];
+        LinePointData linePointData2 = linePoints[vertexLinePointIndex2];
 
         vec3 vertexPositionWorld = interpolateVec3(
                 vertexData0.vertexPosition, vertexData1.vertexPosition, vertexData2.vertexPosition, barycentricCoordinates);
@@ -206,6 +219,7 @@ void main() {
             vec3 rayDirection = normalize(frame * sampleHemisphere(xi));
 
             rayQueryEXT rayQuery;
+            const float offsetFactor = length(cameraPosition - vertexPositionWorld) * 1e-3;
             float occlusionFactor = traceAoRay(rayQuery, vertexPositionWorld + rayDirection * offsetFactor, rayDirection);
             aoFactor += occlusionFactor;
         }

@@ -34,12 +34,14 @@
 #include <json/json.h>
 
 #include "Loaders/DataSetList.hpp"
+#include "Loader/AbcFlowGenerator.hpp"
 #include "../LineDataFlow.hpp"
 #include "StreamlineTracingDefines.hpp"
 
 class StreamlineSeeder;
 typedef std::shared_ptr<StreamlineSeeder> StreamlineSeederPtr;
 class StreamlineTracingGrid;
+struct GridDataSetMetaData;
 
 class StreamlineTracingRequester {
 public:
@@ -55,6 +57,8 @@ public:
      * @return Whether a request is currently processed (for UI progress spinner).
      */
     [[nodiscard]] inline bool getIsProcessingRequest() const { return isProcessingRequest; }
+
+    inline void setShowWindow(bool _showWindow) { showWindow = _showWindow; }
 
 private:
     void loadGridDataSetList();
@@ -122,7 +126,9 @@ private:
     std::string gridDataSetFilename;
     std::vector<std::string> gridDataSetNames;
     std::vector<std::string> gridDataSetFilenames;
+    std::vector<GridDataSetMetaData> gridDataSetsMetaData;
     int selectedGridDataSetIndex = 0;
+    AbcFlowGenerator abcFlowGenerator;
 };
 
 #endif //LINEVIS_STREAMLINETRACINGREQUESTER_HPP

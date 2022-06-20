@@ -87,6 +87,9 @@ public:
     // Called when the camera has moved.
     void onHasMoved() override;
 
+    /// For changing performance measurement modes.
+    void setNewState(const InternalState& newState) override;
+
     /// Returns whether the triangle representation is used by the renderer.
     [[nodiscard]] bool getIsTriangleRepresentationUsed() const override;
 
@@ -128,7 +131,9 @@ private:
 
 class RayTracingRenderPass : public sgl::vk::RayTracingPass {
 public:
-    RayTracingRenderPass(VulkanRayTracer* vulkanRayTracer, sgl::vk::Renderer* renderer, sgl::CameraPtr* camera);
+    RayTracingRenderPass(
+            SceneData* sceneData, VulkanRayTracer* vulkanRayTracer, sgl::vk::Renderer* renderer,
+            sgl::CameraPtr* camera);
 
     // Public interface.
     void setOutputImage(sgl::vk::ImageViewPtr& colorImage);
@@ -149,6 +154,7 @@ public:
     inline void setUseAnalyticIntersections(bool analyticIntersections) { useAnalyticIntersections = analyticIntersections; }
     inline void setUseMlat(bool mlat) { useMlat = mlat; }
     inline void setMlatNumNodes(int numNodes) { mlatNumNodes = numNodes; }
+    inline bool getIsAccelerationStructureEmpty() { return topLevelAS.get() == nullptr; }
 
 private:
     void updateUseJitteredSamples();
@@ -157,6 +163,7 @@ private:
     void createRayTracingData(sgl::vk::Renderer* renderer, sgl::vk::RayTracingPipelinePtr& rayTracingPipeline) override;
     void _render() override;
 
+    SceneData* sceneData = nullptr;
     VulkanRayTracer* vulkanRayTracer = nullptr;
 
     sgl::CameraPtr* camera;
@@ -172,10 +179,11 @@ private:
     bool useAmbientOcclusion = false;
     AmbientOcclusionBakerPtr ambientOcclusionBaker;
 
-    VulkanTubeTriangleRenderData tubeTriangleRenderData;
-    VulkanTubeAabbRenderData tubeAabbRenderData;
-    VulkanHullTriangleRenderData hullTriangleRenderData;
+    TubeTriangleRenderData tubeTriangleRenderData;
+    TubeAabbRenderData tubeAabbRenderData;
+    HullTriangleRenderData hullTriangleRenderData;
     sgl::vk::TopLevelAccelerationStructurePtr topLevelAS;
+    bool useSplitBlases = false;
 
     // Uniform buffer object storing the line rendering settings.
     void updateLineRenderSettings();

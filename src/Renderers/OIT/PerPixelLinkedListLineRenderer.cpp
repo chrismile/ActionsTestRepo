@@ -86,6 +86,7 @@ void PerPixelLinkedListLineRenderer::setNewState(const InternalState& newState) 
     if ((*sceneData->performanceMeasurer) && !timerDataIsWritten) {
         timer = {};
         timer = std::make_shared<sgl::vk::Timer>(renderer);
+        timer->setStoreFrameTimeList(true);
         (*sceneData->performanceMeasurer)->setPpllTimer(timer);
     }
 }
@@ -128,6 +129,10 @@ void PerPixelLinkedListLineRenderer::getVulkanShaderPreprocessorDefines(
 
     if (sortingAlgorithmMode == SORTING_ALGORITHM_MODE_PRIORITY_QUEUE) {
         preprocessorDefines.insert(std::make_pair("sortingAlgorithm", "frontToBackPQ"));
+        if (renderer->getDevice()->getDeviceDriverId() == VK_DRIVER_ID_AMD_PROPRIETARY
+                || renderer->getDevice()->getDeviceDriverId() == VK_DRIVER_ID_AMD_OPEN_SOURCE) {
+            preprocessorDefines.insert(std::make_pair("INITIALIZE_ARRAY_POW2", ""));
+        }
     } else if (sortingAlgorithmMode == SORTING_ALGORITHM_MODE_BUBBLE_SORT) {
         preprocessorDefines.insert(std::make_pair("sortingAlgorithm", "bubbleSort"));
     } else if (sortingAlgorithmMode == SORTING_ALGORITHM_MODE_INSERTION_SORT) {
@@ -154,6 +159,7 @@ void PerPixelLinkedListLineRenderer::setGraphicsPipelineInfo(
         sgl::vk::GraphicsPipelineInfo& pipelineInfo, const sgl::vk::ShaderStagesPtr& shaderStages) {
     pipelineInfo.setColorWriteEnabled(false);
     pipelineInfo.setDepthWriteEnabled(false);
+    pipelineInfo.setDepthTestEnabled(false);
 }
 
 void PerPixelLinkedListLineRenderer::setRenderDataBindings(const sgl::vk::RenderDataPtr& renderData) {
@@ -294,7 +300,10 @@ void PerPixelLinkedListLineRenderer::gather() {
     //renderer->setViewMatrix((*sceneData->camera)->getViewMatrix());
     //renderer->setModelMatrix(sgl::matrixIdentity());
 
-    lineRasterPass->render();
+    lineRasterPass->buildIfNecessary();
+    if (!lineRasterPass->getIsDataEmpty()) {
+        lineRasterPass->render();
+    }
     renderHull();
     renderer->insertMemoryBarrier(
             VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,

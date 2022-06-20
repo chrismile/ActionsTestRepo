@@ -32,6 +32,7 @@
 #include <string>
 #include <memory>
 #include <glm/vec3.hpp>
+#include "Loader/AbcFlowGenerator.hpp"
 
 enum class StreamlineTracingDataSource {
     // A .vtk file storing a STRUCTURED_GRID data set.
@@ -95,6 +96,12 @@ const char* const TERMINATION_CHECK_TYPE_NAMES[] = {
         "Naive (O(n^2))", "Grid-based", "k-d Tree-based", "Hashed Grid-based"
 };
 
+enum class LoopCheckMode {
+    NONE, START_POINT, ALL_POINTS, GRID, CURVATURE
+};
+const char* const LOOP_CHECK_MODE_NAMES[] = {
+        "None", "Start Point", "All Points", "Grid", "Curvature"
+};
 
 class StreamlineSeeder;
 typedef std::shared_ptr<StreamlineSeeder> StreamlineSeederPtr;
@@ -106,8 +113,22 @@ class StreamlineTracingGrid;
 #define IDXS(x,y,z) ((z)*xs*ys + (y)*xs + (x))
 #define IDXS_C(x,y,z) ((z)*(xs-1)*(ys-1) + (y)*(xs-1) + (x))
 
+struct GridDataSetMetaData {
+    // Date can be left 0. It is used for GRIB files storing time in a date-time format.
+    // E.g., "data_date": 20161002, "data_time": 600 can be used for 2016-10-02 6:00.
+    // Alternatively, "time": "2016-10-02 6:00" can be used. Time steps are specified via, e.g., "time": 10.
+    int date = 0;
+    int time = 0;
+    // Scale along each input axis.
+    glm::vec3 scale = { 1.0f, 1.0f, 1.0f };
+    // Can be used for transposing axes.
+    glm::ivec3 axes = { 0, 1, 2 };
+};
+
 struct StreamlineTracingSettings {
+    bool isAbcDataSet = false;
     std::string dataSourceFilename{};
+    GridDataSetMetaData gridDataSetMetaData{};
     FlowPrimitives flowPrimitives = FlowPrimitives::STREAMRIBBONS;
     int numPrimitives = 1024;
     StreamlineSeedingStrategy streamlineSeedingStrategy = StreamlineSeedingStrategy::VOLUME;
@@ -115,14 +136,17 @@ struct StreamlineTracingSettings {
     float timeStepScale = 1.0f;
     int maxNumIterations = 2000;
     float terminationDistance = 1.0f;
+    float terminationDistanceSelf = 1.0f;
     float minimumLength = 0.7f;
     float minimumSeparationDistance = 0.08f;
-    TerminationCheckType terminationCheckType = TerminationCheckType::KD_TREE_BASED;
+    TerminationCheckType terminationCheckType = TerminationCheckType::GRID_BASED;
     bool showSimulationGridOutline = true;
     bool smoothedSimulationGridOutline = true;
     StreamlineIntegrationMethod integrationMethod = StreamlineIntegrationMethod::RK4;
     StreamlineIntegrationDirection integrationDirection = StreamlineIntegrationDirection::BOTH;
     int vectorFieldIndex = 0;
+    AbcFlowGenerator abcFlowGenerator;
+    LoopCheckMode loopCheckMode = LoopCheckMode::START_POINT;
 
     // For flowPrimitives == FlowPrimitives::STREAMRIBBONS.
     bool useHelicity = true;

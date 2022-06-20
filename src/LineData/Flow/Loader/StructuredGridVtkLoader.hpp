@@ -39,7 +39,9 @@ class StreamlineTracingGrid;
  */
 class StructuredGridVtkLoader {
 public:
-    static void load(const std::string& dataSourceFilename, StreamlineTracingGrid* grid);
+    static void load(
+            const std::string& dataSourceFilename, const GridDataSetMetaData& gridDataSetMetaData,
+            StreamlineTracingGrid* grid);
 
 private:
     enum class ReadMode {
@@ -47,6 +49,9 @@ private:
     };
     static void _readLines(
             ReadMode readMode, int numObjects, float* fieldData,
+            size_t& charPtr, size_t& length, const char* fileBuffer);
+    static void _readFieldLine(
+            std::string& arrayName, int& numComponents, int& numTuples, std::string& dataType,
             size_t& charPtr, size_t& length, const char* fileBuffer);
     static void _convertScalarFieldCellToPointMode(
             const float* scalarFieldCell, float* scalarFieldPoint, int xs, int ys, int zs);

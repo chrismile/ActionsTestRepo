@@ -33,6 +33,7 @@
 #include <ImGui/imgui_custom.h>
 #include <ImGui/Widgets/PropertyEditor.hpp>
 
+#include "Utils/AutomaticPerformanceMeasurer.hpp"
 #include "Renderers/AmbientOcclusion/VulkanAmbientOcclusionBaker.hpp"
 #include "Renderers/AmbientOcclusion/VulkanRayTracedAmbientOcclusion.hpp"
 #include "Renderers/RayTracing/VulkanRayTracer.hpp"
@@ -42,6 +43,10 @@
 
 float LineRenderer::lineWidth = STANDARD_LINE_WIDTH;
 float LineRenderer::bandWidth = STANDARD_BAND_WIDTH;
+float LineRenderer::displayLineWidth = STANDARD_LINE_WIDTH;
+float LineRenderer::displayBandWidth = STANDARD_BAND_WIDTH;
+float LineRenderer::displayLineWidthStaging = STANDARD_LINE_WIDTH;
+float LineRenderer::displayBandWidthStaging = STANDARD_BAND_WIDTH;
 
 LineRenderer::LineRenderer(
         std::string windowName, SceneData* sceneData, sgl::TransferFunctionWindow& transferFunctionWindow)
@@ -91,8 +96,10 @@ bool LineRenderer::needsReRender() {
 }
 
 bool LineRenderer::getIsTriangleRepresentationUsed() const {
-    return (lineData && lineData->getLinePrimitiveMode() == LineData::LINE_PRIMITIVES_TRIANGLE_MESH)
-            || (useAmbientOcclusion && ambientOcclusionBaker);
+    bool primitiveModeUsesTriMesh =
+            lineData->getLinePrimitiveMode() == LineData::LINE_PRIMITIVES_TUBE_TRIANGLE_MESH
+            || lineData->getLinePrimitiveMode() == LineData::LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH;
+    return (lineData && primitiveModeUsesTriMesh) || (useAmbientOcclusion && ambientOcclusionBaker);
 }
 
 void LineRenderer::update(float dt) {
@@ -157,8 +164,18 @@ void LineRenderer::setGraphicsPipelineInfo(
 
 void LineRenderer::setRenderDataBindings(const sgl::vk::RenderDataPtr& renderData) {
     if (useDepthCues) {
-        renderData->setStaticBufferOptional(
-                depthMinMaxBuffers[outputDepthMinMaxBufferIndex], "DepthMinMaxBuffer");
+        if (!depthMinMaxBuffers[outputDepthMinMaxBufferIndex]
+                && renderData->getShaderStages()->hasDescriptorBinding(0, "DepthMinMaxBuffer")) {
+            if (!dummyBuffer) {
+                dummyBuffer = std::make_shared<sgl::vk::Buffer>(
+                        renderer->getDevice(), sizeof(glm::vec4),
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+            }
+            renderData->setStaticBufferOptional(dummyBuffer, "DepthMinMaxBuffer");
+        } else {
+            renderData->setStaticBufferOptional(
+                    depthMinMaxBuffers[outputDepthMinMaxBufferIndex], "DepthMinMaxBuffer");
+        }
     }
     if (useAmbientOcclusion && ambientOcclusionBaker) {
         if (ambientOcclusionBaker->getIsStaticPrebaker()) {
@@ -428,6 +445,9 @@ void LineRenderer::reloadGatherShaderExternal() {
 }
 
 bool LineRenderer::getCanUseLiveUpdate(LineDataAccessType accessType) const {
+    if (ambientOcclusionStrength > 0.0f) {
+        return false;
+    }
     if (lineData) {
         if (accessType == LineDataAccessType::TRIANGLE_MESH) {
             return !getIsTriangleRepresentationUsed() || lineData->getIsSmallDataSet();
@@ -454,10 +474,20 @@ void LineRenderer::renderGuiPropertyEditorNodes(sgl::PropertyEditor& propertyEdi
     bool shallReloadGatherShader = false;
 
     bool canUseLiveUpdate = getCanUseLiveUpdate(LineDataAccessType::TRIANGLE_MESH);
+    if (lineWidth != displayLineWidthStaging) {
+        displayLineWidthStaging = lineWidth;
+        displayLineWidth = lineWidth;
+        if (lineData) {
+            lineData->setTriangleRepresentationDirty();
+        }
+        reRender = true;
+        internalReRender = true;
+    }
     ImGui::EditMode editMode = propertyEditor.addSliderFloatEdit(
-            "Line Width", &lineWidth, MIN_LINE_WIDTH, MAX_LINE_WIDTH, "%.4f");
+            "Line Width", &displayLineWidth, MIN_LINE_WIDTH, MAX_LINE_WIDTH, "%.4f");
     if ((canUseLiveUpdate && editMode != ImGui::EditMode::NO_CHANGE)
-        || (!canUseLiveUpdate && editMode == ImGui::EditMode::INPUT_FINISHED)) {
+            || (!canUseLiveUpdate && editMode == ImGui::EditMode::INPUT_FINISHED)) {
+        lineWidth = displayLineWidth;
         if (lineData) {
             lineData->setTriangleRepresentationDirty();
         }
@@ -574,6 +604,10 @@ void LineRenderer::updateNewLineData(LineDataPtr& lineData, bool isNewData) {
     depthMinMaxBuffers[1] = {};
     if (useDepthCues) {
         updateDepthCueGeometryData();
+    }
+
+    if ((*sceneData->performanceMeasurer)) {
+        (*sceneData->performanceMeasurer)->setCurrentDataSetBaseSizeBytes(lineData->getBaseSizeInBytes());
     }
 
     if (isRasterizer) {

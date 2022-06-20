@@ -172,6 +172,7 @@ void MLABRenderer::setGraphicsPipelineInfo(
         sgl::vk::GraphicsPipelineInfo& pipelineInfo, const sgl::vk::ShaderStagesPtr& shaderStages) {
     pipelineInfo.setColorWriteEnabled(false);
     pipelineInfo.setDepthWriteEnabled(false);
+    pipelineInfo.setDepthTestEnabled(false);
 }
 
 void MLABRenderer::setRenderDataBindings(const sgl::vk::RenderDataPtr& renderData) {
@@ -293,7 +294,10 @@ void MLABRenderer::gather() {
     //renderer->setViewMatrix(sceneData->camera->getViewMatrix());
     //renderer->setModelMatrix(sgl::matrixIdentity());
 
-    lineRasterPass->render();
+    lineRasterPass->buildIfNecessary();
+    if (!lineRasterPass->getIsDataEmpty()) {
+        lineRasterPass->render();
+    }
     renderHull();
     renderer->insertMemoryBarrier(
             VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,

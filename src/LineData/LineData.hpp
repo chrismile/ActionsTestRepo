@@ -143,9 +143,11 @@ public:
     virtual size_t getNumLines()=0;
     virtual size_t getNumLinePoints()=0;
     virtual size_t getNumLineSegments()=0;
+    virtual size_t getBaseSizeInBytes()=0;
 
     // Public interface for filtering trajectories.
     virtual void iterateOverTrajectories(std::function<void(const Trajectory&)> callback)=0;
+    virtual void iterateOverTrajectoriesNotFiltered(std::function<void(const Trajectory&)> callback)=0;
     virtual void filterTrajectories(std::function<bool(const Trajectory&)> callback)=0;
     virtual void resetTrajectoryFilter()=0;
 
@@ -160,19 +162,19 @@ public:
     virtual void setRasterDataBindings(sgl::vk::RasterDataPtr& rasterData);
 
     // --- Retrieve data for rendering. Only for renderers needing direct access! ---
-    virtual TubeRenderData getTubeRenderData()=0;
-    virtual TubeRenderDataProgrammableFetch getTubeRenderDataProgrammableFetch()=0;
+    virtual LinePassTubeRenderData getLinePassTubeRenderData()=0;
+    virtual LinePassQuadsRenderDataProgrammablePull getLinePassQuadsRenderDataProgrammablePull()=0;
     virtual TubeRenderDataOpacityOptimization getTubeRenderDataOpacityOptimization()=0;
-    virtual BandRenderData getBandRenderData() { return {}; }
-
-    // --- Retrieve data for rendering for Vulkan. ---
-    virtual VulkanTubeTriangleRenderData getVulkanTubeTriangleRenderData(LineRenderer* lineRenderer, bool raytracing)=0;
-    virtual VulkanTubeAabbRenderData getVulkanTubeAabbRenderData(LineRenderer* lineRenderer)=0;
-    virtual VulkanHullTriangleRenderData getVulkanHullTriangleRenderData(bool raytracing);
-    sgl::vk::TopLevelAccelerationStructurePtr getRayTracingTubeTriangleTopLevelAS(LineRenderer* lineRenderer);
-    sgl::vk::TopLevelAccelerationStructurePtr getRayTracingTubeTriangleAndHullTopLevelAS(LineRenderer* lineRenderer);
-    sgl::vk::TopLevelAccelerationStructurePtr getRayTracingTubeAabbTopLevelAS(LineRenderer* lineRenderer);
-    sgl::vk::TopLevelAccelerationStructurePtr getRayTracingTubeAabbAndHullTopLevelAS(LineRenderer* lineRenderer);
+    virtual LinePassTubeRenderDataMeshShader getLinePassTubeRenderDataMeshShader()=0;
+    virtual LinePassTubeRenderDataProgrammablePull getLinePassTubeRenderDataProgrammablePull()=0;
+    virtual LinePassQuadsRenderData getLinePassQuadsRenderData() { return {}; }
+    virtual TubeTriangleRenderData getLinePassTubeTriangleMeshRenderData(bool isRasterizer, bool vulkanRayTracing)=0;
+    virtual TubeAabbRenderData getLinePassTubeAabbRenderData(bool isRasterizer)=0;
+    virtual HullTriangleRenderData getVulkanHullTriangleRenderData(bool vulkanRayTracing);
+    sgl::vk::TopLevelAccelerationStructurePtr getRayTracingTubeTriangleTopLevelAS();
+    sgl::vk::TopLevelAccelerationStructurePtr getRayTracingTubeTriangleAndHullTopLevelAS();
+    sgl::vk::TopLevelAccelerationStructurePtr getRayTracingTubeAabbTopLevelAS();
+    sgl::vk::TopLevelAccelerationStructurePtr getRayTracingTubeAabbAndHullTopLevelAS();
     inline void getVulkanShaderPreprocessorDefines(std::map<std::string, std::string>& preprocessorDefines) {
         getVulkanShaderPreprocessorDefines(preprocessorDefines, true);
     }
@@ -235,21 +237,45 @@ public:
     [[nodiscard]] static inline int getTubeNumSubdivisions() { return tubeNumSubdivisions; }
 
     enum LinePrimitiveMode {
-        LINE_PRIMITIVES_RIBBON_PROGRAMMABLE_FETCH,
-        LINE_PRIMITIVES_RIBBON_GEOMETRY_SHADER,
+        LINE_PRIMITIVES_QUADS_PROGRAMMABLE_PULL,
+        LINE_PRIMITIVES_QUADS_GEOMETRY_SHADER,
+        LINE_PRIMITIVES_TUBE_PROGRAMMABLE_PULL,
         LINE_PRIMITIVES_TUBE_GEOMETRY_SHADER,
-        LINE_PRIMITIVES_BAND,
-        LINE_PRIMITIVES_TUBE_BAND,
-        LINE_PRIMITIVES_TRIANGLE_MESH //< Not supported so far.
+        LINE_PRIMITIVES_TUBE_TRIANGLE_MESH,
+        LINE_PRIMITIVES_TUBE_MESH_SHADER,
+        LINE_PRIMITIVES_RIBBON_QUADS_GEOMETRY_SHADER,
+        LINE_PRIMITIVES_TUBE_RIBBONS_PROGRAMMABLE_PULL,
+        LINE_PRIMITIVES_TUBE_RIBBONS_GEOMETRY_SHADER,
+        LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH,
+        LINE_PRIMITIVES_TUBE_RIBBONS_MESH_SHADER,
     };
+    static inline bool getLinePrimitiveModeUsesSingleVertexShaderInputs(LinePrimitiveMode mode) {
+        return mode != LINE_PRIMITIVES_QUADS_PROGRAMMABLE_PULL
+               && mode != LINE_PRIMITIVES_TUBE_PROGRAMMABLE_PULL
+               && mode != LINE_PRIMITIVES_TUBE_RIBBONS_PROGRAMMABLE_PULL
+               && mode != LINE_PRIMITIVES_TUBE_MESH_SHADER
+               && mode != LINE_PRIMITIVES_TUBE_RIBBONS_MESH_SHADER
+               && mode != LINE_PRIMITIVES_TUBE_TRIANGLE_MESH
+               && mode != LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH;
+    }
+    static inline bool getLinePrimitiveModeSupportsLineMultiWidth(LinePrimitiveMode mode) {
+        return mode == LINE_PRIMITIVES_TUBE_RIBBONS_PROGRAMMABLE_PULL
+               || mode == LINE_PRIMITIVES_TUBE_RIBBONS_GEOMETRY_SHADER
+               || mode == LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH
+               || mode == LINE_PRIMITIVES_TUBE_RIBBONS_MESH_SHADER;
+    }
     static bool getLinePrimitiveModeUsesGeometryShader(LinePrimitiveMode mode) {
-        return mode == LINE_PRIMITIVES_RIBBON_GEOMETRY_SHADER || mode == LINE_PRIMITIVES_TUBE_GEOMETRY_SHADER
-               || mode == LINE_PRIMITIVES_TUBE_BAND || mode == LINE_PRIMITIVES_BAND;
+        return mode == LINE_PRIMITIVES_QUADS_GEOMETRY_SHADER || mode == LINE_PRIMITIVES_TUBE_GEOMETRY_SHADER
+               || mode == LINE_PRIMITIVES_TUBE_RIBBONS_GEOMETRY_SHADER || mode == LINE_PRIMITIVES_RIBBON_QUADS_GEOMETRY_SHADER;
     }
     static inline LinePrimitiveMode getLinePrimitiveMode() { return linePrimitiveMode; }
     static inline void setLinePrimitiveMode(LinePrimitiveMode mode) { linePrimitiveMode = mode; }
     static inline bool getUseBandRendering() {
-        return linePrimitiveMode == LINE_PRIMITIVES_BAND || linePrimitiveMode == LINE_PRIMITIVES_TUBE_BAND;
+        return linePrimitiveMode == LINE_PRIMITIVES_RIBBON_QUADS_GEOMETRY_SHADER
+                || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_PROGRAMMABLE_PULL
+                || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_GEOMETRY_SHADER
+                || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH
+                || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_MESH_SHADER;
     }
     static inline float getMinBandThickness() { return minBandThickness; }
 
@@ -261,6 +287,7 @@ protected:
             const std::string& simulationMeshFilename, const sgl::AABB3& oldAABB, glm::mat4* transformationMatrixPtr);
     virtual void recomputeColorLegend();
     int getAttributeNameIndex(const std::string& attributeName);
+    bool updateLinePrimitiveMode(LineRenderer* lineRenderer);
 
     ///< The maximum number of line points to be considered a small data set (important, e.g., for live UI updates).
     const size_t SMALL_DATASET_LINE_POINTS_MAX = 10000;
@@ -296,18 +323,22 @@ protected:
     static bool renderThickBands;
     static float minBandThickness;
 
-    /// Stores line point data if linePrimitiveMode == LINE_PRIMITIVES_RIBBON_PROGRAMMABLE_FETCH.
-    sgl::vk::BufferPtr linePointDataSSBO;
-
     // Caches the rendering data when using Vulkan (as, e.g., the Vulkan ray tracer and AO baking could be used at the
     // same time).
-    sgl::vk::BottomLevelAccelerationStructurePtr getTubeTriangleBottomLevelAS(LineRenderer* lineRenderer);
-    sgl::vk::BottomLevelAccelerationStructurePtr getTubeAabbBottomLevelAS(LineRenderer* lineRenderer);
+    std::vector<sgl::vk::BottomLevelAccelerationStructurePtr> getTubeTriangleBottomLevelAS();
+    sgl::vk::BottomLevelAccelerationStructurePtr getTubeAabbBottomLevelAS();
     sgl::vk::BottomLevelAccelerationStructurePtr getHullTriangleBottomLevelAS();
-    VulkanTubeTriangleRenderData vulkanTubeTriangleRenderData;
-    VulkanTubeAabbRenderData vulkanTubeAabbRenderData;
-    VulkanHullTriangleRenderData vulkanHullTriangleRenderData;
-    sgl::vk::BottomLevelAccelerationStructurePtr tubeTriangleBottomLevelAS;
+    void splitTriangleIndices(
+            std::vector<uint32_t>& tubeTriangleIndices,
+            const std::vector<TubeTriangleVertexData> &tubeTriangleVertexDataList);
+    TubeTriangleRenderData vulkanTubeTriangleRenderData;
+    TubeTriangleSplitData tubeTriangleSplitData;
+    TubeAabbRenderData vulkanTubeAabbRenderData;
+    HullTriangleRenderData vulkanHullTriangleRenderData;
+    bool vulkanTubeTriangleRenderDataIsRayTracing = false;
+    const size_t batchSizeLimit = 1024 * 1024 * 32;
+    bool generateSplitTriangleData = false;
+    std::vector<sgl::vk::BottomLevelAccelerationStructurePtr> tubeTriangleBottomLevelASes;
     sgl::vk::BottomLevelAccelerationStructurePtr tubeAabbBottomLevelAS;
     sgl::vk::BottomLevelAccelerationStructurePtr hullTriangleBottomLevelAS;
     sgl::vk::TopLevelAccelerationStructurePtr tubeTriangleTopLevelAS;
@@ -315,27 +346,6 @@ protected:
     sgl::vk::TopLevelAccelerationStructurePtr tubeAabbTopLevelAS;
     sgl::vk::TopLevelAccelerationStructurePtr tubeAabbAndHullTopLevelAS;
 
-    /*struct LineRenderSettings {
-        float lineWidth = 0.0f;
-        float bandWidth = 0.0f;
-        float depthCueStrength = 0.0f;
-        float ambientOcclusionStrength = 0.0f;
-        float ambientOcclusionGamma = 1.0f;
-        float minBandThickness = 0.0f;
-        float paddingLineRenderSettings0{}, paddingLineRenderSettings1{};
-
-        uint32_t hasHullMesh = 0;
-
-        // Ambient occlusion settings.
-        uint32_t numAoTubeSubdivisions = 0;
-        uint32_t numLineVertices = 0;
-        uint32_t numParametrizationVertices = 0;
-    };
-    struct HullRenderSettings {
-        glm::vec4 color;
-        glm::ivec3 padding;
-        uint32_t useShading;
-    };*/
     struct LineUniformData {
         // Camera data.
         glm::vec3 cameraPosition{};
@@ -354,13 +364,16 @@ protected:
         float depthCueStrength = 0.0f;
         float ambientOcclusionStrength = 0.0f;
         float ambientOcclusionGamma = 1.0f;
-        float lineUniformDataPadding0 = 0, lineUniformDataPadding1 = 0;
+        float separatorBaseWidth = 0.2f;
+        float lineUniformDataPadding = 0.0f;
 
         // Pre-baked ambient occlusion settings (STATIC_AMBIENT_OCCLUSION_PREBAKING).
         uint32_t numAoTubeSubdivisions = 0;
         uint32_t numLineVertices = 0;
         uint32_t numParametrizationVertices = 0;
-        uint32_t lineUniformDataPadding2 = 0;
+
+        // Multi-var & twist line settings.
+        uint32_t numSubdivisionsBands = 6;
 
         // Hull render settings.
         glm::vec4 hullColor{};

@@ -43,22 +43,8 @@ typedef std::shared_ptr<Buffer> BufferPtr;
 
 }
 
-struct TubeRenderData {
-    sgl::vk::BufferPtr indexBuffer;
-    sgl::vk::BufferPtr vertexPositionBuffer;
-    sgl::vk::BufferPtr vertexAttributeBuffer;
-    sgl::vk::BufferPtr vertexNormalBuffer;
-    sgl::vk::BufferPtr vertexTangentBuffer;
-    sgl::vk::BufferPtr vertexRotationBuffer; ///< Only for flow lines.
-    sgl::vk::BufferPtr vertexPrincipalStressIndexBuffer; ///< Only for stress lines.
-    sgl::vk::BufferPtr vertexLineHierarchyLevelBuffer; ///< Only for stress lines.
-    sgl::vk::BufferPtr vertexLineAppearanceOrderBuffer; ///< Only for stress lines.
-    sgl::vk::BufferPtr vertexMajorStressBuffer; ///< Only for stress lines.
-    sgl::vk::BufferPtr vertexMediumStressBuffer; ///< Only for stress lines.
-    sgl::vk::BufferPtr vertexMinorStressBuffer; ///< Only for stress lines.
-};
-
-struct BandRenderData {
+// --- For quads ---
+struct LinePassQuadsRenderData {
     sgl::vk::BufferPtr indexBuffer;
     sgl::vk::BufferPtr vertexPositionBuffer;
     sgl::vk::BufferPtr vertexAttributeBuffer;
@@ -71,20 +57,86 @@ struct BandRenderData {
     sgl::vk::BufferPtr vertexLineAppearanceOrderBuffer; ///< Empty for flow lines.
 };
 
-/// For internal use of subclasses.
-struct LinePointDataProgrammableFetch {
+struct LinePassQuadsLinePointDataProgrammablePull {
     glm::vec3 vertexPosition;
     float vertexAttribute;
     glm::vec3 vertexTangent;
     uint32_t principalStressIndex; ///< Padding in case of flow lines.
 };
 
-struct TubeRenderDataProgrammableFetch {
+struct LinePassQuadsRenderDataProgrammablePull {
     sgl::vk::BufferPtr indexBuffer;
     sgl::vk::BufferPtr linePointsBuffer;
     sgl::vk::BufferPtr lineHierarchyLevelsBuffer; ///< Empty for flow lines.
 };
 
+
+// --- For tubes rendered from line input data.
+/// For geometry shader.
+struct LinePassTubeRenderData {
+    sgl::vk::BufferPtr indexBuffer;
+    sgl::vk::BufferPtr vertexPositionBuffer;
+    sgl::vk::BufferPtr vertexAttributeBuffer;
+    sgl::vk::BufferPtr vertexNormalBuffer;
+    sgl::vk::BufferPtr vertexTangentBuffer;
+    sgl::vk::BufferPtr vertexRotationBuffer; ///< Only for flow lines.
+    sgl::vk::BufferPtr multiVarAttributeDataBuffer; ///< Only for flow lines with multi-var rendering mode.
+    sgl::vk::BufferPtr vertexPrincipalStressIndexBuffer; ///< Only for stress lines.
+    sgl::vk::BufferPtr vertexLineHierarchyLevelBuffer; ///< Only for stress lines.
+    sgl::vk::BufferPtr vertexLineAppearanceOrderBuffer; ///< Only for stress lines.
+    sgl::vk::BufferPtr vertexMajorStressBuffer; ///< Only for stress lines.
+    sgl::vk::BufferPtr vertexMediumStressBuffer; ///< Only for stress lines.
+    sgl::vk::BufferPtr vertexMinorStressBuffer; ///< Only for stress lines.
+};
+
+/// For mesh shaders and programmable pull.
+struct LinePointDataUnified {
+    glm::vec3 linePosition;
+    float lineAttribute;
+    glm::vec3 lineTangent;
+    float lineRotation = 0.0f;
+    glm::vec3 lineNormal;
+    uint32_t lineStartIndex = 0;
+};
+
+struct StressLinePointDataUnified {
+    uint32_t linePrincipalStressIndex = 0;
+    uint32_t lineLineAppearanceOrder = 0;
+    float lineLineHierarchyLevel = 0.0f;
+    float stressLinePointPadding = 0.0f;
+};
+
+struct StressLinePointPrincipalStressDataUnified {
+    float lineMajorStress = 1.0f;
+    float lineMediumStress = 1.0f;
+    float lineMinorStress = 1.0f;
+    float principalStressPadding = 0.0f;
+};
+
+struct MeshletData {
+    uint32_t linePointIndexStart = 0;
+    uint32_t numLinePoints = 0;
+};
+
+struct LinePassTubeRenderDataMeshShader {
+    uint32_t numMeshlets = 0;
+    sgl::vk::BufferPtr meshletDataBuffer;
+    sgl::vk::BufferPtr linePointDataBuffer;
+    sgl::vk::BufferPtr stressLinePointDataBuffer;
+    sgl::vk::BufferPtr stressLinePointPrincipalStressDataBuffer;
+    sgl::vk::BufferPtr multiVarAttributeDataBuffer; ///< Only for flow lines with multi-var rendering mode.
+};
+
+struct LinePassTubeRenderDataProgrammablePull {
+    sgl::vk::BufferPtr indexBuffer;
+    sgl::vk::BufferPtr linePointDataBuffer;
+    sgl::vk::BufferPtr stressLinePointDataBuffer;
+    sgl::vk::BufferPtr stressLinePointPrincipalStressDataBuffer;
+    sgl::vk::BufferPtr multiVarAttributeDataBuffer; ///< Only for flow lines with multi-var rendering mode.
+};
+
+
+// --- Reduced tube data for opacity optimization ---
 struct TubeRenderDataOpacityOptimization {
     sgl::vk::BufferPtr indexBuffer;
     sgl::vk::BufferPtr vertexPositionBuffer;
@@ -94,32 +146,27 @@ struct TubeRenderDataOpacityOptimization {
     sgl::vk::BufferPtr vertexLineHierarchyLevelBuffer; ///< Empty for flow lines.
 };
 
+
+// --- For point data ---
 struct PointRenderData {
     sgl::vk::BufferPtr vertexPositionBuffer;
 };
 
+
+// --- For simulation outline triangle mesh ---
 struct SimulationMeshOutlineRenderData {
     sgl::vk::BufferPtr indexBuffer;
     sgl::vk::BufferPtr vertexPositionBuffer;
     sgl::vk::BufferPtr vertexNormalBuffer;
 };
 
+
+// --- For hardware-accelerated ray tracing ---
 struct TubeTriangleVertexData {
     glm::vec3 vertexPosition;
-    uint32_t vertexLinePointIndex; ///< Pointer to TubeLinePointData entry.
+    uint32_t vertexLinePointIndex; ///< Pointer to LinePointDataUnified entry.
     glm::vec3 vertexNormal;
     float phi; ///< Angle.
-};
-
-struct TubeLinePointData {
-    glm::vec3 linePosition;
-    float lineAttribute;
-    glm::vec3 lineTangent;
-    float lineHierarchyLevel; ///< Zero for flow lines.
-    glm::vec3 lineNormal;
-    float lineAppearanceOrder; ///< Zero for flow lines.
-    glm::uvec3 padding;
-    uint32_t principalStressIndex; ///< Zero for flow lines.
 };
 
 struct LinePointReference {
@@ -137,19 +184,31 @@ struct HullTriangleVertexData {
     float padding1;
 };
 
-struct VulkanTubeTriangleRenderData {
-    sgl::vk::BufferPtr indexBuffer;
+struct TubeTriangleRenderData {
+    sgl::vk::BufferPtr indexBuffer; // uvec3 objects.
     sgl::vk::BufferPtr vertexBuffer; // TubeTriangleVertexData objects.
-    sgl::vk::BufferPtr linePointBuffer; // TubeLinePointData objects.
+    sgl::vk::BufferPtr linePointDataBuffer; // LinePointDataUnified objects.
+    sgl::vk::BufferPtr stressLinePointDataBuffer; // StressLinePointDataUnified objects.
+    sgl::vk::BufferPtr stressLinePointPrincipalStressDataBuffer; // StressLinePointPrincipalStressDataUnified objects.
+    sgl::vk::BufferPtr multiVarAttributeDataBuffer; ///< Only for flow lines with multi-var rendering mode.
+    // If the acceleration structure was split, the buffer below stores the triangle index offset of each instance.
+    sgl::vk::BufferPtr instanceTriangleIndexOffsetBuffer; // uint32_t objects.
 };
-struct VulkanTubeAabbRenderData {
-    sgl::vk::BufferPtr indexBuffer; // Two consecutive uint32_t indices map one AABB to two TubeLinePointData objects.
+struct TubeAabbRenderData {
+    sgl::vk::BufferPtr indexBuffer; // Two consecutive uint32_t indices map one AABB to two LinePointDataUnified objects.
     sgl::vk::BufferPtr aabbBuffer; // VkAabbPositionsKHR objects.
-    sgl::vk::BufferPtr linePointBuffer; // TubeLinePointData objects.
+    sgl::vk::BufferPtr linePointDataBuffer; // LinePointDataUnified objects.
+    sgl::vk::BufferPtr stressLinePointDataBuffer; // StressLinePointDataUnified objects.
+    sgl::vk::BufferPtr stressLinePointPrincipalStressDataBuffer; // StressLinePointPrincipalStressDataUnified objects.
+    sgl::vk::BufferPtr multiVarAttributeDataBuffer; ///< Only for flow lines with multi-var rendering mode.
 };
-struct VulkanHullTriangleRenderData {
+struct HullTriangleRenderData {
     sgl::vk::BufferPtr indexBuffer;
     sgl::vk::BufferPtr vertexBuffer; // HullTriangleVertexData objects.
+};
+
+struct TubeTriangleSplitData {
+    std::vector<uint32_t> numBatchIndices;
 };
 
 #endif //LINEVIS_LINERENDERDATA_HPP

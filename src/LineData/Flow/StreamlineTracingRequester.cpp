@@ -33,6 +33,7 @@
 #include <tracy/Tracy.hpp>
 
 #include <Utils/AppSettings.hpp>
+#include <Utils/StringUtils.hpp>
 #include <Utils/File/Logfile.hpp>
 #include <Utils/File/FileUtils.hpp>
 #include <Utils/File/FileLoader.hpp>
@@ -47,7 +48,15 @@
 #include "StreamlineSeeder.hpp"
 #include "StreamlineTracingGrid.hpp"
 #include "Loader/StructuredGridVtkLoader.hpp"
+#include "Loader/VtkXmlLoader.hpp"
+#include "Loader/NetCdfLoader.hpp"
+#include "Loader/AmiraMeshLoader.hpp"
 #include "Loader/RbcBinFileLoader.hpp"
+#include "Loader/FieldFileLoader.hpp"
+#include "Loader/DatRawFileLoader.hpp"
+#ifdef USE_ECCODES
+#include "Loader/GribLoader.hpp"
+#endif
 #include "Loaders/BinLinesLoader.hpp"
 #include "StreamlineTracingRequester.hpp"
 
@@ -83,6 +92,7 @@ void StreamlineTracingRequester::loadGridDataSetList() {
     gridDataSetNames.clear();
     gridDataSetFilenames.clear();
     gridDataSetNames.emplace_back("Local file...");
+    gridDataSetNames.emplace_back("Arnold-Beltrami-Childress flow generator");
 
     std::string filename = lineDataSetsDirectory + "flow_grids.json";
     if (sgl::FileUtils::get()->exists(filename)) {
@@ -104,13 +114,74 @@ void StreamlineTracingRequester::loadGridDataSetList() {
 
             gridDataSetNames.push_back(source["name"].asString());
             gridDataSetFilenames.push_back(source["filename"].asString());
+
+            GridDataSetMetaData gridDataSetMetaData;
+            if (source.isMember("time")) {
+                auto timeElement = source["time"];
+                if (timeElement.isString()) {
+                    std::string timeString = timeElement.asString();
+                    std::vector<std::string> timeStringVector;
+                    sgl::splitStringWhitespace(timeString, timeStringVector);
+                    if (timeStringVector.size() == 1) {
+                        gridDataSetMetaData.time = sgl::fromString<int>(timeStringVector.at(0));
+                    } else if (timeStringVector.size() == 2) {
+                        std::string dateStringRaw;
+                        for (char c : timeStringVector.at(0)) {
+                            if (int(c) >= int('0') && int(c) <= '9') {
+                                dateStringRaw += c;
+                            }
+                        }
+                        std::string timeStringRaw;
+                        for (char c : timeStringVector.at(1)) {
+                            if (int(c) >= int('0') && int(c) <= '9') {
+                                timeStringRaw += c;
+                            }
+                        }
+                        gridDataSetMetaData.date = sgl::fromString<int>(dateStringRaw);
+                        gridDataSetMetaData.time = sgl::fromString<int>(timeStringRaw);
+                    }
+                } else {
+                    gridDataSetMetaData.time = timeElement.asInt();
+                }
+            }
+            if (source.isMember("data_date") && source.isMember("data_time")) {
+                auto dataDateElement = source["data_date"];
+                auto dataTimeElement = source["data_time"];
+                gridDataSetMetaData.date = dataDateElement.asInt();
+                gridDataSetMetaData.time = dataTimeElement.asInt();
+            }
+            if (source.isMember("scale")) {
+                auto scaleElement = source["scale"];
+                if (scaleElement.isDouble()) {
+                    gridDataSetMetaData.scale = glm::vec3(scaleElement.asFloat());
+                } else if (scaleElement.isArray()) {
+                    int dim = 0;
+                    for (const auto& scaleDimElement : scaleElement) {
+                        gridDataSetMetaData.scale[dim] = scaleDimElement.asFloat();
+                        dim++;
+                    }
+                }
+            }
+            if (source.isMember("axes")) {
+                auto axesElement = source["axes"];
+                int dim = 0;
+                for (const auto& axisElement : axesElement) {
+                    gridDataSetMetaData.axes[dim] = axisElement.asInt();
+                    dim++;
+                }
+            }
+            gridDataSetsMetaData.push_back(gridDataSetMetaData);
         }
     }
 }
 
 void StreamlineTracingRequester::renderGui() {
+    if (!showWindow) {
+        return;
+    }
+
     sgl::ImGuiWrapper::get()->setNextWindowStandardPosSizeLocation(
-            sgl::LOCATION_RIGHT | sgl::LOCATION_BOTTOM, 22, 22, 780, 1090);
+            sgl::LOCATION_RIGHT | sgl::LOCATION_BOTTOM, 22, 22, 780, 1190);
     if (ImGui::Begin("Streamline Tracer", &showWindow)) {
         {
             std::lock_guard<std::mutex> replyLock(gridInfoMutex);
@@ -126,16 +197,13 @@ void StreamlineTracingRequester::renderGui() {
         if (ImGui::Combo(
                 "Data Set", &selectedGridDataSetIndex, gridDataSetNames.data(),
                 int(gridDataSetNames.size()))) {
-            if (selectedGridDataSetIndex >= 1) {
-                const std::string pathString = gridDataSetFilenames.at(selectedGridDataSetIndex - 1);
-#ifdef _WIN32
-                bool isAbsolutePath =
-                        (pathString.size() > 1 && pathString.at(1) == ':')
-                        || boost::starts_with(pathString, "/") || boost::starts_with(pathString, "\\");
-#else
-                bool isAbsolutePath =
-                        boost::starts_with(pathString, "/");
-#endif
+            if (selectedGridDataSetIndex == 1) {
+                guiTracingSettings.exportPath = lineDataSetsDirectory + "abc_flow.binlines";
+                changed = true;
+            }
+            if (selectedGridDataSetIndex >= 2) {
+                const std::string pathString = gridDataSetFilenames.at(selectedGridDataSetIndex - 2);
+                bool isAbsolutePath = sgl::FileUtils::get()->getIsPathAbsolute(pathString);
                 if (isAbsolutePath) {
                     gridDataSetFilename = pathString;
                 } else {
@@ -152,6 +220,9 @@ void StreamlineTracingRequester::renderGui() {
             if (ImGui::Button("Load File")) {
                 changed = true;
             }
+        }
+        if (selectedGridDataSetIndex == 1 && abcFlowGenerator.renderGui()) {
+            changed = true;
         }
 
         if (ImGui::Combo(
@@ -196,6 +267,12 @@ void StreamlineTracingRequester::renderGui() {
                     "%.2f", ImGuiSliderFlags_Logarithmic) == ImGui::EditMode::INPUT_FINISHED) {
                 changed = true;
             }
+            if ((guiTracingSettings.loopCheckMode == LoopCheckMode::START_POINT
+                    || guiTracingSettings.loopCheckMode == LoopCheckMode::ALL_POINTS) && ImGui::SliderFloatEdit(
+                    "Term. Dist. Self", &guiTracingSettings.terminationDistanceSelf, 0.01f, 100.0f,
+                    "%.2f", ImGuiSliderFlags_Logarithmic) == ImGui::EditMode::INPUT_FINISHED) {
+                changed = true;
+            }
             if (ImGui::SliderFloatEdit(
                     "Min. Line Length", &guiTracingSettings.minimumLength, 0.001f, 2.0f,
                     "%.3f") == ImGui::EditMode::INPUT_FINISHED) {
@@ -212,6 +289,11 @@ void StreamlineTracingRequester::renderGui() {
                         TERMINATION_CHECK_TYPE_NAMES, IM_ARRAYSIZE(TERMINATION_CHECK_TYPE_NAMES))) {
                     changed = true;
                 }
+            }
+            if (ImGui::Combo(
+                    "Loop Check Mode", (int*)&guiTracingSettings.loopCheckMode,
+                    LOOP_CHECK_MODE_NAMES, IM_ARRAYSIZE(LOOP_CHECK_MODE_NAMES))) {
+                changed = true;
             }
             if (ImGui::Checkbox("Show Boundary Mesh", &guiTracingSettings.showSimulationGridOutline)) {
                 changed = true;
@@ -292,16 +374,9 @@ void StreamlineTracingRequester::setLineTracerSettings(const SettingsMap& settin
     if (settings.getValueOpt("dataset", datasetName)) {
         for (int i = 0; i < int(gridDataSetNames.size()); i++) {
             if (datasetName == gridDataSetNames.at(i)) {
-                selectedGridDataSetIndex = i + 1;
-                const std::string pathString = gridDataSetFilenames.at(selectedGridDataSetIndex - 1);
-#ifdef _WIN32
-                bool isAbsolutePath =
-                    (pathString.size() > 1 && pathString.at(1) == ':')
-                    || boost::starts_with(pathString, "/") || boost::starts_with(pathString, "\\");
-#else
-                bool isAbsolutePath =
-                        boost::starts_with(pathString, "/");
-#endif
+                selectedGridDataSetIndex = i + 2;
+                const std::string pathString = gridDataSetFilenames.at(selectedGridDataSetIndex - 2);
+                bool isAbsolutePath = sgl::FileUtils::get()->getIsPathAbsolute(pathString);
                 if (isAbsolutePath) {
                     gridDataSetFilename = pathString;
                 } else {
@@ -424,10 +499,29 @@ void StreamlineTracingRequester::setLineTracerSettings(const SettingsMap& settin
         }
     }
 
+    std::string loopCheckModeName;
+    if (settings.getValueOpt("loop_check_mode", loopCheckModeName)) {
+        int i;
+        for (i = 0; i < IM_ARRAYSIZE(LOOP_CHECK_MODE_NAMES); i++) {
+            if (boost::to_lower_copy(loopCheckModeName)
+                == boost::to_lower_copy(std::string(LOOP_CHECK_MODE_NAMES[i]))) {
+                guiTracingSettings.loopCheckMode = LoopCheckMode(i);
+                changed = true;
+                break;
+            }
+        }
+        if (i == IM_ARRAYSIZE(LOOP_CHECK_MODE_NAMES)) {
+            sgl::Logfile::get()->writeError(
+                    "Error in StreamlineTracingRequester::setLineTracerSettings: Unknown loop check mode \""
+                    + loopCheckModeName + "\".");
+        }
+    }
+
     changed |= settings.getValueOpt("num_primitives", guiTracingSettings.numPrimitives);
     changed |= settings.getValueOpt("time_step_scale", guiTracingSettings.timeStepScale);
     changed |= settings.getValueOpt("max_num_iterations", guiTracingSettings.maxNumIterations);
     changed |= settings.getValueOpt("termination_distance", guiTracingSettings.terminationDistance);
+    changed |= settings.getValueOpt("termination_distance_self", guiTracingSettings.terminationDistanceSelf);
     changed |= settings.getValueOpt("min_line_length", guiTracingSettings.minimumLength);
     changed |= settings.getValueOpt("min_separation_distance", guiTracingSettings.minimumSeparationDistance);
     changed |= settings.getValueOpt("show_boundary_mesh", guiTracingSettings.showSimulationGridOutline);
@@ -454,16 +548,9 @@ void StreamlineTracingRequester::setDatasetFilename(const std::string& newDatase
         auto currentDataSetPath = boost::filesystem::absolute(
                 lineDataSetsDirectory + gridDataSetFilenames.at(i));
         if (boost::filesystem::equivalent(newDataSetPath, currentDataSetPath)) {
-            selectedGridDataSetIndex = i + 1;
-            const std::string pathString = gridDataSetFilenames.at(selectedGridDataSetIndex - 1);
-#ifdef _WIN32
-            bool isAbsolutePath =
-                    (pathString.size() > 1 && pathString.at(1) == ':')
-                    || boost::starts_with(pathString, "/") || boost::starts_with(pathString, "\\");
-#else
-            bool isAbsolutePath =
-                    boost::starts_with(pathString, "/");
-#endif
+            selectedGridDataSetIndex = i + 2;
+            const std::string pathString = gridDataSetFilenames.at(selectedGridDataSetIndex - 2);
+            bool isAbsolutePath = sgl::FileUtils::get()->getIsPathAbsolute(pathString);
             if (isAbsolutePath) {
                 gridDataSetFilename = pathString;
             } else {
@@ -485,21 +572,26 @@ void StreamlineTracingRequester::setDatasetFilename(const std::string& newDatase
 }
 
 void StreamlineTracingRequester::requestNewData() {
-    if (gridDataSetFilename.empty()) {
+    if (selectedGridDataSetIndex != 1 && gridDataSetFilename.empty()) {
         return;
     }
 
     StreamlineTracingSettings request = guiTracingSettings;
     request.seeder = StreamlineSeederPtr(guiTracingSettings.seeder->copy());
-    request.dataSourceFilename = boost::filesystem::absolute(gridDataSetFilename).generic_string();
+    request.isAbcDataSet = selectedGridDataSetIndex == 1;
+    if (selectedGridDataSetIndex == 1) {
+        request.dataSourceFilename = "ABC_" + abcFlowGenerator.getSettingsString();
+        request.abcFlowGenerator = abcFlowGenerator;
+    } else {
+        request.dataSourceFilename = boost::filesystem::absolute(gridDataSetFilename).generic_string();
+        request.gridDataSetMetaData = gridDataSetsMetaData.at(selectedGridDataSetIndex - 2);
+    }
 
     queueRequestStruct(request);
-    isProcessingRequest = true;
 }
 
 bool StreamlineTracingRequester::getHasNewData(DataSetInformation& dataSetInformation, LineDataPtr& lineData) {
     if (getReply(lineData)) {
-        isProcessingRequest = false;
         return true;
     }
     return false;
@@ -595,11 +687,47 @@ void StreamlineTracingRequester::traceLines(
         cachedGridFilename = request.dataSourceFilename;
 
         cachedGrid = new StreamlineTracingGrid;
-        if (boost::ends_with(request.dataSourceFilename, ".vtk")) {
-            StructuredGridVtkLoader::load(request.dataSourceFilename, cachedGrid);
+        if (request.isAbcDataSet) {
+            request.abcFlowGenerator.load(cachedGrid);
+        } else if (boost::ends_with(request.dataSourceFilename, ".vtk")) {
+            StructuredGridVtkLoader::load(
+                    request.dataSourceFilename, request.gridDataSetMetaData,
+                    cachedGrid);
+        } else if (boost::ends_with(request.dataSourceFilename, ".vti")
+                || boost::ends_with(request.dataSourceFilename, ".vts")) {
+            VtkXmlLoader::load(
+                    request.dataSourceFilename, request.gridDataSetMetaData,
+                    cachedGrid);
+        } else if (boost::ends_with(request.dataSourceFilename, ".nc")) {
+            NetCdfLoader::load(
+                    request.dataSourceFilename, request.gridDataSetMetaData,
+                    cachedGrid);
+        } else if (boost::ends_with(request.dataSourceFilename, ".am")) {
+            AmiraMeshLoader::load(
+                    request.dataSourceFilename, request.gridDataSetMetaData,
+                    cachedGrid);
         } else if (boost::ends_with(request.dataSourceFilename, ".bin")) {
-            RbcBinFileLoader::load(request.dataSourceFilename, cachedGrid);
+            RbcBinFileLoader::load(
+                    request.dataSourceFilename, request.gridDataSetMetaData,
+                    cachedGrid);
+        } else if (boost::ends_with(request.dataSourceFilename, ".field")) {
+            FieldFileLoader::load(
+                    request.dataSourceFilename, request.gridDataSetMetaData,
+                    cachedGrid);
+        } else if (boost::ends_with(request.dataSourceFilename, ".dat")
+                || boost::ends_with(request.dataSourceFilename, ".raw")) {
+            DatRawFileLoader::load(
+                    request.dataSourceFilename, request.gridDataSetMetaData,
+                    cachedGrid);
         }
+#ifdef USE_ECCODES
+        else if (boost::ends_with(request.dataSourceFilename, ".grib")
+                || boost::ends_with(request.dataSourceFilename, ".grb")) {
+            GribLoader::load(
+                    request.dataSourceFilename, request.gridDataSetMetaData,
+                    cachedGrid);
+        }
+#endif
 
         {
             std::lock_guard<std::mutex> replyLock(gridInfoMutex);
@@ -669,5 +797,6 @@ void StreamlineTracingRequester::traceLines(
 
     lineData->fileNames = { request.dataSourceFilename };
     lineData->attributeNames = cachedGrid->getScalarFieldNames();
+    lineData->onAttributeNamesSet();
     lineData->setTrajectoryData(trajectories);
 }

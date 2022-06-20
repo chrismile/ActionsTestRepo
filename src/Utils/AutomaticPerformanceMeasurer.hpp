@@ -36,18 +36,19 @@
 
 #include "InternalState.hpp"
 
-const float TIME_PERFORMANCE_MEASUREMENT = 128.0f;
+const float TIME_PERFORMANCE_MEASUREMENT = 256.0f;
 
 class AutomaticPerformanceMeasurer {
 public:
     AutomaticPerformanceMeasurer(
-            std::vector<InternalState> _states,
+            sgl::vk::Renderer* renderer, std::vector<InternalState> _states,
             const std::string& _csvFilename, const std::string& _depthComplexityFilename,
             std::function<void(const InternalState&)> _newStateCallback);
     void cleanup();
     ~AutomaticPerformanceMeasurer();
 
     // To be called by the application
+    void beginRenderFunction();
     void startMeasure(float timeStamp);
     void endMeasure();
 
@@ -59,8 +60,14 @@ public:
             uint64_t minComplexity, uint64_t maxComplexity, float avgUsed, float avgAll, uint64_t totalNumFragments);
 
     // Called by OIT algorithms.
-    void setCurrentAlgorithmBufferSizeBytes(size_t numBytes);
+    void setCurrentAlgorithmBufferSizeBytes(size_t sizeInBytes);
     inline void setPpllTimer(const sgl::vk::TimerPtr& ppllTimer) { this->ppllTimer = ppllTimer; }
+
+    // Called by the renderers to announce the size of the data set visual representation.
+    void setCurrentDataSetBufferSizeBytes(size_t sizeInBytes);
+
+    // Called by the renderers to announce the base size of the data set (not the visual representation).
+    void setCurrentDataSetBaseSizeBytes(size_t sizeInBytes);
 
 private:
     /// Write out the performance data of "currentState" to "file".
@@ -71,6 +78,11 @@ private:
     /// Returns amount of used video memory size in GiB.
     float getUsedVideoMemorySizeGiB();
 
+    sgl::vk::Renderer* renderer;
+    bool isInitialized = false;
+    bool shallSetNextState = false;
+    bool isCleanup = false;
+
     std::vector<InternalState> states;
     size_t currentStateIndex;
     InternalState currentState;
@@ -79,12 +91,14 @@ private:
     float nextModeCounter = 0.0f;
 
     sgl::vk::TimerPtr timerVk;
-    int initialFreeMemKilobytes;
+    int initialFreeMemKilobytes{};
     sgl::CsvWriter file;
     sgl::CsvWriter depthComplexityFile;
     sgl::CsvWriter perfFile;
     size_t depthComplexityFrameNumber = 0;
     size_t currentAlgorithmsBufferSizeBytes = 0;
+    size_t currentDataSetBufferSizeBytes = 0;
+    size_t currentDataSetBaseSizeBytes = 0;
 
     // For depth complexity renderer.
     bool newDepthComplexityMode = true;
@@ -95,5 +109,6 @@ private:
     sgl::vk::TimerPtr ppllTimer = nullptr;
 };
 
+size_t getUsedSystemMemoryBytes();
 
 #endif //HEXVOLUMERENDERER_AUTOMATICPERFORMANCEMEASURER_HPP

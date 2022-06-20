@@ -2,7 +2,7 @@
 
 # BSD 2-Clause License
 #
-# Copyright (c) 2021, Christoph Neuhauser, Felix Brendel
+# Copyright (c) 2021-2022, Christoph Neuhauser, Felix Brendel
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -68,7 +68,7 @@ if command -v apt &> /dev/null; then
         echo "------------------------"
         echo "installing build essentials"
         echo "------------------------"
-        sudo apt install cmake git curl pkg-config build-essential
+        sudo apt install -y cmake git curl pkg-config build-essential
     fi
 
     # Dependencies of sgl and LineVis.
@@ -78,12 +78,13 @@ if command -v apt &> /dev/null; then
             || ! is_installed_apt "libglew-dev" || ! is_installed_apt "libjsoncpp-dev" \
             || ! is_installed_apt "libeigen3-dev" || ! is_installed_apt "python3-dev" \
             || ! is_installed_apt "libzmq3-dev" || ! is_installed_apt "libnetcdf-dev" \
-            || ! is_installed_apt "libopenexr-dev"; then
+            || ! is_installed_apt "libopenexr-dev" || ! is_installed_apt "libeccodes-dev"; then
         echo "------------------------"
         echo "installing dependencies "
         echo "------------------------"
-        sudo apt install libglm-dev libsdl2-dev libsdl2-image-dev libpng-dev libboost-filesystem-dev libtinyxml2-dev \
-        libarchive-dev libglew-dev libjsoncpp-dev libeigen3-dev python3-dev libzmq3-dev libnetcdf-dev libopenexr-dev
+        sudo apt install -y libglm-dev libsdl2-dev libsdl2-image-dev libpng-dev libboost-filesystem-dev libtinyxml2-dev \
+        libarchive-dev libglew-dev libjsoncpp-dev libeigen3-dev python3-dev libzmq3-dev libnetcdf-dev libopenexr-dev \
+        libeccodes-dev
     fi
 elif command -v pacman &> /dev/null; then
     if ! command -v cmake &> /dev/null || ! command -v git &> /dev/null || ! command -v curl &> /dev/null \
@@ -108,6 +109,9 @@ elif command -v pacman &> /dev/null; then
         echo "------------------------"
         sudo pacman -S boost libarchive glm tinyxml2 sdl2 sdl2_image glew vulkan-devel shaderc \
         python3 eigen jsoncpp zeromq netcdf ospray openexr
+    fi
+    if command -v yay &> /dev/null && ! is_installed_yay "eccodes"; then
+        yay -Ss eccodes
     fi
 else
     echo "Warning: Unsupported system package manager detected." >&2
@@ -149,16 +153,24 @@ if [[ ! -v VULKAN_SDK ]]; then
 
     found_vulkan=false
 
-    if lsb_release -a 2> /dev/null | grep -q 'Ubuntu'; then
-        if ! compgen -G "/etc/apt/sources.list.d/lunarg-vulkan-*" > /dev/null; then
-            distro_code_name=$(lsb_release -c | grep -oP "\:\s+\K\S+")
+    if [ -d "VulkanSDK" ]; then
+        VK_LAYER_PATH=""
+        source "VulkanSDK/$(ls VulkanSDK)/setup-env.sh"
+        export PKG_CONFIG_PATH="$(realpath "VulkanSDK/$(ls VulkanSDK)/x86_64/lib/pkgconfig")"
+        found_vulkan=true
+    fi
+
+    if ! $found_vulkan && lsb_release -a 2> /dev/null | grep -q 'Ubuntu'; then
+        distro_code_name=$(lsb_release -c | grep -oP "\:\s+\K\S+")
+        if ! compgen -G "/etc/apt/sources.list.d/lunarg-vulkan-*" > /dev/null \
+              && ! curl -s -I "https://packages.lunarg.com/vulkan/lunarg-vulkan-${distro_code_name}.list" | grep "2 404" > /dev/null; then
             echo "Setting up Vulkan SDK for Ubuntu $(lsb_release -r | grep -oP "\:\s+\K\S+")..."
             wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
             sudo curl --silent --show-error --fail \
-            https://packages.lunarg.com/vulkan/1.2.198/lunarg-vulkan-1.2.198-${distro_code_name}.list \
-            --output /etc/apt/sources.list.d/lunarg-vulkan-1.2.198-${distro_code_name}.list
+            https://packages.lunarg.com/vulkan/lunarg-vulkan-${distro_code_name}.list \
+            --output /etc/apt/sources.list.d/lunarg-vulkan-${distro_code_name}.list
             sudo apt update
-            sudo apt install vulkan-sdk shaderc
+            sudo apt install -y vulkan-sdk shaderc
         fi
     fi
 
@@ -167,6 +179,22 @@ if [[ ! -v VULKAN_SDK ]]; then
             echo 'export VULKAN_SDK="/usr"' >> ~/.bashrc
         fi
         VULKAN_SDK="/usr"
+        found_vulkan=true
+    fi
+
+    if ! $found_vulkan; then
+        curl --silent --show-error --fail -O https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
+        mkdir -p VulkanSDK
+        tar -xzf vulkan-sdk.tar.gz -C VulkanSDK
+        VK_LAYER_PATH=""
+        source "VulkanSDK/$(ls VulkanSDK)/setup-env.sh"
+
+        # Fix pkgconfig file.
+        shaderc_pkgconfig_file="VulkanSDK/$(ls VulkanSDK)/x86_64/lib/pkgconfig/shaderc.pc"
+        prefix_path=$(realpath "VulkanSDK/$(ls VulkanSDK)/x86_64")
+        sed -i '3s;.*;prefix=\"'$prefix_path'\";' "$shaderc_pkgconfig_file"
+        sed -i '5s;.*;libdir=${prefix}/lib;' "$shaderc_pkgconfig_file"
+        export PKG_CONFIG_PATH="$(realpath "VulkanSDK/$(ls VulkanSDK)/x86_64/lib/pkgconfig")"
         found_vulkan=true
     fi
 
@@ -197,7 +225,7 @@ if [ ! -d "./sgl/install" ]; then
     cmake .. \
          -DCMAKE_BUILD_TYPE=Debug \
          -DCMAKE_INSTALL_PREFIX="../install"
-    make -j
+    make -j $(nproc)
     make install
     popd >/dev/null
 
@@ -205,7 +233,7 @@ if [ ! -d "./sgl/install" ]; then
     cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="../install"
-    make -j
+    make -j $(nproc)
     make install
     popd >/dev/null
 
@@ -214,24 +242,24 @@ fi
 
 params=()
 
-embree_version="3.13.2"
+embree_version="3.13.3"
 if ! $is_embree_installed && [ ! -d "./embree-${embree_version}.x86_64.linux" ]; then
     echo "------------------------"
     echo "   downloading Embree   "
     echo "------------------------"
     wget "https://github.com/embree/embree/releases/download/v${embree_version}/embree-${embree_version}.x86_64.linux.tar.gz"
     tar -xvzf "embree-${embree_version}.x86_64.linux.tar.gz"
-    params+=(-Dembree_DIR=${PROJECTPATH}/third_party/embree-${embree_version}.x86_64.linux/lib/cmake/embree-${embree_version})
+    params+=(-Dembree_DIR="${PROJECTPATH}/third_party/embree-${embree_version}.x86_64.linux/lib/cmake/embree-${embree_version}")
 fi
 
-ospray_version="2.8.0"
+ospray_version="2.9.0"
 if ! $is_ospray_installed && [ ! -d "./ospray-${ospray_version}.x86_64.linux" ]; then
     echo "------------------------"
     echo "   downloading OSPRay   "
     echo "------------------------"
     wget "https://github.com/ospray/OSPRay/releases/download/v${ospray_version}/ospray-${ospray_version}.x86_64.linux.tar.gz"
     tar -xvzf "ospray-${ospray_version}.x86_64.linux.tar.gz"
-    params+=(-Dospray_DIR=${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/cmake/ospray-${ospray_version})
+    params+=(-Dospray_DIR="${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/cmake/ospray-${ospray_version}")
 fi
 
 popd >/dev/null # back to project root
@@ -268,7 +296,7 @@ echo "------------------------"
 echo "      compiling         "
 echo "------------------------"
 pushd "$build_dir" >/dev/null
-make -j
+make -j $(nproc)
 popd >/dev/null
 
 echo ""

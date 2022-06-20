@@ -58,7 +58,7 @@ void StructuredGridVtkLoader::_readLines(
 
         if (lineBuffer.empty()) {
             sgl::Logfile::get()->throwError(
-                    "Error in RbcBinFileLoader::_readLines: Encountered an empty line.");
+                    "Error in StructuredGridVtkLoader::_readLines: Encountered an empty line.");
         }
 
         if (readMode == ReadMode::SCALAR) {
@@ -68,7 +68,7 @@ void StructuredGridVtkLoader::_readLines(
             sgl::splitStringWhitespace(lineBuffer, splitLineString);
             if (splitLineString.size() != 3) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::_readLines: Vector mode, but line contains less than three "
+                        "Error in StructuredGridVtkLoader::_readLines: Vector mode, but line contains less than three "
                         "items.");
             }
             fieldData[lineNum * 3] = sgl::fromString<float>(splitLineString.at(0));
@@ -81,8 +81,49 @@ void StructuredGridVtkLoader::_readLines(
 
     if (lineNum < numObjects) {
         sgl::Logfile::get()->throwError(
-                "Error in RbcBinFileLoader::_readLines: The file has ended before all values could be read.");
+                "Error in StructuredGridVtkLoader::_readLines: The file has ended before all values could be read.");
     }
+}
+
+void StructuredGridVtkLoader::_readFieldLine(
+        std::string& arrayName, int& numComponents, int& numTuples, std::string& dataType,
+        size_t& charPtr, size_t& length, const char* fileBuffer) {
+    while (charPtr < length) {
+        char currentChar = fileBuffer[charPtr];
+        if (currentChar == '\n' || currentChar == '\r') {
+            charPtr++;
+        } else {
+            break;
+        }
+    }
+
+    std::string lineBuffer;
+    while (charPtr < length) {
+        char currentChar = fileBuffer[charPtr];
+        if (currentChar == '\n' || currentChar == '\r') {
+            charPtr++;
+            break;
+        }
+        lineBuffer.push_back(currentChar);
+        charPtr++;
+    }
+
+    if (lineBuffer.empty()) {
+        sgl::Logfile::get()->throwError(
+                "Error in StructuredGridVtkLoader::_readFieldLine: Encountered an empty line.");
+    }
+
+    std::vector<std::string> splitLineString;
+    sgl::splitStringWhitespace(lineBuffer, splitLineString);
+    if (splitLineString.size() != 4) {
+        sgl::Logfile::get()->throwError(
+                "Error in StructuredGridVtkLoader::_readFieldLine: The line does not contain four entries.");
+    }
+
+    arrayName = splitLineString.at(0);
+    numComponents = sgl::fromString<int>(splitLineString.at(1));
+    numTuples = sgl::fromString<int>(splitLineString.at(2));
+    dataType = splitLineString.at(3);
 }
 
 void StructuredGridVtkLoader::_convertScalarFieldCellToPointMode(
@@ -109,7 +150,9 @@ void StructuredGridVtkLoader::_convertScalarFieldCellToPointMode(
     }
 }
 
-void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, StreamlineTracingGrid* grid) {
+void StructuredGridVtkLoader::load(
+        const std::string& dataSourceFilename, const GridDataSetMetaData& gridDataSetMetaData,
+        StreamlineTracingGrid* grid) {
     int xs = 0, ys = 0, zs = 0;
 
     uint8_t* buffer = nullptr;
@@ -117,7 +160,7 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
     bool loaded = sgl::loadFileFromSource(dataSourceFilename, buffer, length, false);
     if (!loaded) {
         sgl::Logfile::get()->throwError(
-                "Error in RbcBinFileLoader::load: Couldn't open file \"" + dataSourceFilename + "\".");
+                "Error in StructuredGridVtkLoader::load: Couldn't open file \"" + dataSourceFilename + "\".");
     }
     char* fileBuffer = reinterpret_cast<char*>(buffer);
 
@@ -155,6 +198,10 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
 
         splitLineString.clear();
         sgl::splitStringWhitespace(lineBuffer, splitLineString);
+        if (splitLineString.empty()) {
+            continue;
+        }
+
         if (splitLineString.front() == "BINARY") {
             isBinaryMode = true;
         } else if (splitLineString.front() == "ASCII") {
@@ -162,13 +209,13 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
         } else if (splitLineString.front() == "DATASET") {
             if (splitLineString.size() != 2 || splitLineString.at(1) != "STRUCTURED_GRID") {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid DATASET mode in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid DATASET mode in file \""
                         + dataSourceFilename + "\".");
             }
         } else if (splitLineString.front() == "DIMENSIONS") {
             if (splitLineString.size() != 4) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid DIMENSIONS string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid DIMENSIONS string in file \""
                         + dataSourceFilename + "\".");
             }
             xs = sgl::fromString<int>(splitLineString.at(1));
@@ -179,23 +226,23 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
         } else if (splitLineString.front() == "POINTS") {
             if (splitLineString.size() != 3) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid POINTS string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid POINTS string in file \""
                         + dataSourceFilename + "\".");
             }
             if (splitLineString.at(2) != "float") {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid POINTS string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid POINTS string in file \""
                         + dataSourceFilename + "\". The loader only supports float data.");
             }
             int numPointsLocal = sgl::fromString<int>(splitLineString.at(1));
             if (numPointsLocal != numPoints) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid POINTS string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid POINTS string in file \""
                         + dataSourceFilename + "\". The number of points does not match the dimensions.");
             }
             if (gridPoints) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: The file \""
+                        "Error in StructuredGridVtkLoader::load: The file \""
                         + dataSourceFilename + "\" contains more than one POINTS statement.");
             }
 
@@ -205,7 +252,7 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
                 size_t numBytes = sizeof(float) * numPoints * 3;
                 if (charPtr + numBytes > length) {
                     sgl::Logfile::get()->throwError(
-                            "Error in RbcBinFileLoader::load: The file \"" + dataSourceFilename
+                            "Error in StructuredGridVtkLoader::load: The file \"" + dataSourceFilename
                             + "\" ended before all data from a POINTS statement could be read.");
                 }
                 memcpy(points, fileBuffer + charPtr, sizeof(float) * numPoints * 3);
@@ -217,13 +264,13 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
         } else if (splitLineString.front() == "POINT_DATA") {
             if (splitLineString.size() != 2) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid POINT_DATA string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid POINT_DATA string in file \""
                         + dataSourceFilename + "\".");
             }
             int numPointsLocal = sgl::fromString<int>(splitLineString.at(1));
             if (numPointsLocal != numPoints) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid POINT_DATA string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid POINT_DATA string in file \""
                         + dataSourceFilename + "\". The number of points does not match the dimensions.");
             }
 
@@ -231,13 +278,13 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
         } else if (splitLineString.front() == "CELL_DATA") {
             if (splitLineString.size() != 2) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid CELL_DATA string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid CELL_DATA string in file \""
                         + dataSourceFilename + "\".");
             }
             int numCellsLocal = sgl::fromString<int>(splitLineString.at(1));
             if (numCellsLocal != numCells) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid CELL_DATA string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid CELL_DATA string in file \""
                         + dataSourceFilename + "\". The number of points does not match the dimensions.");
             }
 
@@ -245,12 +292,12 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
         } else if (splitLineString.front() == "VECTORS") {
             if (splitLineString.size() != 3) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid VECTORS string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid VECTORS string in file \""
                         + dataSourceFilename + "\".");
             }
             if (splitLineString.at(2) != "float") {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid VECTORS string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid VECTORS string in file \""
                         + dataSourceFilename + "\". The loader only supports float data.");
             }
 
@@ -262,7 +309,7 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
                 size_t numBytes = sizeof(float) * numVectors * 3;
                 if (charPtr + numBytes > length) {
                     sgl::Logfile::get()->throwError(
-                            "Error in RbcBinFileLoader::load: The file \"" + dataSourceFilename
+                            "Error in StructuredGridVtkLoader::load: The file \"" + dataSourceFilename
                             + "\" ended before all data from a POINTS statement could be read.");
                 }
                 memcpy(vectorField, fileBuffer + charPtr, sizeof(float) * numVectors * 3);
@@ -276,7 +323,7 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
 
             if (vectorFields.find(vectorFieldName) != vectorFields.end()) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: The vector field \"" + vectorFieldName
+                        "Error in StructuredGridVtkLoader::load: The vector field \"" + vectorFieldName
                         + "\" exists more than one time in the file \"" + dataSourceFilename + "\".");
             }
 
@@ -289,36 +336,41 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
         } else if (splitLineString.front() == "SCALARS") {
             if (splitLineString.size() != 4) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid SCALARS string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid SCALARS string in file \""
                         + dataSourceFilename + "\".");
             }
             if (splitLineString.at(2) != "float" && splitLineString.at(2) != "unsigned_char") {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid SCALARS string in file \"" + dataSourceFilename +
+                        "Error in StructuredGridVtkLoader::load: Invalid SCALARS string in file \"" + dataSourceFilename +
                         "\". The loader only supports float data. Additionally, unsigned_char data can be ignored.");
             }
             if (splitLineString.at(3) != "1") {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Invalid SCALARS string in file \""
+                        "Error in StructuredGridVtkLoader::load: Invalid SCALARS string in file \""
                         + dataSourceFilename + "\". The loader only supports scalars with one value.");
             }
             if (!scalarFieldName.empty()) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Encountered another SCALARS string in file \""
+                        "Error in StructuredGridVtkLoader::load: Encountered another SCALARS string in file \""
                         + dataSourceFilename + "\" even though no LOOKUP_TABLE statement was given.");
             }
 
             scalarFieldName = splitLineString.at(1);
-            ignoreNextScalarData = splitLineString.at(2) != "float";
-            if (splitLineString.at(2) == "float") {
+            std::string dataType = splitLineString.at(2);
+            ignoreNextScalarData = dataType != "float";
+            if (dataType == "float") {
                 nextScalarDataBytesPerElement = 4;
-            } else if (splitLineString.at(2) == "unsigned_char") {
+            } else if (dataType == "char" || dataType == "unsigned_char") {
                 nextScalarDataBytesPerElement = 1;
+            } else {
+                sgl::Logfile::get()->throwError(
+                        "Error in StructuredGridVtkLoader::load: Encountered unsupported data type \""
+                        + dataType + "\" in a SCALARS statement in the file \"" + dataSourceFilename + "\".");
             }
         } else if (splitLineString.front() == "LOOKUP_TABLE") {
             if (scalarFieldName.empty()) {
                 sgl::Logfile::get()->throwError(
-                        "Error in RbcBinFileLoader::load: Encountered a LOOKUP_TABLE string in file \""
+                        "Error in StructuredGridVtkLoader::load: Encountered a LOOKUP_TABLE string in file \""
                         + dataSourceFilename + "\" before a SCALARS string.");
             }
 
@@ -330,7 +382,7 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
                     size_t numBytes = sizeof(float) * numScalars;
                     if (charPtr + numBytes > length) {
                         sgl::Logfile::get()->throwError(
-                                "Error in RbcBinFileLoader::load: The file \"" + dataSourceFilename
+                                "Error in StructuredGridVtkLoader::load: The file \"" + dataSourceFilename
                                 + "\" ended before all data from a SCALARS statement could be read.");
                     }
                     memcpy(scalarField, fileBuffer + charPtr, sizeof(float) * numScalars);
@@ -344,7 +396,7 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
 
                 if (scalarFields.find(scalarFieldName) != scalarFields.end()) {
                     sgl::Logfile::get()->throwError(
-                            "Error in RbcBinFileLoader::load: The scalar field \"" + scalarFieldName
+                            "Error in StructuredGridVtkLoader::load: The scalar field \"" + scalarFieldName
                             + "\" exists more than one time in the file \"" + dataSourceFilename + "\".");
                 }
                 if (pointDataMode) {
@@ -361,7 +413,7 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
                     size_t numBytes = nextScalarDataBytesPerElement * numScalars;
                     if (charPtr + numBytes > length) {
                         sgl::Logfile::get()->throwError(
-                                "Error in RbcBinFileLoader::load: The file \"" + dataSourceFilename
+                                "Error in StructuredGridVtkLoader::load: The file \"" + dataSourceFilename
                                 + "\" ended before all data from a SCALARS statement could be read.");
                     }
                     charPtr += sizeof(float) * numScalars;
@@ -372,36 +424,144 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
                 }
             }
             scalarFieldName.clear();
+        } else if (splitLineString.front() == "FIELD") {
+            if (splitLineString.size() != 3) {
+                sgl::Logfile::get()->throwError(
+                        "Error in StructuredGridVtkLoader::load: Invalid FIELD string in file \""
+                        + dataSourceFilename + "\".");
+            }
+            int numFieldEntries = sgl::fromString<int>(splitLineString.at(2));
+
+            for (int fieldEntryIdx = 0; fieldEntryIdx < numFieldEntries; fieldEntryIdx++) {
+                std::string arrayName;
+                int numComponents = 0;
+                int numTuples = 0;
+                std::string dataType;
+                _readFieldLine(arrayName, numComponents, numTuples, dataType, charPtr, length, fileBuffer);
+
+                bool ignoreNextData = dataType != "float";
+                if (dataType == "float") {
+                    nextScalarDataBytesPerElement = 4;
+                } else if (dataType == "char" || dataType == "unsigned_char") {
+                    nextScalarDataBytesPerElement = 1;
+                } else {
+                    sgl::Logfile::get()->throwError(
+                            "Error in StructuredGridVtkLoader::load: Encountered unsupported data type \""
+                            + dataType + "\" in a FIELD statement in the file \"" + dataSourceFilename + "\".");
+                }
+                int numArrayEntries = numTuples * numComponents;
+
+                if ((pointDataMode && numTuples != numPoints) || (!pointDataMode && numTuples != numCells)) {
+                    sgl::Logfile::get()->throwError(
+                            "Error in StructuredGridVtkLoader::load: FIELD array entry in file \""
+                            + dataSourceFilename + "\". has an invalid number of tuples.");
+                }
+
+                if (numComponents != 1 && numComponents != 3) {
+                    sgl::Logfile::get()->throwError(
+                            "Error in StructuredGridVtkLoader::load: FIELD array entry in file \""
+                            + dataSourceFilename + "\". has an invalid number of tuples.");
+                }
+
+                if (!ignoreNextData) {
+                    auto* arrayField = new float[numArrayEntries];
+                    if (isBinaryMode) {
+                        size_t numBytes = sizeof(float) * numArrayEntries;
+                        if (charPtr + numBytes > length) {
+                            sgl::Logfile::get()->throwError(
+                                    "Error in StructuredGridVtkLoader::load: The file \"" + dataSourceFilename
+                                    + "\" ended before all data from a FIELD statement could be read.");
+                        }
+                        memcpy(arrayField, fileBuffer + charPtr, sizeof(float) * numArrayEntries);
+                        swapEndianness(arrayField, numArrayEntries);
+                        charPtr += sizeof(float) * numArrayEntries;
+                    } else {
+                        _readLines(
+                                ReadMode::SCALAR, numArrayEntries, arrayField,
+                                charPtr, length, fileBuffer);
+                    }
+
+                    if (numComponents == 1) {
+                        if (scalarFields.find(arrayName) != scalarFields.end()) {
+                            sgl::Logfile::get()->throwError(
+                                    "Error in StructuredGridVtkLoader::load: The scalar field \"" + scalarFieldName
+                                    + "\" exists more than one time in the file \"" + dataSourceFilename + "\".");
+                        }
+                        if (pointDataMode) {
+                            scalarFields.insert(std::make_pair(arrayName, arrayField));
+                        } else {
+                            // Convert cell data to point data.
+                            auto* scalarFieldPoint = new float[numPoints];
+                            _convertScalarFieldCellToPointMode(arrayField, scalarFieldPoint, xs, ys, zs);
+                            scalarFields.insert(std::make_pair(arrayName, scalarFieldPoint));
+                            delete[] arrayField;
+                        }
+                    } else if (numComponents == 3) {
+                        if (vectorFields.find(arrayName) != vectorFields.end()) {
+                            sgl::Logfile::get()->throwError(
+                                    "Error in StructuredGridVtkLoader::load: The vector field \"" + arrayName
+                                    + "\" exists more than one time in the file \"" + dataSourceFilename + "\".");
+                        }
+                        if (pointDataMode) {
+                            vectorFields.insert(std::make_pair(arrayName, arrayField));
+                        } else {
+                            // Ignoring cell data for now.
+                            delete[] arrayField;
+                        }
+                    }
+                } else {
+                    if (isBinaryMode) {
+                        size_t numBytes = nextScalarDataBytesPerElement * numArrayEntries;
+                        if (charPtr + numBytes > length) {
+                            sgl::Logfile::get()->throwError(
+                                    "Error in StructuredGridVtkLoader::load: The file \"" + dataSourceFilename
+                                    + "\" ended before all data from a SCALARS statement could be read.");
+                        }
+                        charPtr += sizeof(float) * numArrayEntries;
+                    } else {
+                        _readLines(
+                                ReadMode::SKIP, numArrayEntries, nullptr,
+                                charPtr, length, fileBuffer);
+                    }
+                }
+            }
         }
     }
 
     if (!gridPoints) {
         sgl::Logfile::get()->throwError(
-                "Error in RbcBinFileLoader::load: The file \"" + dataSourceFilename
+                "Error in StructuredGridVtkLoader::load: The file \"" + dataSourceFilename
                 + "\" does not contain a POINTS statement.");
     }
 
-    /*sgl::AABB3 domainExtents;
+    sgl::AABB3 domainExtents;
     for (int i = 0; i < numPoints; i++) {
         domainExtents.combine(gridPoints[i]);
     }
+    glm::vec3 bbDim = domainExtents.getDimensions();
 
-    glm::vec3 dimensions = domainExtents.getDimensions();
+    /*glm::vec3 dimensions = domainExtents.getDimensions();
     float maxDimension = std::max(dimensions.x, std::max(dimensions.y, dimensions.z));
     float cellStep = 1.0f / maxDimension;*/
 
     float maxDimension = float(std::max(xs - 1, std::max(ys - 1, zs - 1)));
     float cellStep = 1.0f / maxDimension;
+    float maxBbDim = std::max(bbDim.x, std::max(bbDim.y, bbDim.z));
+    float dx = cellStep * bbDim.x / maxBbDim;
+    float dy = cellStep * bbDim.y / maxBbDim;
+    float dz = cellStep * bbDim.z / maxBbDim;
+    grid->setGridExtent(xs, ys, zs, dx, dy, dz);
 
     auto itVelocity = vectorFields.find("velocity");
     if (itVelocity == vectorFields.end()) {
-        sgl::Logfile::get()->throwError(
-                "Error in RbcBinFileLoader::load: The file \"" + dataSourceFilename
-                + "\" does not contain a vector field called 'velocity'.");
+        itVelocity = vectorFields.find("Velocity");
+        if (itVelocity == vectorFields.end()) {
+            sgl::Logfile::get()->throwError(
+                    "Error in StructuredGridVtkLoader::load: The file \"" + dataSourceFilename
+                    + "\" does not contain a vector field called 'velocity' or 'Velocity'.");
+        }
     }
     float* velocityField = itVelocity->second;
-
-    grid->setGridMetadata(xs, ys, zs, cellStep, cellStep, cellStep);
 
     if (scalarFields.find("velocityMagnitude") == scalarFields.end()) {
         auto* velocityMagnitudeField = new float[numPoints];
@@ -431,7 +591,6 @@ void StructuredGridVtkLoader::load(const std::string& dataSourceFilename, Stream
             computeHelicityField(velocityField, vorticityField, helicityField, xs, ys, zs);
             scalarFields.insert(std::make_pair("Helicity", helicityField));
         }
-        delete[] vorticityField;
     }
 
     for (auto& it : vectorFields) {

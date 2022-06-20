@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2020, Christoph Neuhauser
+ * Copyright (c) 2020-2022, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,16 +27,20 @@
  */
 
 #ifdef USE_PYTHON
-#ifdef PYTHONHOME_PATH
+#if defined(PYTHONHOME_PATH) || defined(__APPLE__)
 #include <cstdlib>
 #endif
 #include <Python.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 #ifdef USE_OSPRAY
 #include <ospray/ospray.h>
 #include "Renderers/Ospray/OsprayRenderer.hpp"
 #endif
+
 
 #include <Utils/File/FileUtils.hpp>
 #include <Utils/File/Logfile.hpp>
@@ -91,7 +95,10 @@ int main(int argc, char *argv[]) {
     optionalDeviceExtensions.insert(
             optionalDeviceExtensions.end(),
             raytracingDeviceExtensions.begin(), raytracingDeviceExtensions.end());
+    optionalDeviceExtensions.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
     optionalDeviceExtensions.push_back(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
+    optionalDeviceExtensions.push_back(VK_NV_MESH_SHADER_EXTENSION_NAME);
+    optionalDeviceExtensions.push_back(VK_NV_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
 
     sgl::vk::Instance* instance = sgl::AppSettings::get()->getVulkanInstance();
     sgl::vk::Device* device = new sgl::vk::Device;
@@ -104,8 +111,7 @@ int main(int argc, char *argv[]) {
     device->createDeviceSwapchain(
             instance, window,
             {
-                    VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
-                    VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME
+                    VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME
             },
             optionalDeviceExtensions, requestedDeviceFeatures);
     sgl::vk::Swapchain* swapchain = new sgl::vk::Swapchain(device);
@@ -118,10 +124,54 @@ int main(int argc, char *argv[]) {
 #ifdef PYTHONHOME
     const char* pythonhomeEnvVar = getenv("PYTHONHOME");
     if (!pythonhomeEnvVar || strlen(pythonhomeEnvVar) == 0) {
+#if !defined(__APPLE__) || !defined(PYTHONPATH)
         Py_SetPythonHome(PYTHONHOME);
+#endif
         // As of 2022-01-25, "lib-dynload" is not automatically found when using MSYS2 together with MinGW.
-#if defined(__MINGW32__) && defined(PYTHONPATH)
+#if (defined(__MINGW32__) || defined(__APPLE__)) && defined(PYTHONPATH)
+#ifdef __MINGW32__
         Py_SetPath(PYTHONPATH ";" PYTHONPATH "/site-packages;" PYTHONPATH "/lib-dynload");
+#else
+        std::wstring pythonhomeWide = PYTHONHOME;
+        std::string pythonhomeNormal(pythonhomeWide.size(), ' ');
+        pythonhomeNormal.resize(std::wcstombs(
+                &pythonhomeNormal[0], pythonhomeWide.c_str(), pythonhomeWide.size()));
+        std::wstring pythonpathWide = PYTHONPATH;
+        std::string pythonpathNormal(pythonpathWide.size(), ' ');
+        pythonpathNormal.resize(std::wcstombs(
+                &pythonpathNormal[0], pythonpathWide.c_str(), pythonpathWide.size()));
+        if (!sgl::FileUtils::get()->exists(pythonhomeNormal)) {
+            uint32_t pathBufferSize = 0;
+            _NSGetExecutablePath(nullptr, &pathBufferSize);
+            char* pathBuffer = new char[pathBufferSize];
+            _NSGetExecutablePath(pathBuffer, &pathBufferSize);
+            std::string executablePythonHome =
+                    sgl::FileUtils::get()->getPathToFile(std::string() + pathBuffer) + "python3";
+            if (sgl::FileUtils::get()->exists(executablePythonHome)) {
+                std::wstring pythonHomeLocal(executablePythonHome.size(), L' ');
+                pythonHomeLocal.resize(std::mbstowcs(
+                        &pythonHomeLocal[0], executablePythonHome.c_str(), executablePythonHome.size()));
+                std::string pythonVersionString = sgl::FileUtils::get()->getPathAsList(pythonpathNormal).back();
+                 std::wstring pythonVersionStringWide(pythonVersionString.size(), L' ');
+                pythonVersionStringWide.resize(std::mbstowcs(
+                        &pythonVersionStringWide[0], pythonVersionString.c_str(), pythonVersionString.size()));
+               std::wstring pythonPathLocal =
+                        pythonHomeLocal + L"/lib/" + pythonVersionStringWide;
+                std::wstring inputPath =
+                        pythonPathLocal + L":"
+                        + pythonPathLocal + L"/site-packages:"
+                        + pythonPathLocal + L"/lib-dynload";
+                Py_SetPythonHome(pythonHomeLocal.c_str());
+                Py_SetPath(inputPath.c_str());
+            } else {
+                sgl::Logfile::get()->throwError("Fatal error: Couldn't find Python home.");
+            }
+            delete[] pathBuffer;
+        } else {
+            Py_SetPythonHome(PYTHONHOME);
+            Py_SetPath(PYTHONPATH ":" PYTHONPATH "/site-packages:" PYTHONPATH "/lib-dynload");
+        }
+#endif
 #endif
     }
 #endif

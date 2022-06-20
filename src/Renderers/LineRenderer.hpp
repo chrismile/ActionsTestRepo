@@ -202,6 +202,7 @@ protected:
     std::vector<std::vector<glm::vec3>> filteredLines;
     sgl::vk::BufferPtr filteredLinesVerticesBuffer;
     sgl::vk::BufferPtr depthMinMaxBuffers[2];
+    sgl::vk::BufferPtr dummyBuffer; // For ray tracing when depthMinMaxBuffers is not set, but hull is rendered.
     size_t outputDepthMinMaxBufferIndex = 0;
     std::shared_ptr<ComputeDepthValuesPass> computeDepthValuesPass;
     std::shared_ptr<MinMaxDepthReductionPass> minMaxDepthReductionPass[2];
@@ -238,6 +239,10 @@ protected:
     static constexpr float MAX_BAND_WIDTH = 0.020f;
     static float lineWidth;
     static float bandWidth;
+    static float displayLineWidth;
+    static float displayBandWidth;
+    static float displayLineWidthStaging;
+    static float displayBandWidthStaging;
     static float minBandThickness;
 };
 

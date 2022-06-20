@@ -275,7 +275,7 @@ void main() {
 
 struct TubeTriangleVertexData {
     vec3 vertexPosition;
-    uint vertexLinePointIndex; ///< Pointer to TubeLinePointData entry.
+    uint vertexLinePointIndex; ///< Pointer to LinePointData entry.
     vec3 vertexNormal;
     float phi; ///< Angle.
 };
@@ -288,8 +288,21 @@ layout(std430, binding = 4) readonly buffer TubeTriangleVertexDataBuffer {
     TubeTriangleVertexData tubeTriangleVertexDataBuffer[];
 };
 
+#ifdef USE_INSTANCE_TRIANGLE_INDEX_OFFSET
+layout(std430, binding = INSTANCE_INDEX_OFFSET_BUFFER_BINDING) readonly buffer InstanceTriangleIndexOffsetBuffer {
+    uint instanceTriangleIndexOffsets[];
+};
+#endif
+
 void main() {
+#ifdef USE_INSTANCE_TRIANGLE_INDEX_OFFSET
+    // gl_InstanceID and gl_InstanceCustomIndexEXT should be the same, as hull instances are always specified last.
+    uint instanceTriangleIndexOffset = instanceTriangleIndexOffsets[gl_InstanceID];
+    uvec3 triangleIndices = indexBuffer[instanceTriangleIndexOffset + gl_PrimitiveID];
+#else
     uvec3 triangleIndices = indexBuffer[gl_PrimitiveID];
+#endif
+
     const vec3 barycentricCoordinates = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
 
     TubeTriangleVertexData vertexData0 = tubeTriangleVertexDataBuffer[triangleIndices.x];
@@ -300,9 +313,9 @@ void main() {
     uint vertexLinePointIndex0 = vertexData0.vertexLinePointIndex & 0x7FFFFFFFu;
     uint vertexLinePointIndex1 = vertexData1.vertexLinePointIndex & 0x7FFFFFFFu;
     uint vertexLinePointIndex2 = vertexData2.vertexLinePointIndex & 0x7FFFFFFFu;
-    TubeLinePointData linePointData0 =  tubeLinePointDataBuffer[vertexLinePointIndex0];
-    TubeLinePointData linePointData1 =  tubeLinePointDataBuffer[vertexLinePointIndex1];
-    TubeLinePointData linePointData2 =  tubeLinePointDataBuffer[vertexLinePointIndex2];
+    LinePointData linePointData0 = linePoints[vertexLinePointIndex0];
+    LinePointData linePointData1 = linePoints[vertexLinePointIndex1];
+    LinePointData linePointData2 = linePoints[vertexLinePointIndex2];
     bool isCap =
             bitfieldExtract(vertexData0.vertexLinePointIndex, 31, 1) > 0u
             || bitfieldExtract(vertexData1.vertexLinePointIndex, 31, 1) > 0u
@@ -311,9 +324,9 @@ void main() {
     uint vertexLinePointIndex0 = vertexData0.vertexLinePointIndex;
     uint vertexLinePointIndex1 = vertexData1.vertexLinePointIndex;
     uint vertexLinePointIndex2 = vertexData2.vertexLinePointIndex;
-    TubeLinePointData linePointData0 =  tubeLinePointDataBuffer[vertexLinePointIndex0];
-    TubeLinePointData linePointData1 =  tubeLinePointDataBuffer[vertexLinePointIndex1];
-    TubeLinePointData linePointData2 =  tubeLinePointDataBuffer[vertexLinePointIndex2];
+    LinePointData linePointData0 = linePoints[vertexLinePointIndex0];
+    LinePointData linePointData1 = linePoints[vertexLinePointIndex1];
+    LinePointData linePointData2 = linePoints[vertexLinePointIndex2];
 #endif
 
     vec3 fragmentPositionWorld = interpolateVec3(
@@ -332,7 +345,7 @@ void main() {
     float phi = interpolateAngle(
             vertexData0.phi, vertexData1.phi, vertexData2.phi, barycentricCoordinates);
 #endif
-#ifdef USE_AMBIENT_OCCLUSION
+#if defined(USE_AMBIENT_OCCLUSION) || defined(USE_MULTI_VAR_RENDERING)
     float fragmentVertexId = interpolateFloat(
             float(vertexLinePointIndex0), float(vertexLinePointIndex1), float(vertexLinePointIndex2),
             barycentricCoordinates);
@@ -347,19 +360,89 @@ void main() {
 
 #ifdef USE_ROTATING_HELICITY_BANDS
     float fragmentRotation = interpolateFloat(
-            linePointData0.lineHierarchyLevel, linePointData1.lineHierarchyLevel, linePointData2.lineHierarchyLevel,
+            linePointData0.lineRotation, linePointData1.lineRotation, linePointData2.lineRotation,
             barycentricCoordinates);
 #endif
 
+#if defined(USE_ROTATING_HELICITY_BANDS) && defined(USE_CAPPED_TUBES)
+    if (isCap) {
+        float fragmentRotationDelta = 0.0;
+        float segmentLength = 1.0;
+        vec3 planeNormal = vec3(0.0);
+        LinePointData linePointDataOther;
+        bool found = false;
+        if (vertexLinePointIndex0 != 0) {
+            linePointDataOther = linePoints[vertexLinePointIndex0 - 1];
+            found = linePointDataOther.lineStartIndex == linePointData0.lineStartIndex;
+        }
+        if (!found) {
+            linePointDataOther = linePoints[vertexLinePointIndex0 + 1];
+        }
+        fragmentRotationDelta = linePointData0.lineRotation - linePointDataOther.lineRotation;
+        planeNormal = linePointData0.linePosition - linePointDataOther.linePosition;
+        segmentLength = length(planeNormal);
+        planeNormal /= segmentLength;
+        //planeNormal = linePointData0.lineTangent;
+        float planeDist = -dot(planeNormal, linePointData0.linePosition);
+        float distToPlane = dot(planeNormal, fragmentPositionWorld) + planeDist;
+        fragmentRotation += fragmentRotationDelta * distToPlane / segmentLength;
+    }
+#endif
+
+#if defined(USE_ROTATING_HELICITY_BANDS) && defined(UNIFORM_HELICITY_BAND_WIDTH)
+    float rotDx;
+    float rotDy;
+    bool found = false;
+    LinePointData linePointDataOther;
+    if (vertexLinePointIndex0 != 0) {
+        linePointDataOther = linePoints[vertexLinePointIndex0 - 1];
+        found = linePointDataOther.lineStartIndex == linePointData0.lineStartIndex;
+        rotDy = linePointData0.lineRotation - linePointDataOther.lineRotation;
+    }
+    if (!found) {
+        linePointDataOther = linePoints[vertexLinePointIndex0 + 1];
+        rotDy = linePointDataOther.lineRotation - linePointData0.lineRotation;
+    }
+    rotDx = length(linePointData0.linePosition - linePointDataOther.linePosition);
+    // Space conversion world <-> surface: circumference / arc length == M_PI * lineWidth / (2.0 * M_PI) == 0.5 * lineWidth
+    float rotationSeparatorScale = cos(atan(rotDy * 0.5 * lineWidth, rotDx));
+#endif
+
+#ifdef STRESS_LINE_DATA
+    StressLinePointData stressLinePointData0 = stressLinePoints[vertexLinePointIndex0];
+    uint principalStressIndex = stressLinePointData0.linePrincipalStressIndex;
+    float lineAppearanceOrder = stressLinePointData0.lineLineAppearanceOrder;
+#ifdef USE_PRINCIPAL_STRESSES
+    StressLinePointPrincipalStressData stressLinePointPrincipalStressData0 = principalStressLinePoints[vertexLinePointIndex0];
+    StressLinePointPrincipalStressData stressLinePointPrincipalStressData1 = principalStressLinePoints[vertexLinePointIndex1];
+    StressLinePointPrincipalStressData stressLinePointPrincipalStressData2 = principalStressLinePoints[vertexLinePointIndex2];
+    float fragmentMajorStress = interpolateFloat(
+            stressLinePointPrincipalStressData0.lineMajorStress,
+            stressLinePointPrincipalStressData1.lineMajorStress,
+            stressLinePointPrincipalStressData2.lineMajorStress,
+            barycentricCoordinates);
+    float fragmentMediumStress = interpolateFloat(
+            stressLinePointPrincipalStressData0.lineMediumStress,
+            stressLinePointPrincipalStressData1.lineMediumStress,
+            stressLinePointPrincipalStressData2.lineMediumStress,
+            barycentricCoordinates);
+    float fragmentMinorStress = interpolateFloat(
+            stressLinePointPrincipalStressData0.lineMinorStress,
+            stressLinePointPrincipalStressData1.lineMinorStress,
+            stressLinePointPrincipalStressData2.lineMinorStress,
+            barycentricCoordinates);
+#endif
+#endif
+
     computeFragmentColor(
-            fragmentPositionWorld, fragmentNormal, fragmentTangent, fragmentAttribute,
+            fragmentPositionWorld, fragmentNormal, fragmentTangent,
 #ifdef USE_CAPPED_TUBES
             isCap,
 #endif
 #if defined (USE_BANDS) || defined(USE_AMBIENT_OCCLUSION) || defined(USE_ROTATING_HELICITY_BANDS)
             phi,
 #endif
-#ifdef USE_AMBIENT_OCCLUSION
+#if defined(USE_AMBIENT_OCCLUSION) || defined(USE_MULTI_VAR_RENDERING)
             fragmentVertexId,
 #endif
 #ifdef USE_BANDS
@@ -368,9 +451,17 @@ void main() {
 #ifdef USE_ROTATING_HELICITY_BANDS
             fragmentRotation,
 #endif
-            linePointData0, linePointData1
+#if defined(USE_ROTATING_HELICITY_BANDS) && defined(UNIFORM_HELICITY_BAND_WIDTH)
+            rotationSeparatorScale,
+#endif
+#ifdef STRESS_LINE_DATA
+            principalStressIndex, lineAppearanceOrder,
+#ifdef USE_PRINCIPAL_STRESSES
+            fragmentMajorStress, fragmentMediumStress, fragmentMinorStress,
+#endif
+#endif
+            fragmentAttribute
     );
-
 }
 
 
@@ -465,33 +556,19 @@ void main() {
 #extension GL_EXT_ray_tracing : require
 
 #include "LineUniformData.glsl"
+#include "LineDataSSBO.glsl"
 #include "RayIntersectionTestsVulkan.glsl"
-
-struct TubeLinePointData {
-    vec3 linePosition;
-    float lineAttribute;
-    vec3 lineTangent;
-    float lineHierarchyLevel; ///< Zero for flow lines.
-    vec3 lineNormal;
-    float lineAppearanceOrder; ///< Zero for flow lines.
-    uvec3 padding;
-    uint principalStressIndex; ///< Zero for flow lines.
-};
 
 layout(std430, binding = 3) readonly buffer BoundingBoxLinePointIndexBuffer {
     uvec2 boundingBoxLinePointIndices[];
 };
 
-layout(std430, binding = 5) readonly buffer TubeLinePointDataBuffer {
-    TubeLinePointData tubeLinePointDataBuffer[];
-};
-
 void main() {
-    const float lineRadius = lineWidth / 2.0;
+    const float lineRadius = lineWidth * 0.5;
 
     uvec2 linePointIndices = boundingBoxLinePointIndices[gl_PrimitiveID];
-    vec3 lineSegmentPoint0 = tubeLinePointDataBuffer[linePointIndices.x].linePosition;
-    vec3 lineSegmentPoint1 = tubeLinePointDataBuffer[linePointIndices.y].linePosition;
+    vec3 lineSegmentPoint0 = linePoints[linePointIndices.x].linePosition;
+    vec3 lineSegmentPoint1 = linePoints[linePointIndices.y].linePosition;
 
     bool hasIntersection = false;
     float hitT = 1e7;
@@ -547,8 +624,8 @@ layout(std430, binding = 3) readonly buffer BoundingBoxLinePointIndexBuffer {
 
 void main() {
     uvec2 linePointIndices = boundingBoxLinePointIndices[gl_PrimitiveID];
-    TubeLinePointData linePointData0 = tubeLinePointDataBuffer[linePointIndices.x];
-    TubeLinePointData linePointData1 = tubeLinePointDataBuffer[linePointIndices.y];
+    LinePointData linePointData0 = linePoints[linePointIndices.x];
+    LinePointData linePointData1 = linePoints[linePointIndices.y];
 
     vec3 fragmentPositionWorld = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 
@@ -594,22 +671,41 @@ void main() {
         phi = 2.0 * float(M_PI) - phi;
     }
 #endif
-#ifdef USE_AMBIENT_OCCLUSION
+#if defined(USE_AMBIENT_OCCLUSION) || defined(USE_MULTI_VAR_RENDERING)
     float fragmentVertexId = (1.0 - t) * linePointIndices.x + t * linePointIndices.y;
 #endif
 #ifdef USE_ROTATING_HELICITY_BANDS
-    float fragmentRotation = (1.0 - t) * linePointData0.lineHierarchyLevel + t * linePointData1.lineHierarchyLevel;
+    float fragmentRotation = (1.0 - t) * linePointData0.lineRotation + t * linePointData1.lineRotation;
+#endif
+
+#ifdef STRESS_LINE_DATA
+    StressLinePointData stressLinePointData0 = stressLinePoints[linePointIndices.x];
+    uint principalStressIndex = stressLinePointData0.linePrincipalStressIndex;
+    float lineAppearanceOrder = stressLinePointData0.lineLineAppearanceOrder;
+#ifdef USE_PRINCIPAL_STRESSES
+    StressLinePointPrincipalStressData stressLinePointPrincipalStressData0 = principalStressLinePoints[linePointIndices.x];
+    StressLinePointPrincipalStressData stressLinePointPrincipalStressData1 = principalStressLinePoints[linePointIndices.y];
+    float fragmentMajorStress =
+            (1.0 - t) * stressLinePointPrincipalStressData0.lineMajorStress
+            + t * stressLinePointPrincipalStressData1.lineMajorStress;
+    float fragmentMediumStress =
+            (1.0 - t) * stressLinePointPrincipalStressData0.lineMediumStress
+            + t * stressLinePointPrincipalStressData1.lineMediumStress;
+    float fragmentMinorStress =
+            (1.0 - t) * stressLinePointPrincipalStressData0.lineMinorStress
+            + t * stressLinePointPrincipalStressData1.lineMinorStress;
+#endif
 #endif
 
     computeFragmentColor(
-            fragmentPositionWorld, fragmentNormal, fragmentTangent, fragmentAttribute,
+            fragmentPositionWorld, fragmentNormal, fragmentTangent,
 #ifdef USE_CAPPED_TUBES
             isCap,
 #endif
 #if defined (USE_BANDS) || defined(USE_AMBIENT_OCCLUSION) || defined(USE_ROTATING_HELICITY_BANDS)
             phi,
 #endif
-#ifdef USE_AMBIENT_OCCLUSION
+#if defined(USE_AMBIENT_OCCLUSION) || defined(USE_MULTI_VAR_RENDERING)
             fragmentVertexId,
 #endif
 #ifdef USE_BANDS
@@ -618,7 +714,13 @@ void main() {
 #ifdef USE_ROTATING_HELICITY_BANDS
             fragmentRotation,
 #endif
-            linePointData0, linePointData1
+#ifdef STRESS_LINE_DATA
+            principalStressIndex, lineAppearanceOrder,
+#ifdef USE_PRINCIPAL_STRESSES
+            fragmentMajorStress, fragmentMediumStress, fragmentMinorStress,
+#endif
+#endif
+            fragmentAttribute
     );
 }
 

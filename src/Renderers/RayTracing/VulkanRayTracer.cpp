@@ -39,6 +39,7 @@
 #include <ImGui/imgui_custom.h>
 #include <ImGui/Widgets/PropertyEditor.hpp>
 
+#include "Utils/AutomaticPerformanceMeasurer.hpp"
 #include "VulkanRayTracer.hpp"
 
 using namespace sgl;
@@ -48,7 +49,7 @@ VulkanRayTracer::VulkanRayTracer(SceneData* sceneData, sgl::TransferFunctionWind
     isRasterizer = false;
 
     rayTracingRenderPass = std::make_shared<RayTracingRenderPass>(
-            this, renderer, &sceneData->camera);
+            sceneData, this, renderer, &sceneData->camera);
     rayTracingRenderPass->setNumSamplesPerFrame(numSamplesPerFrame);
     rayTracingRenderPass->setMaxNumFrames(maxNumAccumulatedFrames);
     rayTracingRenderPass->setMaxDepthComplexity(maxDepthComplexity);
@@ -126,7 +127,15 @@ void VulkanRayTracer::render() {
 
     rayTracingRenderPass->setFrameNumber(accumulatedFramesCounter);
     rayTracingRenderPass->setDepthMinMaxBuffer(depthMinMaxBuffers[outputDepthMinMaxBufferIndex]);
-    rayTracingRenderPass->render();
+    rayTracingRenderPass->buildIfNecessary();
+    if (rayTracingRenderPass->getIsAccelerationStructureEmpty()) {
+        renderer->transitionImageLayout(
+                (*sceneData->sceneTexture)->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        (*sceneData->sceneTexture)->getImage()->clearColor(
+                sceneData->clearColor->getFloatColorRGBA(), renderer->getVkCommandBuffer());
+    } else {
+        rayTracingRenderPass->render();
+    }
 
     accumulatedFramesCounter++;
 }
@@ -178,6 +187,31 @@ void VulkanRayTracer::renderGuiPropertyEditorNodes(sgl::PropertyEditor& property
     }
 }
 
+void VulkanRayTracer::setNewState(const InternalState& newState) {
+    if (newState.rendererSettings.getValueOpt("useAnalyticIntersections", useAnalyticIntersections)) {
+        rayTracingRenderPass->setUseAnalyticIntersections(useAnalyticIntersections);
+        rayTracingRenderPass->setShaderDirty();
+        if (lineData) {
+            rayTracingRenderPass->setLineData(lineData, false);
+        }
+        accumulatedFramesCounter = 0;
+    }
+    if (newState.rendererSettings.getValueOpt("numSamplesPerFrame", numSamplesPerFrame)) {
+        rayTracingRenderPass->setNumSamplesPerFrame(numSamplesPerFrame);
+        accumulatedFramesCounter = 0;
+    }
+    if (newState.rendererSettings.getValueOpt("useMlat", useMlat)) {
+        rayTracingRenderPass->setUseMlat(useMlat);
+        rayTracingRenderPass->setShaderDirty();
+        accumulatedFramesCounter = 0;
+    }
+    if (newState.rendererSettings.getValueOpt("mlatNumNodes", mlatNumNodes)) {
+        rayTracingRenderPass->setMlatNumNodes(mlatNumNodes);
+        rayTracingRenderPass->setShaderDirty();
+        accumulatedFramesCounter = 0;
+    }
+}
+
 bool VulkanRayTracer::needsReRender() {
     bool reRender = LineRenderer::needsReRender();
     if (accumulatedFramesCounter < maxNumAccumulatedFrames) {
@@ -202,8 +236,8 @@ void VulkanRayTracer::update(float dt) {
 
 
 RayTracingRenderPass::RayTracingRenderPass(
-        VulkanRayTracer* vulkanRayTracer, sgl::vk::Renderer* renderer, sgl::CameraPtr* camera)
-        : RayTracingPass(renderer), vulkanRayTracer(vulkanRayTracer), camera(camera) {
+        SceneData* sceneData, VulkanRayTracer* vulkanRayTracer, sgl::vk::Renderer* renderer, sgl::CameraPtr* camera)
+        : RayTracingPass(renderer), sceneData(sceneData), vulkanRayTracer(vulkanRayTracer), camera(camera) {
     rayTracerSettingsBuffer = std::make_shared<sgl::vk::Buffer>(
             device, sizeof(RayTracerSettings),
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -221,20 +255,25 @@ void RayTracingRenderPass::setOutputImage(sgl::vk::ImageViewPtr& imageView) {
 void RayTracingRenderPass::setLineData(LineDataPtr& lineData, bool isNewData) {
     this->lineData = lineData;
     if (useAnalyticIntersections) {
-        tubeTriangleRenderData = VulkanTubeTriangleRenderData();
-        tubeAabbRenderData = lineData->getVulkanTubeAabbRenderData(vulkanRayTracer);
         if (lineData->getShallRenderSimulationMeshBoundary()) {
-            topLevelAS = lineData->getRayTracingTubeAabbAndHullTopLevelAS(vulkanRayTracer);
+            topLevelAS = lineData->getRayTracingTubeAabbAndHullTopLevelAS();
         } else {
-            topLevelAS = lineData->getRayTracingTubeAabbTopLevelAS(vulkanRayTracer);
+            topLevelAS = lineData->getRayTracingTubeAabbTopLevelAS();
         }
+        tubeTriangleRenderData = TubeTriangleRenderData();
+        tubeAabbRenderData = lineData->getLinePassTubeAabbRenderData(false);
     } else {
-        tubeTriangleRenderData = lineData->getVulkanTubeTriangleRenderData(vulkanRayTracer, true);
-        tubeAabbRenderData = VulkanTubeAabbRenderData();
         if (lineData->getShallRenderSimulationMeshBoundary()) {
-            topLevelAS = lineData->getRayTracingTubeTriangleAndHullTopLevelAS(vulkanRayTracer);
+            topLevelAS = lineData->getRayTracingTubeTriangleAndHullTopLevelAS();
         } else {
-            topLevelAS = lineData->getRayTracingTubeTriangleTopLevelAS(vulkanRayTracer);
+            topLevelAS = lineData->getRayTracingTubeTriangleTopLevelAS();
+        }
+        tubeTriangleRenderData = lineData->getLinePassTubeTriangleMeshRenderData(false, true);
+        tubeAabbRenderData = TubeAabbRenderData();
+        bool useSplitBlasesNew = tubeTriangleRenderData.instanceTriangleIndexOffsetBuffer.get() != nullptr;
+        if (useSplitBlases != useSplitBlasesNew) {
+            useSplitBlases = useSplitBlasesNew;
+            setShaderDirty();
         }
     }
 
@@ -261,6 +300,9 @@ void RayTracingRenderPass::loadShader() {
     std::map<std::string, std::string> preprocessorDefines;
     lineData->getVulkanShaderPreprocessorDefines(preprocessorDefines, false);
     vulkanRayTracer->getVulkanShaderPreprocessorDefines(preprocessorDefines);
+    if (useSplitBlases) {
+        preprocessorDefines.insert(std::make_pair("USE_INSTANCE_TRIANGLE_INDEX_OFFSET", ""));
+    }
     if (useJitteredSamples) {
         preprocessorDefines.insert(std::make_pair("USE_JITTERED_RAYS", ""));
     }
@@ -323,13 +365,28 @@ void RayTracingRenderPass::createRayTracingData(
             rayTracingData->setStaticBuffer(
                     tubeAabbRenderData.indexBuffer, "BoundingBoxLinePointIndexBuffer");
             rayTracingData->setStaticBuffer(
-                    tubeAabbRenderData.linePointBuffer, "TubeLinePointDataBuffer");
+                    tubeAabbRenderData.linePointDataBuffer, "LinePointDataBuffer");
+            rayTracingData->setStaticBufferOptional(
+                    tubeAabbRenderData.stressLinePointDataBuffer, "StressLinePointDataBuffer");
+            rayTracingData->setStaticBufferOptional(
+                    tubeAabbRenderData.stressLinePointPrincipalStressDataBuffer,
+                    "StressLinePointPrincipalStressDataBuffer");
+            if (tubeAabbRenderData.multiVarAttributeDataBuffer) {
+                rayTracingData->setStaticBufferOptional(
+                        tubeAabbRenderData.multiVarAttributeDataBuffer, "AttributeDataArrayBuffer");
+            }
         } else {
             // Just bind anything in order for sgl to not complain...
             rayTracingData->setStaticBuffer(
                     hullTriangleRenderData.indexBuffer, "BoundingBoxLinePointIndexBuffer");
             rayTracingData->setStaticBuffer(
-                    hullTriangleRenderData.vertexBuffer, "TubeLinePointDataBuffer");
+                    hullTriangleRenderData.vertexBuffer, "LinePointDataBuffer");
+            rayTracingData->setStaticBufferOptional(
+                    hullTriangleRenderData.vertexBuffer, "StressLinePointDataBuffer");
+            rayTracingData->setStaticBufferOptional(
+                    hullTriangleRenderData.vertexBuffer, "StressLinePointPrincipalStressDataBuffer");
+            rayTracingData->setStaticBufferOptional(
+                    hullTriangleRenderData.vertexBuffer, "AttributeDataArrayBuffer");
         }
     } else {
         if (tubeTriangleRenderData.indexBuffer) {
@@ -338,7 +395,21 @@ void RayTracingRenderPass::createRayTracingData(
             rayTracingData->setStaticBuffer(
                     tubeTriangleRenderData.vertexBuffer, "TubeTriangleVertexDataBuffer");
             rayTracingData->setStaticBuffer(
-                    tubeTriangleRenderData.linePointBuffer, "TubeLinePointDataBuffer");
+                    tubeTriangleRenderData.linePointDataBuffer, "LinePointDataBuffer");
+            rayTracingData->setStaticBufferOptional(
+                    tubeTriangleRenderData.stressLinePointDataBuffer, "StressLinePointDataBuffer");
+            rayTracingData->setStaticBufferOptional(
+                    tubeTriangleRenderData.stressLinePointPrincipalStressDataBuffer,
+                    "StressLinePointPrincipalStressDataBuffer");
+            if (tubeTriangleRenderData.multiVarAttributeDataBuffer) {
+                rayTracingData->setStaticBufferOptional(
+                        tubeTriangleRenderData.multiVarAttributeDataBuffer, "AttributeDataArrayBuffer");
+            }
+            if (useSplitBlases) {
+                rayTracingData->setStaticBufferOptional(
+                        tubeTriangleRenderData.instanceTriangleIndexOffsetBuffer,
+                        "InstanceTriangleIndexOffsetBuffer");
+            }
         } else {
             // Just bind anything in order for sgl to not complain...
             rayTracingData->setStaticBuffer(
@@ -346,7 +417,15 @@ void RayTracingRenderPass::createRayTracingData(
             rayTracingData->setStaticBuffer(
                     hullTriangleRenderData.vertexBuffer, "TubeTriangleVertexDataBuffer");
             rayTracingData->setStaticBuffer(
-                    hullTriangleRenderData.vertexBuffer, "TubeLinePointDataBuffer");
+                    hullTriangleRenderData.vertexBuffer, "LinePointDataBuffer");
+            rayTracingData->setStaticBufferOptional(
+                    hullTriangleRenderData.vertexBuffer, "StressLinePointDataBuffer");
+            rayTracingData->setStaticBufferOptional(
+                    hullTriangleRenderData.vertexBuffer, "StressLinePointPrincipalStressDataBuffer");
+            rayTracingData->setStaticBufferOptional(
+                    hullTriangleRenderData.vertexBuffer, "AttributeDataArrayBuffer");
+            //rayTracingData->setStaticBufferOptional(
+            //        hullTriangleRenderData.vertexBuffer, "InstanceTriangleIndexOffsetBuffer");
         }
     }
     if (hullTriangleRenderData.indexBuffer) {
@@ -358,7 +437,7 @@ void RayTracingRenderPass::createRayTracingData(
         sgl::vk::BufferPtr indexBuffer =
                 useAnalyticIntersections ? tubeAabbRenderData.indexBuffer : tubeTriangleRenderData.indexBuffer;
         sgl::vk::BufferPtr vertexBuffer =
-                useAnalyticIntersections ? tubeAabbRenderData.linePointBuffer : tubeTriangleRenderData.vertexBuffer;
+                useAnalyticIntersections ? tubeAabbRenderData.linePointDataBuffer : tubeTriangleRenderData.vertexBuffer;
         rayTracingData->setStaticBuffer(indexBuffer, "HullIndexBuffer");
         rayTracingData->setStaticBuffer(vertexBuffer, "HullTriangleVertexDataBuffer");
     }
@@ -383,6 +462,12 @@ void RayTracingRenderPass::_render() {
     rayTracingData->setShaderGroupSettings(shaderGroupSettings);
 
     lineData->updateVulkanUniformBuffers(vulkanRayTracer, renderer);
+
+    if ((*sceneData->performanceMeasurer)) {
+        auto renderDataSize = rayTracingData->getRenderDataSize();
+        (*sceneData->performanceMeasurer)->setCurrentDataSetBufferSizeBytes(
+                renderDataSize.storageBufferSize + renderDataSize.accelerationStructureSize);
+    }
 
     renderer->transitionImageLayout(sceneImageView->getImage(), VK_IMAGE_LAYOUT_GENERAL);
     renderer->traceRays(rayTracingData, launchSizeX, launchSizeY, launchSizeZ);

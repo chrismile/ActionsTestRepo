@@ -26,6 +26,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <iostream>
 #include <algorithm>
 #include <queue>
 
@@ -35,11 +36,16 @@
 #include <tracy/Tracy.hpp>
 
 #include <Utils/File/Logfile.hpp>
+#include <Math/Geometry/Plane.hpp>
 #include <Math/Math.hpp>
 
 #include "StreamlineTracingDefines.hpp"
 #include "StreamlineSeeder.hpp"
 #include "StreamlineTracingGrid.hpp"
+
+StreamlineTracingGrid::StreamlineTracingGrid() {
+    curvatureFile.open("curvatures.txt");
+}
 
 StreamlineTracingGrid::~StreamlineTracingGrid() {
     for (auto& it : vectorFields) {
@@ -51,9 +57,12 @@ StreamlineTracingGrid::~StreamlineTracingGrid() {
         delete[] it.second;
     }
     scalarFields.clear();
+
+    // TODO
+    curvatureFile.close();
 }
 
-void StreamlineTracingGrid::setGridMetadata(int xs, int ys, int zs, float dx, float dy, float dz) {
+void StreamlineTracingGrid::setGridExtent(int xs, int ys, int zs, float dx, float dy, float dz) {
     this->xs = xs;
     this->ys = ys;
     this->zs = zs;
@@ -76,7 +85,7 @@ void StreamlineTracingGrid::addVectorField(float* vectorField, const std::string
 
     float maxVectorMagnitude = 0.0f;
 #if _OPENMP >= 201107
-    #pragma omp parallel for shared(vectorField) reduction(max: maxVectorMagnitude) default(none)
+    //#pragma omp parallel for shared(vectorField) reduction(max: maxVectorMagnitude) default(none)
 #endif
     for (int z = 0; z < zs; z++) {
         for (int y = 0; y < ys; y++) {
@@ -152,7 +161,9 @@ void StreamlineTracingGrid::traceStreamlines(
         return;
     }
 
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     auto seeder = tracingSettings.seeder;
     seeder->reset(tracingSettings, this);
@@ -232,7 +243,9 @@ void StreamlineTracingGrid::traceStreamribbons(
         return;
     }
 
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     auto seeder = tracingSettings.seeder;
     seeder->reset(tracingSettings, this);
@@ -298,7 +311,7 @@ void StreamlineTracingGrid::traceStreamribbons(
     for (int trajectoryIdx = 0; trajectoryIdx < numTrajectories; trajectoryIdx++) {
         Trajectory& trajectory = trajectories.at(trajectoryIdx);
         std::vector<glm::vec3>& ribbonDirections = ribbonsDirections.at(trajectoryIdx);
-        if (trajectory.positions.empty()) {
+        if (trajectory.positions.size() <= 1) {
             continue;
         }
         float trajectoryLength = 0.0f;
@@ -314,7 +327,9 @@ void StreamlineTracingGrid::traceStreamribbons(
 
 
 float StreamlineTracingGrid::_computeTrajectoryLength(const Trajectory& trajectory) {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     int n = int(trajectory.positions.size());
     float trajectoryLength = 0.0f;
@@ -328,7 +343,9 @@ bool StreamlineTracingGrid::_isTerminated(
         const StreamlineTracingSettings& tracingSettings,
         Trajectory& currentTrajectory, const glm::vec3& currentPoint,
         Trajectories& trajectories, float& segmentLength, int& iterationCounter) {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     const int MAX_ITERATIONS = std::min(
             int(std::round(float(tracingSettings.maxNumIterations) / tracingSettings.timeStepScale)),
@@ -364,6 +381,92 @@ bool StreamlineTracingGrid::_isTerminated(
         return true;
     }
 
+    // Check whether there is a loop.
+    if (currentTrajectory.positions.size() > 1) {
+        if (tracingSettings.loopCheckMode == LoopCheckMode::START_POINT) {
+            const glm::vec3& pt0 = currentTrajectory.positions.at(0);
+            const glm::vec3& pt1 = currentTrajectory.positions.at(1);
+            glm::vec3 dir0 = pt1 - pt0;
+            float dist0 = glm::length(dir0);
+            dir0 /= dist0;
+
+            //glm::vec3 dirNow = currentPoint - pt0;
+            glm::vec3 dirNow = currentPoint - currentTrajectory.positions.back();
+            float distNow = glm::length(dirNow);
+            dirNow /= distNow;
+
+            float distToStart = glm::length(currentPoint - pt0);
+
+            sgl::Plane plane0(dir0, pt0);
+            bool approachesPt0 = plane0.getDistance(currentPoint) < 0.0f;
+            if (approachesPt0 && distToStart < terminationDistanceStart && glm::dot(dir0, dirNow) > 0.0f) {
+                return true;
+            }
+        } else if (tracingSettings.loopCheckMode == LoopCheckMode::ALL_POINTS) {
+            closePoints.clear();
+            hashedGridLoop->findPointsAndDataInSphere(
+                    currentPoint, terminationDistanceStart, closePoints);
+            for (auto& closePoint : closePoints) {
+                const glm::vec3& pt0 = closePoint.first;
+                const glm::vec3& dir0 = closePoint.second;
+                sgl::Plane plane0(dir0, pt0);
+
+                glm::vec3 dirNow = currentPoint - currentTrajectory.positions.back();
+                float distNow = glm::length(dirNow);
+                dirNow /= distNow;
+
+                bool approachesPt0 = plane0.getDistance(currentPoint) < 0.0f;
+                if (approachesPt0 && distNow < terminationDistanceStart && glm::dot(dir0, dirNow) > 0.0f) {
+                    return true;
+                }
+            }
+        } else if (tracingSettings.loopCheckMode == LoopCheckMode::GRID) {
+            glm::vec3 gridPositionFloat = currentPoint - box.getMinimum();
+            gridPositionFloat *= glm::vec3(1.0f / dx, 1.0f / dy, 1.0f / dz);
+            auto gridPosition = glm::ivec3(gridPositionFloat);
+            gridPosition.x = glm::clamp(gridPosition.x, 0, xs - 2);
+            gridPosition.y = glm::clamp(gridPosition.y, 0, ys - 2);
+            gridPosition.z = glm::clamp(gridPosition.z, 0, zs - 2);
+            size_t cellPosition = IDXS_C(gridPosition.x, gridPosition.y, gridPosition.z);
+            bool occupied = selfOccupationGrid.at(cellPosition);
+            selfOccupationGrid.at(cellPosition) = true;
+            if (occupied && !cellPositionQueue.contains(cellPosition)) {
+                return true;
+            }
+            /*if (occupied && cellPosition != oldCellPosition) {
+                 return true;
+             }*/
+            if (cellPosition != oldCellPosition) {
+                if (cellPositionQueue.size() == cellPositionQueue.capacity()) {
+                    cellPositionQueue.pop_front();
+                }
+                cellPositionQueue.push_back(cellPosition);
+            }
+            oldCellPosition = cellPosition;
+        } else if (tracingSettings.loopCheckMode == LoopCheckMode::CURVATURE) {
+            if (currentTrajectory.positions.size() > 1) {
+                const glm::vec3& p0 = currentTrajectory.positions.at(currentTrajectory.positions.size() - 2);
+                const glm::vec3& p1 = currentTrajectory.positions.at(currentTrajectory.positions.size() - 1);
+                const glm::vec3& p2 = currentPoint;
+                glm::vec3 dir0 = p1 - p0;
+                glm::vec3 dir1 = p2 - p1;
+                float length0 = glm::length(dir0);
+                float length1 = glm::length(dir1);
+                if (length0 > 1e-8f) {
+                    dir0 /= length0;
+                }
+                if (length1 > 1e-8f) {
+                    dir1 /= length1;
+                }
+                curvatureSum += double(glm::acos(glm::dot(dir0, dir1))) * double(length0 + length1);
+                segmentSum++;
+            }
+            if (segmentSum > 100 && curvatureSum > 2.5f) {
+                return true;
+            }
+        }
+    }
+
     if (tracingSettings.terminationCheckType == TerminationCheckType::NAIVE) {
         for (const Trajectory& trajectory : trajectories) {
             for (const glm::vec3& point : trajectory.positions) {
@@ -379,6 +482,11 @@ bool StreamlineTracingGrid::_isTerminated(
         }
     }
 
+    if (tracingSettings.loopCheckMode == LoopCheckMode::ALL_POINTS && !currentTrajectory.positions.empty()) {
+        glm::vec3 dir = glm::normalize(currentPoint - currentTrajectory.positions.back());
+        hashedGridLoop->add(std::make_pair(currentPoint, dir));
+    }
+
     return false;
 }
 
@@ -387,7 +495,9 @@ void StreamlineTracingGrid::_traceStreamlineDecreasingHelicity(
         Trajectory& currentTrajectory, Trajectories& trajectories,
         std::vector<glm::vec3>& ribbonDirections, const glm::vec3& seedPoint,
         float& dt, bool forwardMode) {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     glm::vec3 currentPoint = seedPoint;
     glm::vec3 lastPoint = seedPoint;
@@ -395,8 +505,9 @@ void StreamlineTracingGrid::_traceStreamlineDecreasingHelicity(
     int iterationCounter = 0;
     while (true) {
         if (_isTerminated(
-                tracingSettings, currentTrajectory, currentPoint, trajectories, segmentLength, iterationCounter)) {
-            return;
+                tracingSettings, currentTrajectory, currentPoint, trajectories, segmentLength,
+                iterationCounter)) {
+            break;
         } else {
             currentTrajectory.positions.push_back(currentPoint);
             _pushTrajectoryAttributes(currentTrajectory);
@@ -407,6 +518,18 @@ void StreamlineTracingGrid::_traceStreamlineDecreasingHelicity(
         iterationCounter++;
         segmentLength += glm::length(currentPoint - lastPoint);
         lastPoint = currentPoint;
+    }
+
+    if (tracingSettings.loopCheckMode == LoopCheckMode::ALL_POINTS) {
+        hashedGridLoop->clear();
+    } else if (tracingSettings.loopCheckMode == LoopCheckMode::GRID) {
+        std::fill(selfOccupationGrid.begin(), selfOccupationGrid.end(), false);
+        oldCellPosition = std::numeric_limits<size_t>::max();
+        cellPositionQueue.clear();
+    } else if (tracingSettings.loopCheckMode == LoopCheckMode::CURVATURE) {
+        curvatureFile << std::to_string(curvatureSum) << '\n';
+        curvatureSum = 0.0;
+        segmentSum = 0;
     }
 }
 
@@ -426,7 +549,9 @@ void StreamlineTracingGrid::_traceStreamlinesDecreasingHelicity(
 void StreamlineTracingGrid::_traceStreamribbonsDecreasingHelicity(
         StreamlineTracingSettings& tracingSettings, Trajectories& filteredTrajectories,
         std::vector<std::vector<glm::vec3>>& filteredRibbonsDirections) {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     if (!helicityField) {
         sgl::Logfile::get()->writeError(
@@ -435,10 +560,20 @@ void StreamlineTracingGrid::_traceStreamribbonsDecreasingHelicity(
         return;
     }
 
+    terminationDistanceStart = glm::length(box.getDimensions()) / 100.0f * tracingSettings.terminationDistanceSelf;
+
     auto seeder = static_cast<StreamlineMaxHelicityFirstSeeder*>(tracingSettings.seeder.get());
     seeder->reset(tracingSettings, this);
 
     float dt = 1.0f / maxVectorMagnitude * std::min(dx, std::min(dy, dz)) * tracingSettings.timeStepScale;
+
+    if (tracingSettings.loopCheckMode == LoopCheckMode::ALL_POINTS) {
+        hashedGridLoop = new HashedGrid<glm::vec3>(
+                tracingSettings.maxNumIterations + 17, std::min(dx, std::min(dy, dz)));
+    } else if (tracingSettings.loopCheckMode == LoopCheckMode::GRID) {
+        selfOccupationGrid.resize((xs - 1) * (ys - 1) * (zs - 1), false);
+        cellPositionQueue = CircularQueue<size_t>(32);
+    }
 
     while (seeder->hasNextPoint()) {
         glm::vec3 seedPoint = seeder->getNextPoint();
@@ -504,6 +639,13 @@ void StreamlineTracingGrid::_traceStreamribbonsDecreasingHelicity(
             }
             seeder->addFinishedTrajectory(trajectory);
         }
+    }
+
+    if (tracingSettings.loopCheckMode == LoopCheckMode::ALL_POINTS) {
+        delete hashedGridLoop;
+    } else if (tracingSettings.loopCheckMode == LoopCheckMode::GRID) {
+        selfOccupationGrid.clear();
+        selfOccupationGrid.shrink_to_fit();
     }
 }
 
@@ -645,7 +787,9 @@ bool StreamlineTracingGrid::rayBoxPlaneIntersection(
 bool StreamlineTracingGrid::_rayBoxIntersection(
         const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const glm::vec3& lower, const glm::vec3& upper,
         float& tNear, float& tFar) {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     tNear = std::numeric_limits<float>::lowest();
     tFar = std::numeric_limits<float>::max();
@@ -662,7 +806,9 @@ bool StreamlineTracingGrid::_rayBoxIntersection(
 }
 
 void StreamlineTracingGrid::_pushTrajectoryAttributes(Trajectory& trajectory) const {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     // Necessary to initialize the data first?
     if (trajectory.attributes.empty()) {
@@ -699,12 +845,20 @@ void StreamlineTracingGrid::_pushTrajectoryAttributes(Trajectory& trajectory) co
 void StreamlineTracingGrid::_pushRibbonDirections(
         const StreamlineTracingSettings& tracingSettings,
         const Trajectory& trajectory, std::vector<glm::vec3>& ribbonDirections, bool forwardMode) const {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     glm::vec3 lastRibbonDirection = glm::normalize(tracingSettings.initialRibbonDirection);
     ribbonDirections.reserve(trajectory.positions.size());
 
     size_t n = trajectory.positions.size();
+
+    if (n == 1) {
+        ribbonDirections.push_back(lastRibbonDirection);
+        return;
+    }
+
     for (size_t i = 0; i < n; i++) {
         glm::vec3 tangent;
         if (i == 0) {
@@ -717,9 +871,9 @@ void StreamlineTracingGrid::_pushRibbonDirections(
 
         float tangentLength = glm::length(tangent);
         if (tangentLength < 1e-7f) {
-            sgl::Logfile::get()->writeError(
-                    "Warning in StreamlineTracingGrid::_pushRibbonDirections: "
-                    "The line segment length is smaller than 1e-7.");
+            //sgl::Logfile::get()->writeWarning(
+            //        "Warning in StreamlineTracingGrid::_pushRibbonDirections: "
+            //        "The line segment length is smaller than 1e-7.");
         }
         tangent = glm::normalize(tangent);
 
@@ -758,7 +912,9 @@ void StreamlineTracingGrid::_pushRibbonDirections(
 }
 
 void StreamlineTracingGrid::_reverseTrajectory(Trajectory& trajectory) {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     if (trajectory.positions.size() <= 1) {
         return;
@@ -771,7 +927,9 @@ void StreamlineTracingGrid::_reverseTrajectory(Trajectory& trajectory) {
 }
 
 void StreamlineTracingGrid::_reverseRibbon(Trajectory& trajectory, std::vector<glm::vec3>& ribbonDirections) {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     if (trajectory.positions.size() <= 1) {
         return;
@@ -785,7 +943,9 @@ void StreamlineTracingGrid::_reverseRibbon(Trajectory& trajectory, std::vector<g
 }
 
 void StreamlineTracingGrid::_insertBackwardTrajectory(const Trajectory& trajectoryBackward, Trajectory& trajectory) {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     if (trajectoryBackward.positions.size() > 1) {
         trajectory.positions.insert(
@@ -804,7 +964,9 @@ void StreamlineTracingGrid::_insertBackwardTrajectory(const Trajectory& trajecto
 void StreamlineTracingGrid::_insertBackwardRibbon(
         const Trajectory& trajectoryBackward, const std::vector<glm::vec3>& ribbonDirectionsBackward,
         Trajectory& trajectory, std::vector<glm::vec3>& ribbonDirections) {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     if (trajectoryBackward.positions.size() > 1) {
         trajectory.positions.insert(
@@ -827,7 +989,9 @@ void StreamlineTracingGrid::_insertBackwardRibbon(
 void StreamlineTracingGrid::_trace(
         const StreamlineTracingSettings& tracingSettings, Trajectory& trajectory,
         std::vector<glm::vec3>& ribbonDirections, const glm::vec3& seedPoint, bool forwardMode) const {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     float dt = 1.0f / maxVectorMagnitude * std::min(dx, std::min(dy, dz)) * tracingSettings.timeStepScale;
     float terminationDistance = 1e-6f * tracingSettings.terminationDistance;
@@ -840,7 +1004,8 @@ void StreamlineTracingGrid::_trace(
             int(std::round(float(tracingSettings.maxNumIterations) / tracingSettings.timeStepScale)),
             tracingSettings.maxNumIterations * 10);
     float lineLength = 0.0;
-    const float MAX_LINE_LENGTH = glm::length(box.getDimensions());
+    const float MAX_LINE_LENGTH =
+            glm::length(box.getDimensions()) * (float(tracingSettings.maxNumIterations) / float(2000));
     while (iterationCounter <= MAX_ITERATIONS && lineLength <= MAX_LINE_LENGTH) {
         oldParticlePosition = particlePosition;
 
@@ -907,12 +1072,16 @@ void StreamlineTracingGrid::_integrationStep(
 }
 
 void StreamlineTracingGrid::_integrationStepExplicitEuler(glm::vec3& p0, float& dt, bool forwardMode) const {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
     p0 += dt * _getVectorAtPosition(p0, forwardMode);
 }
 
 void StreamlineTracingGrid::_integrationStepImplicitEuler(glm::vec3& p0, float& dt, bool forwardMode) const {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     const float EPSILON = 1e-6f;
     const int MAX_NUM_ITERATIONS = 100;
@@ -934,7 +1103,9 @@ void StreamlineTracingGrid::_integrationStepImplicitEuler(glm::vec3& p0, float& 
 }
 
 void StreamlineTracingGrid::_integrationStepHeun(glm::vec3& p0, float& dt, bool forwardMode) const {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     glm::vec3 v0 = _getVectorAtPosition(p0, forwardMode);
     glm::vec3 p1Euler = p0 + dt * v0;
@@ -943,14 +1114,18 @@ void StreamlineTracingGrid::_integrationStepHeun(glm::vec3& p0, float& dt, bool 
 }
 
 void StreamlineTracingGrid::_integrationStepMidpoint(glm::vec3& p0, float& dt, bool forwardMode) const {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     glm::vec3 pPrime = p0 + dt * float(0.5) * _getVectorAtPosition(p0, forwardMode);
     p0 += dt * _getVectorAtPosition(pPrime, forwardMode);
 }
 
 void StreamlineTracingGrid::_integrationStepRK4(glm::vec3& p0, float& dt, bool forwardMode) const {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     glm::vec3 k1 = dt * _getVectorAtPosition(p0, forwardMode);
     glm::vec3 k2 = dt * _getVectorAtPosition(p0 + k1 * float(0.5), forwardMode);
@@ -961,7 +1136,9 @@ void StreamlineTracingGrid::_integrationStepRK4(glm::vec3& p0, float& dt, bool f
 
 void StreamlineTracingGrid::_integrationStepRKF45(
         const StreamlineTracingSettings& tracingSettings, glm::vec3& fP0, float& fDt, bool forwardMode) const {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     // Integrate to the new position using the Runge-Kutta-Fehlberg method (RKF45).
     // For more details see:
@@ -1017,7 +1194,9 @@ void StreamlineTracingGrid::_integrationStepRKF45(
 void StreamlineTracingGrid::computeSimulationBoundaryMesh(
         std::vector<uint32_t>& cachedSimulationMeshOutlineTriangleIndices,
         std::vector<glm::vec3>& cachedSimulationMeshOutlineVertexPositions) {
+#ifdef TRACY_PROFILE_TRACING
     ZoneScoped;
+#endif
 
     glm::vec3 boxMin = box.getMinimum();
     glm::vec3 boxDim = box.getDimensions();

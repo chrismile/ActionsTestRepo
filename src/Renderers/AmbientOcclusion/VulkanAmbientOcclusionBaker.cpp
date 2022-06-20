@@ -462,7 +462,7 @@ AmbientOcclusionComputeRenderPass::AmbientOcclusionComputeRenderPass(sgl::vk::Re
 }
 
 void AmbientOcclusionComputeRenderPass::setLineData(LineDataPtr& lineData) {
-    topLevelAS = lineData->getRayTracingTubeTriangleTopLevelAS(nullptr);
+    topLevelAS = lineData->getRayTracingTubeTriangleTopLevelAS();
     lines = lineData->getFilteredLines(nullptr);
 
     if (this->lineData && this->lineData->getType() != lineData->getType()) {
@@ -470,9 +470,14 @@ void AmbientOcclusionComputeRenderPass::setLineData(LineDataPtr& lineData) {
     }
     this->lineData = lineData;
 
-    linePointsBuffer = lineData->getVulkanTubeTriangleRenderData(nullptr, true).linePointBuffer;
+    auto renderData = lineData->getLinePassTubeTriangleMeshRenderData(
+            false, true);
+    linePointDataBuffer = renderData.linePointDataBuffer;
+    stressLinePointDataBuffer = renderData.stressLinePointDataBuffer;
+    stressLinePointPrincipalStressDataBuffer = renderData.stressLinePointPrincipalStressDataBuffer;
 
-    numLineVertices = linePointsBuffer ? uint32_t(linePointsBuffer->getSizeInBytes() / sizeof(TubeLinePointData)) : 0;
+    numLineVertices =
+            linePointDataBuffer ? uint32_t(linePointDataBuffer->getSizeInBytes() / sizeof(LinePointDataUnified)) : 0;
     if (numLineVertices != 0) {
         generateBlendingWeightParametrization();
     } else {
@@ -644,7 +649,10 @@ void AmbientOcclusionComputeRenderPass::createComputeData(
         sgl::vk::Renderer* renderer, sgl::vk::ComputePipelinePtr& computePipeline) {
     computeData = std::make_shared<sgl::vk::ComputeData>(renderer, computePipeline);
     computeData->setStaticBuffer(lineRenderSettingsBuffer, "UniformsBuffer");
-    computeData->setStaticBuffer(linePointsBuffer, "TubeLinePointDataBuffer");
+    computeData->setStaticBuffer(linePointDataBuffer, "LinePointDataBuffer");
+    computeData->setStaticBufferOptional(stressLinePointDataBuffer, "StressLinePointDataBuffer");
+    computeData->setStaticBufferOptional(
+            stressLinePointPrincipalStressDataBuffer, "StressLinePointPrincipalStressDataBuffer");
     computeData->setStaticBuffer(samplingLocationsBuffer, "SamplingLocationsBuffer");
     computeData->setStaticBuffer(aoBufferVk, "AmbientOcclusionFactorsBuffer");
     computeData->setTopLevelAccelerationStructure(topLevelAS, "topLevelAS");

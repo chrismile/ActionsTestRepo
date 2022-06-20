@@ -45,6 +45,7 @@
 #include <Utils/File/Logfile.hpp>
 #include <Utils/File/FileUtils.hpp>
 #include <Utils/Regex/TransformString.hpp>
+#include <Utils/File/FileLoader.hpp>
 #include <Input/Keyboard.hpp>
 #include <Input/Mouse.hpp>
 #include <Math/Math.hpp>
@@ -66,6 +67,7 @@
 #include "LineData/Flow/StreamlineTracingRequester.hpp"
 #include "LineData/Stress/StressLineTracingRequester.hpp"
 #include "LineData/Scattering/ScatteringLineTracingRequester.hpp"
+#include "Loaders/NetCdfLineLoader.hpp"
 #include "Renderers/OpaqueLineRenderer.hpp"
 #include "Renderers/OIT/PerPixelLinkedListLineRenderer.hpp"
 #include "Renderers/OIT/MLABRenderer.hpp"
@@ -134,7 +136,7 @@ MainApp::MainApp()
 
     if (LineData::getLinePrimitiveModeUsesGeometryShader(LineData::getLinePrimitiveMode())
             && !device->getPhysicalDeviceFeatures().geometryShader) {
-        LineData::setLinePrimitiveMode(LineData::LINE_PRIMITIVES_RIBBON_PROGRAMMABLE_FETCH);
+        LineData::setLinePrimitiveMode(LineData::LINE_PRIMITIVES_QUADS_PROGRAMMABLE_PULL);
     }
 
 #ifdef USE_PYTHON
@@ -289,6 +291,11 @@ MainApp::MainApp()
 
     CAMERA_PATH_TIME_PERFORMANCE_MEASUREMENT = TIME_PERFORMANCE_MEASUREMENT;
     usePerformanceMeasurementMode = false;
+    if (sgl::FileUtils::get()->get_argc() > 1) {
+        if (strcmp(sgl::FileUtils::get()->get_argv()[1], "--perf") == 0) {
+            usePerformanceMeasurementMode = true;
+        }
+    }
     cameraPath.setApplicationCallback([this](
             const std::string& modelFilename, glm::vec3& centerOffset, float& startAngle, float& pulseFactor,
             float& standardZoom) {
@@ -329,6 +336,9 @@ MainApp::MainApp()
     useDockSpaceMode = true;
     sgl::AppSettings::get()->getSettings().getValueOpt("useDockSpaceMode", useDockSpaceMode);
     sgl::AppSettings::get()->getSettings().getValueOpt("useFixedSizeViewport", useFixedSizeViewport);
+    sgl::AppSettings::get()->getSettings().getValueOpt("fixedViewportSizeX", fixedViewportSize.x);
+    sgl::AppSettings::get()->getSettings().getValueOpt("fixedViewportSizeY", fixedViewportSize.y);
+    fixedViewportSizeEdit = fixedViewportSize;
     showPropertyEditor = useDockSpaceMode;
     sgl::ImGuiWrapper::get()->setUseDockSpaceMode(useDockSpaceMode);
 
@@ -394,7 +404,8 @@ MainApp::MainApp()
     if (usePerformanceMeasurementMode) {
         sgl::FileUtils::get()->ensureDirectoryExists("images");
         performanceMeasurer = new AutomaticPerformanceMeasurer(
-                getTestModesPaper(), "performance.csv", "depth_complexity.csv",
+                rendererVk, getTestModes(),
+                "performance.csv", "depth_complexity.csv",
                 [this](const InternalState &newState) { this->setNewState(newState); });
     }
 
@@ -455,7 +466,11 @@ MainApp::~MainApp() {
     nonBlockingMsgBoxHandles.clear();
 
     sgl::AppSettings::get()->getSettings().addKeyValue("useDockSpaceMode", useDockSpaceMode);
-    sgl::AppSettings::get()->getSettings().addKeyValue("useFixedSizeViewport", useFixedSizeViewport);
+    if (!usePerformanceMeasurementMode) {
+        sgl::AppSettings::get()->getSettings().addKeyValue("useFixedSizeViewport", useFixedSizeViewport);
+        sgl::AppSettings::get()->getSettings().addKeyValue("fixedViewportSizeX", fixedViewportSize.x);
+        sgl::AppSettings::get()->getSettings().addKeyValue("fixedViewportSizeY", fixedViewportSize.y);
+    }
     sgl::AppSettings::get()->getSettings().addKeyValue("showFpsOverlay", showFpsOverlay);
     sgl::AppSettings::get()->getSettings().addKeyValue("showCoordinateAxesOverlay", showCoordinateAxesOverlay);
 }
@@ -463,18 +478,26 @@ MainApp::~MainApp() {
 void MainApp::setNewState(const InternalState &newState) {
     ZoneScoped;
 
+    rendererVk->getDevice()->waitIdle();
+
     if (performanceMeasurer) {
         performanceMeasurer->setCurrentAlgorithmBufferSizeBytes(0);
     }
 
     // 1. Change the window resolution?
-    sgl::Window *window = sgl::AppSettings::get()->getMainWindow();
-    int currentWindowWidth = window->getWidth();
-    int currentWindowHeight = window->getHeight();
     glm::ivec2 newResolution = newState.windowResolution;
-    if (newResolution.x > 0 && newResolution.y > 0 && currentWindowWidth != newResolution.x
-            && currentWindowHeight != newResolution.y) {
-        window->setWindowSize(newResolution.x, newResolution.y);
+    if (useDockSpaceMode) {
+        useFixedSizeViewport = true;
+        fixedViewportSizeEdit = newResolution;
+        fixedViewportSize = newResolution;
+    } else {
+        sgl::Window *window = sgl::AppSettings::get()->getMainWindow();
+        int currentWindowWidth = window->getWidth();
+        int currentWindowHeight = window->getHeight();
+        if (newResolution.x > 0 && newResolution.y > 0 && currentWindowWidth != newResolution.x
+                && currentWindowHeight != newResolution.y) {
+            window->setWindowSize(newResolution.x, newResolution.y);
+        }
     }
 
     // 1.1. Handle the new tiling mode for SSBO accesses.
@@ -491,39 +514,44 @@ void MainApp::setNewState(const InternalState &newState) {
 
     // 2.1. Do we need to load new renderers?
     if (firstState || newState.renderingMode != lastState.renderingMode
-        || newState.rendererSettings != lastState.rendererSettings) {
+            || newState.rendererSettings != lastState.rendererSettings) {
         dataViews.clear();
-        renderingMode = newState.renderingMode;
         if (useDockSpaceMode) {
             if (dataViews.empty()) {
                 addNewDataView();
             }
+            RenderingMode newRenderingMode = newState.renderingMode;
             setRenderer(
-                    dataViews[0]->sceneData, dataViews[0]->oldRenderingMode, dataViews[0]->renderingMode,
+                    dataViews[0]->sceneData, dataViews[0]->oldRenderingMode, newRenderingMode,
                     dataViews[0]->lineRenderer, 0);
+            dataViews[0]->renderingMode = newRenderingMode;
             dataViews[0]->updateCameraMode();
         } else {
+            renderingMode = newState.renderingMode;
             setRenderer(sceneData, oldRenderingMode, renderingMode, lineRenderer, 0);
         }
     }
 
-    // 2.2. Pass state change to renderers to handle internally necessary state changes.
+    // 2.2. Set the new renderer settings.
     bool reloadGatherShader = false;
-    lineRenderer->setNewState(newState);
-    reloadGatherShader |= lineRenderer->setNewSettings(newState.rendererSettings);
-    if (reloadGatherShader) {
-        lineRenderer->reloadGatherShaderExternal();
+    std::vector<bool> reloadGatherShaderDataViewList;
+    if (useDockSpaceMode) {
+        for (DataViewPtr& dataView : dataViews) {
+            bool reloadGatherShaderLocal = reloadGatherShader;
+            if (dataView->lineRenderer) {
+                dataView->lineRenderer->setNewState(newState);
+                reloadGatherShaderLocal |= dataView->lineRenderer->setNewSettings(newState.rendererSettings);
+                reloadGatherShaderDataViewList.push_back(reloadGatherShaderLocal);
+            }
+        }
+    } else {
+        if (lineRenderer) {
+            lineRenderer->setNewState(newState);
+            reloadGatherShader |= lineRenderer->setNewSettings(newState.rendererSettings);
+        }
     }
 
-    // 3. Pass state change to filters to handle internally necessary state changes.
-    for (LineFilter* filter : dataFilters) {
-        filter->setNewState(newState);
-    }
-    for (size_t i = 0; i < newState.filterSettings.size(); i++) {
-        dataFilters.at(i)->setNewSettings(newState.filterSettings.at(i));
-    }
-
-    // 4. Load the correct mesh file.
+    // 3. Load the correct data set file.
     if (newState.dataSetDescriptor != lastState.dataSetDescriptor) {
         selectedDataSetIndex = 0;
         std::string nameLower = boost::algorithm::to_lower_copy(newState.dataSetDescriptor.name);
@@ -535,20 +563,49 @@ void MainApp::setNewState(const InternalState &newState) {
         }
         if (selectedDataSetIndex == 0) {
             if (dataSetInformationList.at(selectedDataSetIndex - NUM_MANUAL_LOADERS)->type
-                    == DATA_SET_TYPE_STRESS_LINES && newState.dataSetDescriptor.enabledFileIndices.size() == 3) {
+                == DATA_SET_TYPE_STRESS_LINES && newState.dataSetDescriptor.enabledFileIndices.size() == 3) {
                 LineDataStress::setUseMajorPS(newState.dataSetDescriptor.enabledFileIndices.at(0));
                 LineDataStress::setUseMediumPS(newState.dataSetDescriptor.enabledFileIndices.at(1));
                 LineDataStress::setUseMinorPS(newState.dataSetDescriptor.enabledFileIndices.at(2));
             }
-            loadLineDataSet(newState.dataSetDescriptor.filenames);
+            loadLineDataSet(newState.dataSetDescriptor.filenames, true);
         } else {
             if (newState.dataSetDescriptor.type == DATA_SET_TYPE_STRESS_LINES
-                    && newState.dataSetDescriptor.enabledFileIndices.size() == 3) {
+                && newState.dataSetDescriptor.enabledFileIndices.size() == 3) {
                 LineDataStress::setUseMajorPS(newState.dataSetDescriptor.enabledFileIndices.at(0));
                 LineDataStress::setUseMediumPS(newState.dataSetDescriptor.enabledFileIndices.at(1));
                 LineDataStress::setUseMinorPS(newState.dataSetDescriptor.enabledFileIndices.at(2));
             }
-            loadLineDataSet(getSelectedLineDataSetFilenames());
+            loadLineDataSet(getSelectedLineDataSetFilenames(), true);
+        }
+    }
+
+    // 4. Pass state change to filters to handle internally necessary state changes.
+    for (LineFilter* filter : dataFilters) {
+        filter->setNewState(newState);
+    }
+    for (size_t i = 0; i < newState.filterSettings.size(); i++) {
+        dataFilters.at(i)->setNewSettings(newState.filterSettings.at(i));
+    }
+
+    // 5. Pass state change to renderers to handle internally necessary state changes.
+    if (lineData) {
+        reloadGatherShader |= lineData->setNewSettings(newState.dataSetSettings);
+    }
+
+    // 6. Reload the gather shader if necessary.
+    if (useDockSpaceMode) {
+        size_t idx = 0;
+        for (DataViewPtr& dataView : dataViews) {
+            bool reloadGatherShaderLocal = reloadGatherShader || reloadGatherShaderDataViewList.at(idx);
+            if (dataView->lineRenderer && reloadGatherShaderLocal) {
+                dataView->lineRenderer->reloadGatherShaderExternal();
+            }
+            idx++;
+        }
+    } else {
+        if (lineRenderer && reloadGatherShader) {
+            lineRenderer->reloadGatherShaderExternal();
         }
     }
 
@@ -579,9 +636,9 @@ void MainApp::setRenderer(
                 || oldRenderingMode == RENDERING_MODE_ALL_LINES_OPAQUE) {
             VkFormat depthFormat;
             if (newRenderingMode == RENDERING_MODE_ALL_LINES_OPAQUE) {
-                depthFormat = VK_FORMAT_D32_SFLOAT;
+                depthFormat = device->getSupportedDepthFormat();
             } else {
-                depthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
+                depthFormat = device->getSupportedDepthStencilFormat();
             }
             if (useDockSpaceMode) {
                 dataViews.at(dataViewIndex)->sceneDepthTextureVkFormat = depthFormat;
@@ -606,14 +663,8 @@ void MainApp::setRenderer(
         } else {
             std::string warningText =
                     std::string() + "The selected renderer \"" + RENDERING_MODE_NAMES[newRenderingMode] + "\" is not "
-                    + "supported on this hardware due to the missing the geometry shader physical device feature.";
-            sgl::Logfile::get()->writeWarning(
-                    "Warning in MainApp::setRenderer: " + warningText, false);
-            auto handle = sgl::dialog::openMessageBox(
-                    "Unsupported Renderer", warningText, sgl::dialog::Icon::WARNING);
-            nonBlockingMsgBoxHandles.push_back(handle);
-            newRenderingMode = RENDERING_MODE_ALL_LINES_OPAQUE;
-            newLineRenderer = new OpaqueLineRenderer(&sceneDataRef, transferFunctionWindow);
+                    + "supported on this hardware due to the missing geometry shader physical device feature.";
+            onUnuspportedRendererSelected(warningText, sceneDataRef, newRenderingMode, newLineRenderer);
         }
     } else if (newRenderingMode == RENDERING_MODE_DEPTH_COMPLEXITY) {
         newLineRenderer = new DepthComplexityRenderer(&sceneDataRef, transferFunctionWindow);
@@ -628,13 +679,7 @@ void MainApp::setRenderer(
             std::string warningText =
                     std::string() + "The selected renderer \"" + RENDERING_MODE_NAMES[newRenderingMode] + "\" is not "
                     + "supported on this hardware due to the missing independentBlend physical device feature.";
-            sgl::Logfile::get()->writeWarning(
-                    "Warning in MainApp::setRenderer: " + warningText, false);
-            auto handle = sgl::dialog::openMessageBox(
-                    "Unsupported Renderer", warningText, sgl::dialog::Icon::WARNING);
-            nonBlockingMsgBoxHandles.push_back(handle);
-            newRenderingMode = RENDERING_MODE_ALL_LINES_OPAQUE;
-            newLineRenderer = new OpaqueLineRenderer(&sceneDataRef, transferFunctionWindow);
+            onUnuspportedRendererSelected(warningText, sceneDataRef, newRenderingMode, newLineRenderer);
         }
     } else if (newRenderingMode == RENDERING_MODE_DEPTH_PEELING) {
         newLineRenderer = new DepthPeelingRenderer(&sceneDataRef, transferFunctionWindow);
@@ -645,13 +690,7 @@ void MainApp::setRenderer(
             std::string warningText =
                     std::string() + "The selected renderer \"" + RENDERING_MODE_NAMES[newRenderingMode] + "\" is not "
                     + "supported on this hardware due to missing Vulkan ray pipelines.";
-            sgl::Logfile::get()->writeWarning(
-                    "Warning in MainApp::setRenderer: " + warningText, false);
-            auto handle = sgl::dialog::openMessageBox(
-                    "Unsupported Renderer", warningText, sgl::dialog::Icon::WARNING);
-            nonBlockingMsgBoxHandles.push_back(handle);
-            newRenderingMode = RENDERING_MODE_ALL_LINES_OPAQUE;
-            newLineRenderer = new OpaqueLineRenderer(&sceneDataRef, transferFunctionWindow);
+            onUnuspportedRendererSelected(warningText, sceneDataRef, newRenderingMode, newLineRenderer);
         }
     } else if (newRenderingMode == RENDERING_MODE_VOXEL_RAY_CASTING) {
         newLineRenderer = new VoxelRayCastingRenderer(&sceneDataRef, transferFunctionWindow);
@@ -672,12 +711,7 @@ void MainApp::setRenderer(
         std::string warningText =
                 std::string() + "The selected renderer \"" + RENDERING_MODE_NAMES[idx] + "\" is not "
                 + "supported in this build configuration or incompatible with this system.";
-        sgl::Logfile::get()->writeWarning("Warning in MainApp::setRenderer: " + warningText, false);
-        auto handle = sgl::dialog::openMessageBox(
-                "Unsupported Renderer", warningText, sgl::dialog::Icon::WARNING);
-        nonBlockingMsgBoxHandles.push_back(handle);
-        newRenderingMode = RENDERING_MODE_ALL_LINES_OPAQUE;
-        newLineRenderer = new OpaqueLineRenderer(&sceneDataRef, transferFunctionWindow);
+        onUnuspportedRendererSelected(warningText, sceneDataRef, newRenderingMode, newLineRenderer);
     }
 
     newLineRenderer->initialize();
@@ -702,6 +736,18 @@ void MainApp::setRenderer(
         }
         lineData->setRenderingModes({ newRenderingMode });
     }
+}
+
+void MainApp::onUnuspportedRendererSelected(
+        const std::string& warningText,
+        SceneData& sceneDataRef, RenderingMode& newRenderingMode, LineRenderer*& newLineRenderer) {
+    sgl::Logfile::get()->writeWarning(
+            "Warning in MainApp::setRenderer: " + warningText, false);
+    auto handle = sgl::dialog::openMessageBox(
+            "Unsupported Renderer", warningText, sgl::dialog::Icon::WARNING);
+    nonBlockingMsgBoxHandles.push_back(handle);
+    newRenderingMode = RENDERING_MODE_ALL_LINES_OPAQUE;
+    newLineRenderer = new OpaqueLineRenderer(&sceneDataRef, transferFunctionWindow);
 }
 
 void MainApp::resolutionChanged(sgl::EventPtr event) {
@@ -738,6 +784,10 @@ void MainApp::updateColorSpaceMode() {
 void MainApp::render() {
     ZoneScoped;
 
+    if (usePerformanceMeasurementMode) {
+        performanceMeasurer->beginRenderFunction();
+    }
+
     if (scheduledRecreateSceneFramebuffer) {
         device->waitIdle();
         sgl::vk::Swapchain* swapchain = sgl::AppSettings::get()->getSwapchain();
@@ -765,13 +815,21 @@ void MainApp::render() {
     }
 
     SciVisApp::preRender();
-    prepareVisualizationPipeline();
+    if (useDockSpaceMode) {
+        for (DataViewPtr& dataView : dataViews) {
+            dataView->saveScreenshotDataIfAvailable();
+        }
+    }
 
-    componentOtherThanRendererNeedsReRender = reRender;
-    if (lineData != nullptr) {
-        bool lineDataNeedsReRender = lineData->needsReRender();
-        reRender = reRender || lineDataNeedsReRender;
-        componentOtherThanRendererNeedsReRender = componentOtherThanRendererNeedsReRender || lineDataNeedsReRender;
+    if (!useDockSpaceMode) {
+        prepareVisualizationPipeline();
+
+        componentOtherThanRendererNeedsReRender = reRender;
+        if (lineData != nullptr) {
+            bool lineDataNeedsReRender = lineData->needsReRender();
+            reRender = reRender || lineDataNeedsReRender;
+            componentOtherThanRendererNeedsReRender = componentOtherThanRendererNeedsReRender || lineDataNeedsReRender;
+        }
     }
 
     if (!useDockSpaceMode) {
@@ -850,32 +908,102 @@ void MainApp::renderGui() {
             if (!filename.empty() && filename.back() != '/' && filename.back() != '\\') {
                 filename += "/";
             }
-            filename += selection.table[0].fileName;
+            if (selection.count != 0) {
+                filename += selection.table[0].fileName;
+            }
             IGFD_Selection_DestroyContent(&selection);
             if (currentPath) {
                 free((void*)currentPath);
                 currentPath = nullptr;
             }
 
+            fileDialogDirectory = sgl::FileUtils::get()->getPathToFile(filename);
+
             std::string filenameLower = boost::to_lower_copy(filename);
-            if (boost::ends_with(filenameLower, ".vtk") || boost::ends_with(filenameLower, ".bin")) {
+            bool isDatFile = boost::ends_with(filenameLower, ".dat");
+            bool isNcFile = boost::ends_with(filenameLower, ".nc");
+
+            /*
+             * The program supports two types of .dat file:
+             * - .dat files containing a volume description.
+             * - .dat files containing PSLs (DATA_SET_TYPE_STRESS_LINES).
+             * We try to use a good heuristic for determining the right type.
+             */
+            bool isDatVolumeFile = false;
+            if (isDatFile) {
+                if (sgl::FileUtils::get()->exists(filename)) {
+                    // If the .dat file is > 100KiB, there is no way it can be a volume descriptor file.
+                    size_t fileSize = sgl::FileUtils::get()->getFileSizeInBytes(filename);
+                    if (fileSize < 100 * 1024) {
+                        // Loading the < 100kiB file should be cheap. Load it and check the type.
+                        uint8_t* bufferDat = nullptr;
+                        size_t lengthDat = 0;
+                        bool loadedDat = sgl::loadFileFromSource(
+                                filename, bufferDat, lengthDat, false);
+                        if (!loadedDat) {
+                            sgl::Logfile::get()->throwError(
+                                    "Error in MainApp::renderGui: Couldn't open file \"" + filename + "\".");
+                        }
+                        char* fileBuffer = reinterpret_cast<char*>(bufferDat);
+                        for (size_t charPtr = 0; charPtr < lengthDat; charPtr++) {
+                            char currentChar = fileBuffer[charPtr];
+                            if (currentChar == '\n' || currentChar == '\r') {
+                                break;
+                            }
+                            // ':' is the key-value delimiter in .dat volume descriptor files.
+                            if (currentChar == ':') {
+                                isDatVolumeFile = true;
+                                break;
+                            }
+                        }
+                        delete[] bufferDat;
+                    }
+                }
+            }
+
+            /*
+             * The program supports two types of .dat file:
+             * - .dat files containing a volume description.
+             * - .dat files containing PSLs (DATA_SET_TYPE_STRESS_LINES).
+             * We try to use a good heuristic for determining the right type.
+             */
+            bool isNcVolumeFile = false;
+            if (isNcFile) {
+                isNcVolumeFile = !getNetCdfFileStoresTrajectories(filename);
+            }
+
+            if (boost::ends_with(filenameLower, ".vtk")
+                    || boost::ends_with(filenameLower, ".vti")
+                    || boost::ends_with(filenameLower, ".vts")
+                    || (isNcFile && isNcVolumeFile)
+                    || boost::ends_with(filenameLower, ".am")
+                    || boost::ends_with(filenameLower, ".bin")
+                    || boost::ends_with(filenameLower, ".field")
+#ifdef USE_ECCODES
+                    || boost::ends_with(filenameLower, ".grib")
+                    || boost::ends_with(filenameLower, ".grb")
+#endif
+                    || (isDatFile && isDatVolumeFile)
+                    || boost::ends_with(filenameLower, ".raw")) {
                 selectedDataSetIndex = 1;
                 streamlineTracingRequester->setDatasetFilename(filename);
+                streamlineTracingRequester->setShowWindow(true);
             } else if (boost::ends_with(filenameLower, ".stress")
                     || boost::ends_with(filenameLower, ".carti")) {
                 selectedDataSetIndex = 2;
                 stressLineTracingRequester->setDatasetFilename(filename);
+                stressLineTracingRequester->setShowWindow(true);
             } else if (boost::ends_with(filenameLower, ".xyz")
                     || boost::ends_with(filenameLower, ".nvdb")) {
                 selectedDataSetIndex = 3;
                 scatteringLineTracingRequester->setDatasetFilename(filename);
+                scatteringLineTracingRequester->setShowWindow(true);
             } else {
                 selectedDataSetIndex = 0;
                 if (boost::ends_with(filenameLower, ".obj")
-                        || boost::ends_with(filenameLower, ".nc")
-                        || boost::ends_with(filenameLower, ".binlines")) {
+                        || boost::ends_with(filenameLower, ".binlines") || isNcFile) {
                     dataSetType = DATA_SET_TYPE_FLOW_LINES;
-                } else if (boost::ends_with(filenameLower, ".dat")) {
+                } else if (isDatFile) {
                     dataSetType = DATA_SET_TYPE_STRESS_LINES;
                 } else {
                     sgl::Logfile::get()->writeError("The selected file name has an unknown extension.");
@@ -889,7 +1017,9 @@ void MainApp::renderGui() {
 
     if (useDockSpaceMode) {
         if (isFirstFrame && dataViews.size() == 1) {
-            initializeFirstDataView();
+            if (dataViews.front()->renderingMode == RENDERING_MODE_NONE) {
+                initializeFirstDataView();
+            }
             isFirstFrame = false;
         }
 
@@ -925,6 +1055,15 @@ void MainApp::renderGui() {
 
         if (showPropertyEditor) {
             renderGuiPropertyEditorWindow();
+        }
+
+        prepareVisualizationPipeline();
+
+        componentOtherThanRendererNeedsReRender = reRender;
+        if (lineData != nullptr) {
+            bool lineDataNeedsReRender = lineData->needsReRender();
+            reRender = reRender || lineDataNeedsReRender;
+            componentOtherThanRendererNeedsReRender = componentOtherThanRendererNeedsReRender || lineDataNeedsReRender;
         }
 
         for (int i = 0; i < int(dataViews.size()); i++) {
@@ -1129,6 +1268,7 @@ void MainApp::renderGui() {
         videoWriter = new sgl::VideoWriter(
                 saveDirectoryVideos + saveFilenameVideos
                 + "_" + sgl::toString(videoNumber++) + ".mp4", FRAME_RATE_VIDEOS);
+        videoWriter->setRenderer(rendererVk);
     }
     if (replayWidgetUpdateType == ReplayWidget::REPLAY_WIDGET_UPDATE_STOP_RECORDING) {
         recording = false;
@@ -1340,9 +1480,11 @@ void MainApp::initializeFirstDataView() {
 
 void MainApp::openFileDialog() {
     selectedDataSetIndex = 0;
-    std::string fileDialogDirectory = sgl::AppSettings::get()->getDataDirectory() + "LineDataSets/";
-    if (!sgl::FileUtils::get()->exists(fileDialogDirectory)) {
-        fileDialogDirectory = sgl::AppSettings::get()->getDataDirectory();
+    if (fileDialogDirectory.empty() || !sgl::FileUtils::get()->directoryExists(fileDialogDirectory)) {
+        fileDialogDirectory = sgl::AppSettings::get()->getDataDirectory() + "LineDataSets/";
+        if (!sgl::FileUtils::get()->exists(fileDialogDirectory)) {
+            fileDialogDirectory = sgl::AppSettings::get()->getDataDirectory();
+        }
     }
     IGFD_OpenModal(
             fileDialogInstance,
@@ -1364,6 +1506,13 @@ void MainApp::renderGuiMenuBar() {
                 for (int i = 1; i < NUM_MANUAL_LOADERS; i++) {
                     if (ImGui::MenuItem(dataSetNames.at(i).c_str())) {
                         selectedDataSetIndex = i;
+                        if (selectedDataSetIndex == 1) {
+                            streamlineTracingRequester->setShowWindow(true);
+                        } else if (selectedDataSetIndex == 2) {
+                            stressLineTracingRequester->setShowWindow(true);
+                        } else if (selectedDataSetIndex == 3) {
+                            scatteringLineTracingRequester->setShowWindow(true);
+                        }
                     }
                 }
 
@@ -1846,6 +1995,7 @@ void MainApp::hasMoved() {
         if (hasMovedIndex < 0) {
             for (DataViewPtr& dataView : dataViews) {
                 if (dataView->lineRenderer != nullptr && dataView->syncWithParentCamera) {
+                    dataView->syncCamera();
                     dataView->lineRenderer->onHasMoved();
                 }
             }

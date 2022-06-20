@@ -36,27 +36,8 @@
 #include <Graphics/Vulkan/Render/Passes/BlitRenderPass.hpp>
 #include <ImGui/Widgets/PropertyEditor.hpp>
 
+#include "Utils/AutomaticPerformanceMeasurer.hpp"
 #include "OsprayRenderer.hpp"
-
-// See: https://stackoverflow.com/questions/2513505/how-to-get-available-memory-c-g
-#ifdef __linux__
-#include <unistd.h>
-size_t getUsedSystemMemoryBytes() {
-    size_t totalNumPages = sysconf(_SC_PHYS_PAGES);
-    size_t availablePages = sysconf(_SC_AVPHYS_PAGES);
-    size_t pageSizeBytes = sysconf(_SC_PAGE_SIZE);
-    return (totalNumPages - availablePages) * pageSizeBytes;
-}
-#endif
-#ifdef _WIN32
-#include <windows.h>
-size_t getUsedSystemMemoryBytes() {
-    MEMORYSTATUSEX status;
-    status.dwLength = sizeof(status);
-    GlobalMemoryStatusEx(&status);
-    return status.ullTotalPhys - status.ullAvailPhys;
-}
-#endif
 
 bool OsprayRenderer::isOsprayInitialized = false;
 bool OsprayRenderer::denoiserAvailable = false;
@@ -146,6 +127,10 @@ OsprayRenderer::~OsprayRenderer() {
     if (ospCamera) {
         ospRelease(ospCamera);
     }
+    if (ospGeometry) {
+        ospRelease(ospGeometry);
+        ospGeometry = nullptr;
+    }
     if (ospWorld) {
         ospRelease(ospWorld);
     }
@@ -202,16 +187,34 @@ void OsprayRenderer::setLineData(LineDataPtr& lineData, bool isNewData) {
     }
     ospWorld = ospNewWorld();
 
+    size_t memoryPrev = 0;
+    if ((*sceneData->performanceMeasurer)) {
+        memoryPrev = getUsedSystemMemoryBytes();
+    }
     if (geometryMode == GeometryMode::TRIANGLE_MESH) {
         loadTriangleMeshData(lineData);
+        if (triangleMesh.triangleIndices.empty()) {
+            dirty = false;
+            reRender = true;
+            return;
+        }
     } else if (geometryMode == GeometryMode::CURVES) {
         loadCurvesData(lineData);
+        if (curvesData.curveIndices.empty()) {
+            dirty = false;
+            reRender = true;
+            return;
+        }
     }
 
     onHasMoved();
 
     ospSetObject(ospWorld, "light", ospLights);
     ospCommit(ospWorld);
+    if ((*sceneData->performanceMeasurer)) {
+        size_t memoryAfter = getUsedSystemMemoryBytes();
+        (*sceneData->performanceMeasurer)->setCurrentDataSetBufferSizeBytes(memoryAfter - memoryPrev);
+    }
 
     if (lineData->getType() != currentDataSetType) {
         //ospSetInt(ospMaterial, "ns", lineData->getType() == DATA_SET_TYPE_STRESS_LINES ? 30 : 50);
@@ -257,6 +260,11 @@ void OsprayRenderer::loadTriangleMeshData(LineDataPtr& lineData) {
 
     if (ospGeometry) {
         ospRelease(ospGeometry);
+        ospGeometry = nullptr;
+    }
+
+    if (triangleMesh.triangleIndices.empty()) {
+        return;
     }
 
     ospGeometry = ospNewGeometry("mesh");
@@ -329,7 +337,13 @@ void OsprayRenderer::loadCurvesData(LineDataPtr& lineData) {
 
     if (ospGeometry) {
         ospRelease(ospGeometry);
+        ospGeometry = nullptr;
     }
+
+    if (curvesData.curveIndices.empty()) {
+        return;
+    }
+
     ospGeometry = ospNewGeometry("curve");
     ospSetParam(ospGeometry, "type", OSP_UCHAR, &curveType);
     ospSetParam(ospGeometry, "basis", OSP_UCHAR, &curveBasis);
@@ -406,6 +420,10 @@ void OsprayRenderer::onResolutionChanged() {
     uint32_t width = *sceneData->viewportWidth;
     uint32_t height = *sceneData->viewportHeight;
 
+    if (previousWidth != width || previousHeight != height) {
+        onHasMoved();
+    }
+
     size_t bufferSize = width * height;
     sgl::vk::ImageSamplerSettings samplerSettings;
     sgl::vk::ImageSettings imageSettings;
@@ -427,6 +445,7 @@ void OsprayRenderer::onResolutionChanged() {
     blitRenderPass->recreateSwapchain(width, height);
 
     auto* swapchain = sgl::AppSettings::get()->getSwapchain();
+    stagingBuffers.clear();
     stagingBuffers.reserve(swapchain->getNumImages());
     for (size_t i = 0; i < swapchain->getNumImages(); i++) {
         stagingBuffers.push_back(std::make_shared<sgl::vk::Buffer>(
@@ -437,7 +456,7 @@ void OsprayRenderer::onResolutionChanged() {
         ospRelease(ospFrameBuffer);
     }
     ospFrameBuffer = ospNewFrameBuffer(
-            width, height, frameBufferFormat,
+            int(width), int(height), frameBufferFormat,
             OSP_FB_COLOR | OSP_FB_ACCUM | OSP_FB_VARIANCE);
     if (useDenoiser) {
         updateDenoiserMode();
@@ -495,8 +514,10 @@ void OsprayRenderer::notifyReRenderTriggeredExternally() {
 void OsprayRenderer::onHasMoved() {
     LineRenderer::onHasMoved();
 
-    int width = int(*sceneData->viewportWidth);
-    int height = int(*sceneData->viewportHeight);
+    previousWidth = *sceneData->viewportWidth;
+    previousHeight = *sceneData->viewportHeight;
+    int width = std::max(int(*sceneData->viewportWidth), 1);
+    int height = std::max(int(*sceneData->viewportHeight), 1);
     glm::mat4 invViewMatrix = glm::inverse(sceneData->camera->getViewMatrix());
     glm::vec3 upDir = invViewMatrix[1];
     glm::vec3 lookDir = -invViewMatrix[2];
@@ -522,6 +543,14 @@ void OsprayRenderer::onHasMoved() {
 
 void OsprayRenderer::render() {
     LineRenderer::renderBase();
+
+    if (!ospGeometry) {
+        renderer->transitionImageLayout(
+                (*sceneData->sceneTexture)->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        (*sceneData->sceneTexture)->getImageView()->clearColor(
+                sceneData->clearColor->getFloatColorRGBA(), renderer->getVkCommandBuffer());
+        return;
+    }
 
     if (currentLineWidth != LineRenderer::getLineWidth()) {
         currentLineWidth = LineRenderer::getLineWidth();
