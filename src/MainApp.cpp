@@ -69,6 +69,7 @@
 #include "LineData/Scattering/ScatteringLineTracingRequester.hpp"
 #include "Loaders/NetCdfLineLoader.hpp"
 #include "Renderers/OpaqueLineRenderer.hpp"
+#include "Renderers/Deferred/DeferredRenderer.hpp"
 #include "Renderers/OIT/PerPixelLinkedListLineRenderer.hpp"
 #include "Renderers/OIT/MLABRenderer.hpp"
 #include "Renderers/OIT/OpacityOptimizationRenderer.hpp"
@@ -130,8 +131,38 @@ MainApp::MainApp()
                   transferFunctionWindow, rendererVk)) {
     sgl::AppSettings::get()->getVulkanInstance()->setDebugCallback(&vulkanErrorCallback);
 
+#ifdef SUPPORT_CUDA_INTEROP
+    sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
+    if (device->getDeviceDriverId() == VK_DRIVER_ID_NVIDIA_PROPRIETARY) {
+        cudaInteropInitialized = true;
+        if (!sgl::vk::initializeCudaDeviceApiFunctionTable()) {
+            cudaInteropInitialized = false;
+            sgl::Logfile::get()->writeError(
+                    "Error in MainApp::MainApp: sgl::vk::initializeCudaDeviceApiFunctionTable() returned false.",
+                    false);
+        }
+
+        if (cudaInteropInitialized) {
+            CUresult cuResult = sgl::vk::g_cudaDeviceApiFunctionTable.cuInit(0);
+            if (cuResult == CUDA_ERROR_NO_DEVICE) {
+                sgl::Logfile::get()->writeInfo("No CUDA-capable device was found. Disabling CUDA interop support.");
+                cudaInteropInitialized = false;
+            } else {
+                sgl::vk::checkCUresult(cuResult, "Error in cuInit: ");
+            }
+        }
+
+        if (cudaInteropInitialized) {
+            CUresult cuResult = sgl::vk::g_cudaDeviceApiFunctionTable.cuCtxCreate(
+                    &cuContext, CU_CTX_SCHED_SPIN, cuDevice);
+            sgl::vk::checkCUresult(cuResult, "Error in cuCtxCreate: ");
+        }
+    }
+#endif
 #ifdef SUPPORT_OPTIX
-    optixInitialized = OptixVptDenoiser::initGlobal();
+    if (cudaInteropInitialized) {
+        optixInitialized = OptixVptDenoiser::initGlobal(cuContext, cuDevice);
+    }
 #endif
 
     if (LineData::getLinePrimitiveModeUsesGeometryShader(LineData::getLinePrimitiveMode())
@@ -205,7 +236,7 @@ MainApp::MainApp()
         }
         if (i == IM_ARRAYSIZE(RENDERING_MODE_NAMES)) {
             sgl::Logfile::get()->writeError(
-                    std::string() + "ERROR in replay widget load renderer callback: Unknown renderer name \""
+                    std::string() + "Error in replay widget load renderer callback: Unknown renderer name \""
                     + rendererName + "\".");
         }
         if (*renderingModeNew != *renderingModeOld) {
@@ -238,12 +269,15 @@ MainApp::MainApp()
             const std::vector<std::string>& tfNames) {
         if (lineData) {
             MultiVarTransferFunctionWindow* multiVarTransferFunctionWindow;
-            if (lineData->getType() == DATA_SET_TYPE_STRESS_LINES) {
+            if (lineData->getType() == DATA_SET_TYPE_FLOW_LINES) {
+                LineDataFlow* lineDataFlow = static_cast<LineDataFlow*>(lineData.get());
+                multiVarTransferFunctionWindow = &lineDataFlow->getMultiVarTransferFunctionWindow();
+            } else if (lineData->getType() == DATA_SET_TYPE_STRESS_LINES) {
                 LineDataStress* lineDataStress = static_cast<LineDataStress*>(lineData.get());
                 multiVarTransferFunctionWindow = &lineDataStress->getMultiVarTransferFunctionWindow();
             } else {
                 sgl::Logfile::get()->writeError(
-                        "ERROR in replay widget load multi-var transfer functions callback: Invalid data type .");
+                        "Error in replay widget load multi-var transfer functions callback: Invalid data type.");
                 return;
             }
             multiVarTransferFunctionWindow->loadFromTfNameList(tfNames);
@@ -256,12 +290,15 @@ MainApp::MainApp()
             const std::vector<glm::vec2>& tfRanges) {
         if (lineData) {
             MultiVarTransferFunctionWindow* multiVarTransferFunctionWindow;
-            if (lineData->getType() == DATA_SET_TYPE_STRESS_LINES) {
+            if (lineData->getType() == DATA_SET_TYPE_FLOW_LINES) {
+                LineDataFlow* lineDataFlow = static_cast<LineDataFlow*>(lineData.get());
+                multiVarTransferFunctionWindow = &lineDataFlow->getMultiVarTransferFunctionWindow();
+            } else if (lineData->getType() == DATA_SET_TYPE_STRESS_LINES) {
                 LineDataStress* lineDataStress = static_cast<LineDataStress*>(lineData.get());
                 multiVarTransferFunctionWindow = &lineDataStress->getMultiVarTransferFunctionWindow();
             } else {
                 sgl::Logfile::get()->writeError(
-                        "ERROR in replay widget multi-var transfer functions ranges callback: Invalid data type .");
+                        "Error in replay widget multi-var transfer functions ranges callback: Invalid data type.");
                 return;
             }
 
@@ -339,8 +376,9 @@ MainApp::MainApp()
     sgl::AppSettings::get()->getSettings().getValueOpt("fixedViewportSizeX", fixedViewportSize.x);
     sgl::AppSettings::get()->getSettings().getValueOpt("fixedViewportSizeY", fixedViewportSize.y);
     fixedViewportSizeEdit = fixedViewportSize;
-    showPropertyEditor = useDockSpaceMode;
+    showPropertyEditor = true;
     sgl::ImGuiWrapper::get()->setUseDockSpaceMode(useDockSpaceMode);
+    //useDockSpaceMode = false;
 
 #ifdef NDEBUG
     showFpsOverlay = false;
@@ -451,6 +489,16 @@ MainApp::~MainApp() {
 #ifdef SUPPORT_OPTIX
     if (optixInitialized) {
         OptixVptDenoiser::freeGlobal();
+    }
+#endif
+#ifdef SUPPORT_CUDA_INTEROP
+    if (sgl::vk::getIsCudaDeviceApiFunctionTableInitialized()) {
+        if (cuContext) {
+            CUresult cuResult = sgl::vk::g_cudaDeviceApiFunctionTable.cuCtxDestroy(cuContext);
+            sgl::vk::checkCUresult(cuResult, "Error in cuCtxDestroy: ");
+            cuContext = {};
+        }
+        sgl::vk::freeCudaDeviceApiFunctionTable();
     }
 #endif
 
@@ -633,9 +681,12 @@ void MainApp::setRenderer(
     if (oldRenderingMode != newRenderingMode) {
         // User depth buffer with higher accuracy when rendering lines opaquely.
         if (newRenderingMode == RENDERING_MODE_ALL_LINES_OPAQUE
-                || oldRenderingMode == RENDERING_MODE_ALL_LINES_OPAQUE) {
+                || newRenderingMode == RENDERING_MODE_DEFERRED_SHADING
+                || oldRenderingMode == RENDERING_MODE_ALL_LINES_OPAQUE
+                || oldRenderingMode == RENDERING_MODE_DEFERRED_SHADING) {
             VkFormat depthFormat;
-            if (newRenderingMode == RENDERING_MODE_ALL_LINES_OPAQUE) {
+            if (newRenderingMode == RENDERING_MODE_ALL_LINES_OPAQUE
+                    || newRenderingMode == RENDERING_MODE_DEFERRED_SHADING) {
                 depthFormat = device->getSupportedDepthFormat();
             } else {
                 depthFormat = device->getSupportedDepthStencilFormat();
@@ -653,6 +704,8 @@ void MainApp::setRenderer(
 
     if (newRenderingMode == RENDERING_MODE_ALL_LINES_OPAQUE) {
         newLineRenderer = new OpaqueLineRenderer(&sceneDataRef, transferFunctionWindow);
+    } else if (newRenderingMode == RENDERING_MODE_DEFERRED_SHADING) {
+        newLineRenderer = new DeferredRenderer(&sceneDataRef, transferFunctionWindow);
     } else if (newRenderingMode == RENDERING_MODE_PER_PIXEL_LINKED_LIST) {
         newLineRenderer = new PerPixelLinkedListLineRenderer(&sceneDataRef, transferFunctionWindow);
     } else if (newRenderingMode == RENDERING_MODE_MLAB) {
@@ -755,6 +808,9 @@ void MainApp::resolutionChanged(sgl::EventPtr event) {
 
     SciVisApp::resolutionChanged(event);
     if (!useDockSpaceMode) {
+        auto* window = sgl::AppSettings::get()->getMainWindow();
+        viewportWidth = uint32_t(window->getWidth());
+        viewportHeight = uint32_t(window->getHeight());
         if (lineRenderer != nullptr) {
             lineRenderer->onResolutionChanged();
         }
@@ -1205,6 +1261,10 @@ void MainApp::renderGui() {
         }
         reRender = false;
     } else {
+        if (showPropertyEditor) {
+            renderGuiPropertyEditorWindow();
+        }
+
         if (lineRenderer) {
             lineRenderer->renderGuiOverlay();
         }
@@ -1591,7 +1651,19 @@ void MainApp::renderGuiMenuBar() {
                 replayWidget.setShowWindow(!replayWidget.getShowWindow());
             }
             ImGui::EndMenu();
+        }
 
+        if (ImGui::BeginMenu("Tools")) {
+            if (ImGui::MenuItem("Print Camera State")) {
+                std::cout << "Position: (" << camera->getPosition().x << ", " << camera->getPosition().y
+                          << ", " << camera->getPosition().z << ")" << std::endl;
+                std::cout << "Look At: (" << camera->getLookAtLocation().x << ", " << camera->getLookAtLocation().y
+                          << ", " << camera->getLookAtLocation().z << ")" << std::endl;
+                std::cout << "Yaw: " << camera->getYaw() << std::endl;
+                std::cout << "Pitch: " << camera->getPitch() << std::endl;
+                std::cout << "FoVy: " << (camera->getFOVy() / sgl::PI * 180.0f) << std::endl;
+            }
+            ImGui::EndMenu();
         }
 
         bool isRendererComputationRunning = false;
@@ -1808,8 +1880,12 @@ void MainApp::update(float dt) {
     if (replayWidget.update(recordingTime, stopRecording, stopCameraFlight)) {
         if (!useCameraFlight) {
             camera->overwriteViewMatrix(replayWidget.getViewMatrix());
-            if (camera->getFOVy() != replayWidget.getCameraFovy()) {
+            if (std::abs(camera->getFOVy() - replayWidget.getCameraFovy()) > 1e-6f) {
                 camera->setFOVy(replayWidget.getCameraFovy());
+                fovDegree = camera->getFOVy() / sgl::PI * 180.0f;
+            }
+            if (camera->getLookAtLocation() != replayWidget.getLookAtLocation()) {
+                camera->setLookAtLocation(replayWidget.getLookAtLocation());
             }
         }
         SettingsMap currentDatasetSettings = replayWidget.getCurrentDatasetSettings();
@@ -1848,6 +1924,7 @@ void MainApp::update(float dt) {
 
         replayWidgetRunning = true;
         reRender = true;
+        hasMoved();
 
         if (!useCameraFlight) {
             if (realTimeReplayUpdates) {
@@ -2089,6 +2166,7 @@ void MainApp::loadLineDataSet(const std::vector<std::string>& fileNames, bool bl
         sgl::Logfile::get()->writeError("Error in MainApp::loadLineDataSet: Invalid data set type.");
         return;
     }
+    lineData->setFileDialogInstance(fileDialogInstance);
 
     if (blockingDataLoading) {
         bool dataLoaded = lineData->loadFromFile(fileNames, selectedDataSetInformation, transformationMatrixPtr);

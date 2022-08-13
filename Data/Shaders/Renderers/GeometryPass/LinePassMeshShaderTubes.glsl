@@ -5,7 +5,6 @@
 #extension GL_NV_mesh_shader : require
 //#extension GL_EXT_scalar_block_layout : require
 
-#define WORKGROUP_SIZE 32
 #define MESHLET_MAX_VERTICES 64
 #define MESHLET_MAX_PRIMITIVES (2 * MESHLET_MAX_VERTICES - 2 * NUM_TUBE_SUBDIVISIONS)
 
@@ -90,6 +89,10 @@ void main() {
     meshletData.numLinePoints = meshletVec.y;
 
     uint numVertices = meshletData.numLinePoints * NUM_TUBE_SUBDIVISIONS;
+    uint numSegments = meshletData.numLinePoints - 1;
+    uint numQuads = numSegments * NUM_TUBE_SUBDIVISIONS;
+    gl_PrimitiveCountNV = 2 * numQuads;
+
     for (uint vertexIdx = threadIdx; vertexIdx < numVertices; vertexIdx += WORKGROUP_SIZE) {
         uint localLinePointIdx = vertexIdx / NUM_TUBE_SUBDIVISIONS;
         uint globalLinePointIdx = meshletData.linePointIndexStart + localLinePointIdx;
@@ -218,7 +221,7 @@ void main() {
         fragmentVertexIdUint[vertexIdx] = linePointData.lineStartIndex;//globalLinePointIdx;
 #endif
 #ifdef USE_ROTATING_HELICITY_BANDS
-        fragmentRotation[vertexIdx] = linePointData.lineRotation;
+        fragmentRotation[vertexIdx] = linePointData.lineRotation * helicityRotationFactor;
 #endif
         fragmentAttribute[vertexIdx] = linePointData.lineAttribute;
         fragmentTangent[vertexIdx] = tangent;
@@ -235,9 +238,6 @@ void main() {
 #endif
     }
 
-    uint numSegments = meshletData.numLinePoints - 1;
-    uint numQuads = numSegments * NUM_TUBE_SUBDIVISIONS;
-    gl_PrimitiveCountNV = 2 * numQuads;
     for (uint quadIdx = threadIdx; quadIdx < numQuads; quadIdx += WORKGROUP_SIZE) {
         uint writeIdx = 6 * quadIdx;
         uint j = quadIdx / NUM_TUBE_SUBDIVISIONS;

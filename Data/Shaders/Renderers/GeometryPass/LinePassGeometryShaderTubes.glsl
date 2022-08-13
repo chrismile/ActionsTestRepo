@@ -101,7 +101,7 @@ void main() {
     lineMinorStress = vertexMinorStress;
 #endif
 #ifdef USE_ROTATING_HELICITY_BANDS
-    lineRotation = vertexRotation;
+    lineRotation = vertexRotation * helicityRotationFactor;
 #endif
 #if defined(USE_AMBIENT_OCCLUSION) || defined(USE_MULTI_VAR_RENDERING) || defined(UNIFORM_HELICITY_BAND_WIDTH)
     lineVertexId = uint(gl_VertexIndex);
@@ -396,7 +396,7 @@ void main() {
         //fragmentVertexId = float(lineVertexId[0]);
 #endif
 #ifdef USE_ROTATING_HELICITY_BANDS
-        fragmentRotation = lineRotation[0];
+        fragmentRotation = lineRotation[0] * helicityRotationFactor;
 #endif
         fragmentAttribute = lineAttribute[0];
         fragmentTangent = tangentCurrent;
@@ -450,7 +450,7 @@ void main() {
         //fragmentVertexId = float(lineVertexId[0]);
 #endif
 #ifdef USE_ROTATING_HELICITY_BANDS
-        fragmentRotation = lineRotation[0];
+        fragmentRotation = lineRotation[0] * helicityRotationFactor;
 #endif
         fragmentAttribute = lineAttribute[0];
         fragmentTangent = tangentCurrent;
@@ -505,7 +505,7 @@ void main() {
         //fragmentVertexId = float(lineVertexId[1]);
 #endif
 #ifdef USE_ROTATING_HELICITY_BANDS
-        fragmentRotation = lineRotation[1];
+        fragmentRotation = lineRotation[1] * helicityRotationFactor;
 #endif
         fragmentAttribute = lineAttribute[1];
         fragmentTangent = tangentNext;
@@ -559,7 +559,7 @@ void main() {
         //fragmentVertexId = float(lineVertexId[1]);
 #endif
 #ifdef USE_ROTATING_HELICITY_BANDS
-        fragmentRotation = lineRotation[1];
+        fragmentRotation = lineRotation[1] * helicityRotationFactor;
 #endif
         fragmentAttribute = lineAttribute[1];
         fragmentTangent = tangentNext;
@@ -717,6 +717,14 @@ void drawSeparatorStripe(inout vec4 surfaceColor, in float varFraction, in float
 }
 #endif
 
+#ifdef USE_HELICITY_BANDS_TEXTURE
+layout(binding = HELICITY_BANDS_TEXTURE_BINDING) uniform sampler2D helicityBandsTexture;
+vec4 sampleHelicityBandsTexture(in float u, in float globalPos) {
+    //return texture(helicityBandsTexture, vec2(u, 0.5));
+    return textureGrad(helicityBandsTexture, vec2(u, 0.5), vec2(dFdx(globalPos), 0.0), vec2(dFdy(globalPos), 0.0));
+}
+#endif
+
 void main() {
 #if defined(COMPRESSED_GEOMETRY_OUTPUT_DATA) && (defined(USE_PRINCIPAL_STRESS_DIRECTION_INDEX) || defined(USE_LINE_HIERARCHY_LEVEL)) && defined(VISUALIZE_SEEDING_PROCESS)
     uint fragmentPrincipalStressIndex = fragmentPrincipalStressIndexAndLineAppearanceOrder & 0x4u;
@@ -768,6 +776,7 @@ void main() {
     vec3 helperVec = normalize(cross(t, v));
     vec3 newV = normalize(cross(helperVec, t));
 
+#if defined(USE_HALOS) || defined(USE_MULTI_VAR_RENDERING)
     float ribbonPosition;
 
 #ifdef USE_CAPPED_TUBES
@@ -783,7 +792,7 @@ void main() {
         // Side note: We can also use the code below, as for a, b with length 1:
         // sqrt(1 - dot^2(a,b)) = len(cross(a,b))
         // Due to:
-        // - dot(a,b) = ||a|| ||b|| cos(phi)
+        // - dot(a,bribbonPosition) = ||a|| ||b|| cos(phi)
         // - len(cross(a,b)) = ||a|| ||b|| |sin(phi)|
         // - sin^2(phi) + cos^2(phi) = 1
         //ribbonPosition = dot(newV, n);
@@ -955,6 +964,8 @@ void main() {
     }
 #endif
 
+#endif // defined(USE_HALOS) || defined(USE_MULTI_VAR_RENDERING)
+
 
 #ifdef USE_ROTATING_HELICITY_BANDS
 #ifdef USE_MULTI_VAR_RENDERING
@@ -977,7 +988,7 @@ void main() {
 #endif
         uint attributeIdxReal = getRealAttributeIndex(attributeIdx);
         float sampledFragmentAttribute = sampleAttributeLinear(fragmentVertexId, attributeIdxReal);
-        fragmentColor = transferFunction(fragmentAttribute, attributeIdxReal);
+        fragmentColor = transferFunction(sampledFragmentAttribute, attributeIdxReal);
     }
 #else
 #ifdef USE_PRINCIPAL_STRESS_DIRECTION_INDEX
@@ -998,15 +1009,15 @@ void main() {
     float separatorWidth = separatorBaseWidth;
 #ifdef UNIFORM_HELICITY_BAND_WIDTH
     uint vertexIdx0 = uint(floor(fragmentVertexId));
-    uint vertexIdx1 = uint(ceil(fragmentVertexId));
+    uint vertexIdx1 = vertexIdx0 + 1;//uint(ceil(fragmentVertexId));
 #ifdef USE_GEOMETRY_SHADER
     float rotDx = length(linePositions[vertexIdx1] - linePositions[vertexIdx0]);
-    float rotDy = lineRotations[vertexIdx1] - lineRotations[vertexIdx0];
+    float rotDy = (lineRotations[vertexIdx1] - lineRotations[vertexIdx0]) * helicityRotationFactor;
 #else
     LinePointData linePointData0 = linePoints[vertexIdx0];
     LinePointData linePointData1 = linePoints[vertexIdx1];
     float rotDx = length(linePointData1.linePosition - linePointData0.linePosition);
-    float rotDy = linePointData1.lineRotation - linePointData0.lineRotation;
+    float rotDy = (linePointData1.lineRotation - linePointData0.lineRotation) * helicityRotationFactor;
 #endif
     // Space conversion world <-> surface: circumference / arc length == M_PI * lineWidth / (2.0 * M_PI) == 0.5 * lineWidth
     float rotationSeparatorScale = cos(atan(rotDy * 0.5 * lineWidth, rotDx));
@@ -1019,9 +1030,16 @@ void main() {
             phi + fragmentRotation, separatorWidth);
     //drawSeparatorStripe(fragmentColor, varFraction, phi + fragmentRotation, bandWidth);
 #else
+#ifdef USE_HELICITY_BANDS_TEXTURE
+    const float twoPi = 2.0 * float(M_PI);
+    fragmentColor *= sampleHelicityBandsTexture(
+            mod(phi + fragmentRotation + 0.1, twoPi) / twoPi,
+            (phi + fragmentRotation) / twoPi);
+#else
     drawSeparatorStripe(
             fragmentColor, mod(phi + fragmentRotation + 0.1, 2.0 / float(numSubdivisionsBands) * float(M_PI)),
             phi + fragmentRotation, separatorWidth);
+#endif
 #endif
 #elif defined(USE_MULTI_VAR_RENDERING)
     float separatorWidth = numSelectedAttributes > 1 ? 0.4 / float(numSelectedAttributes) : 0.2;
@@ -1032,7 +1050,11 @@ void main() {
     }
 #endif
 
+#if defined(USE_HALOS) || defined(USE_MULTI_VAR_RENDERING)
     float absCoords = abs(ribbonPosition);
+#else
+    float absCoords = 0.0;
+#endif
 
     float fragmentDepth = length(fragmentPositionWorld - cameraPosition);
 #if defined(USE_ROTATING_HELICITY_BANDS)
@@ -1042,7 +1064,9 @@ void main() {
 #else
     const float WHITE_THRESHOLD = 0.7;
 #endif
+
     float EPSILON_OUTLINE = 0.0;
+#if defined(USE_HALOS) || defined(USE_MULTI_VAR_RENDERING)
 #ifdef USE_BANDS
     //float EPSILON_OUTLINE = clamp(getAntialiasingFactor(fragmentDistance / (useBand != 0 ? bandWidth : lineWidth) * 2.0), 0.0, 0.49);
     float EPSILON_WHITE = fwidth(ribbonPosition);
@@ -1052,6 +1076,11 @@ void main() {
 #endif
     float coverage = 1.0 - smoothstep(1.0 - EPSILON_OUTLINE, 1.0, absCoords);
     //float coverage = 1.0 - smoothstep(1.0, 1.0, abs(ribbonPosition));
+#else
+    float EPSILON_WHITE = 0.0;
+    float coverage = 1.0;
+#endif
+
 #if !defined(USE_CAPPED_TUBES) && defined(USE_BANDS) && (defined(USE_NORMAL_STRESS_RATIO_TUBES) || defined(USE_HYPERSTREAMLINES))
     if (useBand != 0) {
         coverage = 1.0;

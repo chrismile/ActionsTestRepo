@@ -94,10 +94,10 @@ bool LineData::setNewSettings(const SettingsMap& settings) {
     }
 
     std::string linePrimitiveModeName;
-    if (settings.getValueOpt("linePrimitiveMode", linePrimitiveModeName)) {
+    if (settings.getValueOpt("line_primitive_mode", linePrimitiveModeName)) {
         int i;
         for (i = 0; i < IM_ARRAYSIZE(LINE_PRIMITIVE_MODE_DISPLAYNAMES); i++) {
-            if (LINE_PRIMITIVE_MODE_DISPLAYNAMES[i] == attributeName) {
+            if (LINE_PRIMITIVE_MODE_DISPLAYNAMES[i] == linePrimitiveModeName) {
                 linePrimitiveMode = LinePrimitiveMode(i);
                 break;
             }
@@ -115,16 +115,56 @@ bool LineData::setNewSettings(const SettingsMap& settings) {
     }
 
     int linePrimitiveModeIndex = 0;
-    if (settings.getValueOpt("linePrimitiveModeIndex", linePrimitiveModeIndex)) {
+    if (settings.getValueOpt("line_primitive_mode_index", linePrimitiveModeIndex)) {
         if (linePrimitiveModeIndex < 0 || linePrimitiveModeIndex >= IM_ARRAYSIZE(LINE_PRIMITIVE_MODE_DISPLAYNAMES)) {
             sgl::Logfile::get()->writeError(
-                    "Error in LineData::setNewSettings: Invalid attribute name \"" + attributeName + "\".");
+                    "Error in LineData::setNewSettings: Invalid line primitive mode index \""
+                    + std::to_string(linePrimitiveModeIndex) + "\".");
         }
         linePrimitiveMode = LinePrimitiveMode(linePrimitiveModeIndex);
         if (!lineRenderersCached.empty()) {
             updateLinePrimitiveMode(lineRenderersCached.front());
             reloadGatherShader = true;
         }
+    }
+
+    if (!simulationMeshOutlineTriangleIndices.empty()) {
+        if (settings.getValueOpt("hull_opacity", hullOpacity)) {
+            shallRenderSimulationMeshBoundary = hullOpacity > 0.0f;
+            reRender = true;
+            for (auto* lineRenderer : lineRenderersCached) {
+                if (lineRenderer && !lineRenderer->isRasterizer) {
+                    lineRenderer->setRenderSimulationMeshHull(
+                            shallRenderSimulationMeshBoundary);
+                }
+            }
+        }
+    }
+
+    if (settings.getValueOpt("tube_num_subdivisions", tubeNumSubdivisions)) {
+        for (auto* lineRenderer : lineRenderersCached) {
+            if (lineRenderer && lineRenderer->getIsRasterizer()) {
+                reloadGatherShader = true;
+            }
+        }
+        if (linePrimitiveMode == LINE_PRIMITIVES_TUBE_MESH_SHADER
+                || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_MESH_SHADER) {
+            dirty = true;
+        }
+        setTriangleRepresentationDirty();
+    }
+
+    if (settings.getValueOpt("use_capped_tubes", useCappedTubes)) {
+        triangleRepresentationDirty = true;
+        for (auto* lineRenderer : lineRenderersCached) {
+            if (lineRenderer && !lineRenderer->isRasterizer) {
+                reloadGatherShader = true;
+            }
+        }
+    }
+
+    if (settings.getValueOpt("use_halos", useHalos)) {
+        reloadGatherShader = true;
     }
 
     return reloadGatherShader;
@@ -195,7 +235,10 @@ bool LineData::renderGuiPropertyEditorNodesRenderer(sgl::PropertyEditor& propert
         if (!hasBandsData) {
             numPrimitiveModes -= 5;
         }
-        if (lineRenderer->getRenderingMode() != RENDERING_MODE_OPACITY_OPTIMIZATION && propertyEditor.addCombo(
+        bool canChangeLinePrimitiveMode =
+                lineRenderer->getRenderingMode() != RENDERING_MODE_OPACITY_OPTIMIZATION
+                && lineRenderer->getRenderingMode() != RENDERING_MODE_DEFERRED_SHADING;
+        if (canChangeLinePrimitiveMode && propertyEditor.addCombo(
                 "Line Primitives", (int*)&linePrimitiveMode,
                 LINE_PRIMITIVE_MODE_DISPLAYNAMES, numPrimitiveModes)) {
             if (updateLinePrimitiveMode(lineRenderer)) {
@@ -227,14 +270,21 @@ bool LineData::renderGuiPropertyEditorNodesRenderer(sgl::PropertyEditor& propert
         }
     }
 
+    bool usesDeferredShading = lineRenderer && lineRenderer->getRenderingMode() == RENDERING_MODE_DEFERRED_SHADING;
     if (lineRenderer && (linePrimitiveMode == LINE_PRIMITIVES_TUBE_TRIANGLE_MESH
-            || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH || !lineRenderer->isRasterizer)) {
+            || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH
+            || usesDeferredShading || !lineRenderer->isRasterizer)
+            && (!usesDeferredShading || lineRenderer->getUsesTriangleMeshInternally())) {
         if (propertyEditor.addCheckbox("Capped Tubes", &useCappedTubes)) {
             triangleRepresentationDirty = true;
             if (!lineRenderer->isRasterizer) {
                 shallReloadGatherShader = true;
             }
         }
+    }
+
+    if (propertyEditor.addCheckbox("Use Halos", &useHalos)) {
+        shallReloadGatherShader = true;
     }
 
     propertyEditor.addCheckbox("Render Color Legend", &shallRenderColorLegendWidgets);
@@ -303,6 +353,10 @@ void LineData::setLineRenderers(const std::vector<LineRenderer*>& lineRenderers)
     lineRenderersCached = lineRenderers;
 }
 
+void LineData::setFileDialogInstance(ImGuiFileDialog* _fileDialogInstance) {
+    this->fileDialogInstance = _fileDialogInstance;
+}
+
 bool LineData::renderGuiPropertyEditorNodes(sgl::PropertyEditor& propertyEditor) {
     bool shallReloadGatherShader = false;
 
@@ -358,13 +412,20 @@ void LineData::recomputeColorLegend() {
 }
 
 void LineData::rebuildInternalRepresentationIfNecessary() {
+    if (dirty) {
+        cachedRenderDataGeometryShader = {};
+    }
+    if (dirty || cachedTubeNumSubdivisions != tubeNumSubdivisions) {
+        cachedRenderDataProgrammablePull = {};
+        cachedRenderDataMeshShader = {};
+    }
     if (dirty || triangleRepresentationDirty) {
         sgl::AppSettings::get()->getPrimaryDevice()->waitIdle();
         //updateMeshTriangleIntersectionDataStructure();
 
-        vulkanTubeTriangleRenderData = {};
-        vulkanTubeAabbRenderData = {};
-        vulkanHullTriangleRenderData = {};
+        cachedTubeTriangleRenderData = {};
+        cachedTubeAabbRenderData = {};
+        cachedHullTriangleRenderData = {};
         tubeTriangleBottomLevelASes = {};
         tubeAabbBottomLevelAS = {};
         hullTriangleBottomLevelAS = {};
@@ -372,9 +433,35 @@ void LineData::rebuildInternalRepresentationIfNecessary() {
         tubeTriangleAndHullTopLevelAS = {};
         tubeAabbTopLevelAS = {};
         tubeAabbAndHullTopLevelAS = {};
+        cachedTubeTriangleRenderDataPayload = {};
 
         dirty = false;
         triangleRepresentationDirty = false;
+    }
+}
+
+void LineData::removeOtherCachedDataTypes(RequestMode requestMode) {
+    if (requestMode != RequestMode::TRIANGLES) {
+        cachedTubeTriangleRenderData = {};
+        tubeTriangleBottomLevelASes = {};
+        tubeTriangleTopLevelAS = {};
+        tubeTriangleAndHullTopLevelAS = {};
+        cachedTubeTriangleRenderDataPayload = {};
+    }
+    if (requestMode != RequestMode::AABBS) {
+        cachedTubeAabbRenderData = {};
+        tubeAabbBottomLevelAS = {};
+        tubeAabbTopLevelAS = {};
+        tubeAabbAndHullTopLevelAS = {};
+    }
+    if (requestMode != RequestMode::GEOMETRY_SHADER) {
+        cachedRenderDataGeometryShader = {};
+    }
+    if (requestMode != RequestMode::PROGRAMMABLE_PULL) {
+        cachedRenderDataProgrammablePull = {};
+    }
+    if (requestMode != RequestMode::MESH_SHADER) {
+        cachedRenderDataMeshShader = {};
     }
 }
 
@@ -696,7 +783,7 @@ void LineData::splitTriangleIndices(
 
     tubeTriangleIndices.clear();
     for (std::vector<uint32_t>& batchIndices : batchIndicesList) {
-        tubeTriangleSplitData.numBatchIndices.push_back(batchIndices.size());
+        tubeTriangleSplitData.numBatchIndices.push_back(uint32_t(batchIndices.size()));
         tubeTriangleIndices.insert(tubeTriangleIndices.end(), batchIndices.begin(), batchIndices.end());
     }
 }
@@ -892,15 +979,15 @@ sgl::vk::TopLevelAccelerationStructurePtr LineData::getRayTracingTubeAabbAndHull
 
 HullTriangleRenderData LineData::getVulkanHullTriangleRenderData(bool vulkanRayTracing) {
     rebuildInternalRepresentationIfNecessary();
-    if (vulkanHullTriangleRenderData.vertexBuffer) {
-        return vulkanHullTriangleRenderData;
+    if (cachedHullTriangleRenderData.vertexBuffer) {
+        return cachedHullTriangleRenderData;
     }
     if (simulationMeshOutlineTriangleIndices.empty()) {
         return {};
     }
 
     sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
-    vulkanHullTriangleRenderData = {};
+    cachedHullTriangleRenderData = {};
 
     std::vector<HullTriangleVertexData> vertexDataList;
     vertexDataList.reserve(simulationMeshOutlineVertexPositions.size());
@@ -922,16 +1009,16 @@ HullTriangleRenderData LineData::getVulkanHullTriangleRenderData(bool vulkanRayT
                 | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
     }
 
-    vulkanHullTriangleRenderData.indexBuffer = std::make_shared<sgl::vk::Buffer>(
+    cachedHullTriangleRenderData.indexBuffer = std::make_shared<sgl::vk::Buffer>(
             device, simulationMeshOutlineTriangleIndices.size() * sizeof(uint32_t),
             simulationMeshOutlineTriangleIndices.data(),
             indexBufferFlags, VMA_MEMORY_USAGE_GPU_ONLY);
 
-    vulkanHullTriangleRenderData.vertexBuffer = std::make_shared<sgl::vk::Buffer>(
+    cachedHullTriangleRenderData.vertexBuffer = std::make_shared<sgl::vk::Buffer>(
             device, vertexDataList.size() * sizeof(HullTriangleVertexData), vertexDataList.data(),
             vertexBufferFlags, VMA_MEMORY_USAGE_GPU_ONLY);
 
-    return vulkanHullTriangleRenderData;
+    return cachedHullTriangleRenderData;
 }
 
 void LineData::getVulkanShaderPreprocessorDefines(
@@ -953,14 +1040,32 @@ void LineData::getVulkanShaderPreprocessorDefines(
             || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_GEOMETRY_SHADER) {
         preprocessorDefines.insert(std::make_pair("USE_GEOMETRY_SHADER", ""));
     }
-    if (useCappedTubes && (!isRasterizer || linePrimitiveMode == LINE_PRIMITIVES_TUBE_TRIANGLE_MESH
-            || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH)) {
+    if (linePrimitiveMode == LINE_PRIMITIVES_TUBE_MESH_SHADER
+            || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_MESH_SHADER) {
+        sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
+        uint32_t workgroupSize = device->getPhysicalDeviceMeshShaderPropertiesNV().maxMeshWorkGroupSize[0];
+        preprocessorDefines.insert(std::make_pair("WORKGROUP_SIZE", std::to_string(workgroupSize)));
+    }
+    bool usesDeferredShading = std::any_of(
+            lineRenderersCached.cbegin(), lineRenderersCached.cend(), [](LineRenderer* lineRenderer){
+                return lineRenderer->getRenderingMode() == RENDERING_MODE_DEFERRED_SHADING;
+            });
+    bool usesTriangleMeshInternally = std::any_of(
+            lineRenderersCached.cbegin(), lineRenderersCached.cend(), [](LineRenderer* lineRenderer){
+                return lineRenderer->getUsesTriangleMeshInternally();
+            });
+    if (useCappedTubes && (usesDeferredShading || linePrimitiveMode == LINE_PRIMITIVES_TUBE_TRIANGLE_MESH
+            || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH || !isRasterizer)
+            && (!usesDeferredShading || usesTriangleMeshInternally)) {
         preprocessorDefines.insert(std::make_pair("USE_CAPPED_TUBES", ""));
     }
     if (renderThickBands) {
         preprocessorDefines.insert(std::make_pair("MIN_THICKNESS", std::to_string(minBandThickness)));
     } else {
         preprocessorDefines.insert(std::make_pair("MIN_THICKNESS", std::to_string(1e-2f)));
+    }
+    if (useHalos) {
+        preprocessorDefines.insert(std::make_pair("USE_HALOS", ""));
     }
 }
 
@@ -1018,7 +1123,10 @@ void LineData::updateVulkanUniformBuffers(LineRenderer* lineRenderer, sgl::vk::R
     lineUniformData.hullUseShading = uint32_t(hullUseShading);
 
     if (sceneData) {
-        lineUniformData.viewportSize = glm::uvec2(*sceneData->viewportWidth, *sceneData->viewportHeight);
+        auto scalingFactor = uint32_t(lineRenderer->getResolutionIntegerScalingFactor());
+        lineUniformData.viewportSize = glm::uvec2(
+                *sceneData->viewportWidth * scalingFactor,
+                *sceneData->viewportHeight * scalingFactor);
     }
 
     lineUniformDataBuffer->updateData(

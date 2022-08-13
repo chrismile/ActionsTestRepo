@@ -63,7 +63,7 @@ class VulkanRayTracer : public LineRenderer {
 public:
     VulkanRayTracer(SceneData* sceneData, sgl::TransferFunctionWindow& transferFunctionWindow);
     ~VulkanRayTracer() override;
-    RenderingMode getRenderingMode() override { return RENDERING_MODE_VULKAN_RAY_TRACER; }
+    [[nodiscard]] RenderingMode getRenderingMode() const override { return RENDERING_MODE_VULKAN_RAY_TRACER; }
 
     /**
      * Re-generates the visualization mapping.
@@ -89,6 +89,7 @@ public:
 
     /// For changing performance measurement modes.
     void setNewState(const InternalState& newState) override;
+    bool setNewSettings(const SettingsMap& settings) override;
 
     /// Returns whether the triangle representation is used by the renderer.
     [[nodiscard]] bool getIsTriangleRepresentationUsed() const override;
@@ -127,6 +128,7 @@ private:
     // Multiple frames can be accumulated to achieve a multisampling effect (additionally to using numSamplesPerFrame).
     uint32_t maxNumAccumulatedFrames = 32;
     uint32_t accumulatedFramesCounter = 0;
+    bool useDeterministicSampling = false;
 };
 
 class RayTracingRenderPass : public sgl::vk::RayTracingPass {
@@ -145,6 +147,7 @@ public:
     }
     inline void setFrameNumber(uint32_t frameNumber) { rayTracerSettings.frameNumber = frameNumber; }
     inline void setMaxNumFrames(uint32_t numFrames) { maxNumFrames = numFrames; updateUseJitteredSamples(); }
+    inline void setUseDeterministicSampling(bool determinstic) { useDeterministicSampling = determinstic; }
     inline void setMaxDepthComplexity(uint32_t maxDepth) { rayTracerSettings.maxDepthComplexity = maxDepth; }
     inline void setUseDepthCues(bool depthCuesOn) { useDepthCues = depthCuesOn; }
     inline void setVisualizeSeedingProcess(bool visualizeSeeding) { visualizeSeedingProcess = visualizeSeeding; }
@@ -204,6 +207,7 @@ private:
     bool useJitteredSamples = true;
     uint32_t maxNumFrames = 1;
     bool useAnalyticIntersections = false;
+    bool useDeterministicSampling = false;
 
     // Whether to use multi-layer alpha tracing (MLAT).
     bool useMlat = false;

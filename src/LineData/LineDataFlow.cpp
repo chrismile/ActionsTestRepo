@@ -26,15 +26,19 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <unordered_set>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/case_conv.hpp>
 
+#include <Utils/StringUtils.hpp>
 #include <Utils/File/Logfile.hpp>
+#include <Graphics/Texture/Bitmap.hpp>
 #include <Graphics/Vulkan/Buffers/Buffer.hpp>
 #include <Graphics/Vulkan/Render/Data.hpp>
 #include <Graphics/Vulkan/Render/Renderer.hpp>
 #include <ImGui/Widgets/PropertyEditor.hpp>
 #include <ImGui/imgui_custom.h>
+#include <ImGui/ImGuiFileDialog/ImGuiFileDialog.h>
 
 #include "Loaders/TrajectoryFile.hpp"
 #include "Renderers/LineRenderer.hpp"
@@ -45,12 +49,18 @@ bool LineDataFlow::useRibbons = true;
 bool LineDataFlow::useRotatingHelicityBands = false;
 bool LineDataFlow::useUniformTwistLineWidth = true;
 float LineDataFlow::separatorWidth = 0.2f;
+const char* const textureFilteringModeNames[] = {
+        "Nearest", "Linear", "Nearest Mipmap Nearest", "Linear Mipmap Nearest",
+        "Nearest Mipmap Linear", "Linear Mipmap Linear" };
+enum class TextureFilteringMode {
+    NEAREST = 0, LINEAR, NEAREST_MIPMAP_NEAREST, LINEAR_MIPMAP_NEAREST, NEAREST_MIPMAP_LINEAR, LINEAR_MIPMAP_LINEAR
+};
 
 LineDataFlow::LineDataFlow(sgl::TransferFunctionWindow& transferFunctionWindow)
         : LineData(transferFunctionWindow, DATA_SET_TYPE_FLOW_LINES),
           multiVarTransferFunctionWindow("multivar", {
-                  "reds.xml", "blues.xml", "greens.xml", "purples.xml", "oranges.xml", "pinks.xml", "golds.xml",
-                  "dark-blues.xml" }) {
+                  "reds.xml", "blues.xml", "greens.xml", "purples.xml", "oranges.xml", "turquoise.xml", "yellows.xml",
+                  "pinks.xml", "browns.xml" }) {
     lineDataWindowName = "Line Data (Flow)";
 
     sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
@@ -58,12 +68,17 @@ LineDataFlow::LineDataFlow(sgl::TransferFunctionWindow& transferFunctionWindow)
             device, sizeof(MultiVarUniformData),
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             VMA_MEMORY_USAGE_GPU_ONLY);
+    maxSamplerAnisotropy = std::max(1, int(device->getLimits().maxSamplerAnisotropy));
 }
 
 LineDataFlow::~LineDataFlow() = default;
 
 bool LineDataFlow::settingsDiffer(LineData* other) {
-    return hasBandsData != static_cast<LineDataFlow*>(other)->hasBandsData;
+    auto* lineDataFlow = static_cast<LineDataFlow*>(other);
+    return hasBandsData != lineDataFlow->hasBandsData
+           || useMultiVarRendering != lineDataFlow->useMultiVarRendering
+           || useTwistLineTexture != lineDataFlow->useTwistLineTexture
+           || isTwistLineTextureLoaded != lineDataFlow->isTwistLineTextureLoaded;
 }
 
 void LineDataFlow::update(float dt) {
@@ -72,8 +87,130 @@ void LineDataFlow::update(float dt) {
     }
 }
 
+void LineDataFlow::loadTwistLineTexture() {
+    if (!sgl::FileUtils::get()->exists(twistLineTextureFilenameGui)) {
+        sgl::Logfile::get()->writeError(
+                "Error in LineDataFlow::loadTwistLineTexture: The file \""
+                + twistLineTextureFilenameGui + "\" does not exist.");
+        return;
+    }
+
+    sgl::BitmapPtr bitmap;
+    if (sgl::FileUtils::get()->hasExtension(twistLineTextureFilenameGui.c_str(), ".png")) {
+        bitmap = std::make_shared<sgl::Bitmap>();
+        bitmap->fromFile(twistLineTextureFilenameGui.c_str());
+    } else {
+        sgl::Logfile::get()->writeError(
+                "Error in LineDataFlow::loadTwistLineTexture: The file \""
+                + twistLineTextureFilenameGui + "\" has an unknown file extension.");
+        return;
+    }
+
+    sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
+
+    sgl::vk::ImageSettings imageSettings;
+    imageSettings.imageType = VK_IMAGE_TYPE_2D;
+    imageSettings.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+    sgl::vk::ImageSamplerSettings samplerSettings;
+    samplerSettings.addressModeU = samplerSettings.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+    samplerSettings.anisotropyEnable = maxAnisotropy > 1;
+    if (maxAnisotropy > 1) {
+        samplerSettings.maxAnisotropy = float(maxAnisotropy);
+    }
+
+    auto filteringMode = TextureFilteringMode(textureFilteringModeIndex);
+    bool generateMipmaps =
+            filteringMode != TextureFilteringMode::NEAREST && filteringMode != TextureFilteringMode::LINEAR;
+    if (generateMipmaps) {
+        imageSettings.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    }
+
+    if (filteringMode == TextureFilteringMode::NEAREST
+            || filteringMode == TextureFilteringMode::NEAREST_MIPMAP_NEAREST
+            || filteringMode == TextureFilteringMode::NEAREST_MIPMAP_LINEAR) {
+        samplerSettings.minFilter = VK_FILTER_NEAREST;
+        samplerSettings.magFilter = VK_FILTER_NEAREST;
+    }
+    if (filteringMode == TextureFilteringMode::LINEAR
+            || filteringMode == TextureFilteringMode::LINEAR_MIPMAP_NEAREST
+            || filteringMode == TextureFilteringMode::LINEAR_MIPMAP_LINEAR) {
+        samplerSettings.minFilter = VK_FILTER_LINEAR;
+        samplerSettings.magFilter = VK_FILTER_LINEAR;
+    }
+    if (filteringMode == TextureFilteringMode::NEAREST_MIPMAP_NEAREST
+            || filteringMode == TextureFilteringMode::LINEAR_MIPMAP_NEAREST) {
+        samplerSettings.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    }
+    if (filteringMode == TextureFilteringMode::NEAREST_MIPMAP_LINEAR
+            || filteringMode == TextureFilteringMode::LINEAR_MIPMAP_LINEAR) {
+        samplerSettings.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    }
+
+    void* pixelData;
+    uint32_t bytesPerPixel;
+    uint32_t width;
+    uint32_t height;
+    if (bitmap) {
+        pixelData = bitmap->getPixels();
+        bytesPerPixel = bitmap->getBPP() / 8;
+        width = uint32_t(bitmap->getWidth());
+        height = uint32_t(bitmap->getHeight());
+        imageSettings.format = VK_FORMAT_R8G8B8A8_UNORM;
+    }
+    imageSettings.width = width;
+    imageSettings.height = height;
+    if (generateMipmaps) {
+        imageSettings.mipLevels = uint32_t(sgl::intlog2(int(std::max(width, height))));
+    }
+
+    twistLineTexture = std::make_shared<sgl::vk::Texture>(device, imageSettings, samplerSettings);
+    twistLineTexture->getImage()->uploadData(width * height * bytesPerPixel, pixelData);
+    loadedTwistLineTextureFilename = twistLineTextureFilenameGui;
+    isTwistLineTextureLoaded = true;
+    reRender = true;
+    dirty = true;
+}
+
 bool LineDataFlow::renderGuiPropertyEditorNodes(sgl::PropertyEditor& propertyEditor) {
     bool shallReloadGatherShader = LineData::renderGuiPropertyEditorNodes(propertyEditor);
+
+    if (IGFD_DisplayDialog(
+            fileDialogInstance,
+            "ChooseTwistLineTexture", ImGuiWindowFlags_NoCollapse,
+            sgl::ImGuiWrapper::get()->getScaleDependentSize(1000, 580),
+            ImVec2(FLT_MAX, FLT_MAX))) {
+        if (IGFD_IsOk(fileDialogInstance)) {
+            std::string filePathName = IGFD_GetFilePathName(fileDialogInstance);
+            std::string filePath = IGFD_GetCurrentPath(fileDialogInstance);
+            std::string filter = IGFD_GetCurrentFilter(fileDialogInstance);
+            std::string userDatas;
+            if (IGFD_GetUserDatas(fileDialogInstance)) {
+                userDatas = std::string((const char*)IGFD_GetUserDatas(fileDialogInstance));
+            }
+            auto selection = IGFD_GetSelection(fileDialogInstance);
+
+            // Is this line data set or a volume data file for the scattering line tracer?
+            const char* currentPath = IGFD_GetCurrentPath(fileDialogInstance);
+            std::string filename = currentPath;
+            if (!filename.empty() && filename.back() != '/' && filename.back() != '\\') {
+                filename += "/";
+            }
+            filename += selection.table[0].fileName;
+            IGFD_Selection_DestroyContent(&selection);
+            if (currentPath) {
+                free((void*)currentPath);
+                currentPath = nullptr;
+            }
+
+            twistLineTextureFilenameGui = filename;
+            loadTwistLineTexture();
+            shallReloadGatherShader = true;
+            reRender = true;
+        }
+        IGFD_CloseDialog(fileDialogInstance);
+    }
 
     if (!useRotatingHelicityBands && getUseBandRendering()) {
         if (propertyEditor.addCheckbox("Render as Bands", &useRibbons)) {
@@ -105,15 +242,14 @@ bool LineDataFlow::renderGuiPropertyEditorNodes(sgl::PropertyEditor& propertyEdi
                     shallReloadGatherShader = true;
                 }
                 if (useRotatingHelicityBands) {
-                    if (propertyEditor.addSliderFloatEdit(
-                            "Helicity Factor", &helicityRotationFactor,
-                            0.0f, 2.0f) == ImGui::EditMode::INPUT_FINISHED) {
-                        dirty = true;
+                    if (propertyEditor.addSliderFloat(
+                            "Helicity Factor", &helicityRotationFactor, 0.0f, 2.0f)) {
+                        reRender = true;
                     }
                 }
             }
 
-            if (useRotatingHelicityBands && propertyEditor.addSliderInt(
+            if (useRotatingHelicityBands && !useTwistLineTexture && propertyEditor.addSliderInt(
                     "Band Subdivisions", reinterpret_cast<int*>(&numSubdivisionsBands),
                     2, 16)) {
                 reRender = true;
@@ -126,7 +262,47 @@ bool LineDataFlow::renderGuiPropertyEditorNodes(sgl::PropertyEditor& propertyEdi
                 shallReloadGatherShader = true;
             }
 
+            if (useRotatingHelicityBands && !useMultiVarRendering && propertyEditor.addCheckbox(
+                    "Use Twist Line Texture", &useTwistLineTexture)) {
+                if (isTwistLineTextureLoaded) {
+                    reRender = true;
+                    shallReloadGatherShader = true;
+                }
+            }
+
+            if (useRotatingHelicityBands && useTwistLineTexture) {
+                propertyEditor.addInputAction("Twist Line Texture", &twistLineTextureFilenameGui);
+                if (propertyEditor.addButton("", "Load")) {
+                    loadTwistLineTexture();
+                    shallReloadGatherShader = true;
+                    reRender = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Open from Disk...")) {
+                    IGFD_OpenModal(
+                            fileDialogInstance,
+                            "ChooseTwistLineTexture", "Choose a Twist Line Texture",
+                            ".*,.png",
+                            sgl::AppSettings::get()->getDataDirectory().c_str(),
+                            "", 1, nullptr,
+                            ImGuiFileDialogFlags_ConfirmOverwrite);
+                }
+                if (propertyEditor.addCombo(
+                        "Texture Filtering", &textureFilteringModeIndex,
+                        textureFilteringModeNames, IM_ARRAYSIZE(textureFilteringModeNames))) {
+                    loadTwistLineTexture();
+                    reRender = true;
+                }
+                if (propertyEditor.addSliderIntPowerOfTwo(
+                        "Max. Anisotropy", &maxAnisotropy, 1, 16)) {
+                    maxAnisotropy = std::clamp(maxAnisotropy, 1, maxSamplerAnisotropy);
+                    loadTwistLineTexture();
+                    reRender = true;
+                }
+            }
+
             if (propertyEditor.addCheckbox("Multi-Var Rendering", &useMultiVarRendering)) {
+                useTwistLineTexture = false;
                 dirty = true;
                 shallReloadGatherShader = true;
                 recomputeColorLegend();
@@ -167,7 +343,7 @@ bool LineDataFlow::renderGuiPropertyEditorNodes(sgl::PropertyEditor& propertyEdi
                         selectedAttributes.clear();
                         for (size_t varIdx = 0; varIdx < isAttributeSelectedArray.size(); ++varIdx) {
                             if (isAttributeSelectedArray.at(varIdx) != 0) {
-                                selectedAttributes.push_back(varIdx);
+                                selectedAttributes.push_back(uint32_t(varIdx));
                             }
                         }
                         recomputeWidgetPositions();
@@ -390,7 +566,7 @@ bool LineDataFlow::getIsSmallDataSet() const {
 bool LineDataFlow::setNewSettings(const SettingsMap& settings) {
     bool shallReloadGatherShader = LineData::setNewSettings(settings);
 
-    if (getUseBandRendering() && settings.getValueOpt("use_ribbons", useRibbons)) {
+    if (getUseBandRendering()) {
         if (settings.getValueOpt("use_ribbons", useRibbons)) {
             dirty = true;
         }
@@ -400,6 +576,7 @@ bool LineDataFlow::setNewSettings(const SettingsMap& settings) {
         }
 
         if (settings.getValueOpt("min_band_thickness", minBandThickness)) {
+            triangleRepresentationDirty = true;
             shallReloadGatherShader = true;
         }
 
@@ -410,17 +587,107 @@ bool LineDataFlow::setNewSettings(const SettingsMap& settings) {
             dirty = true;
             shallReloadGatherShader = true;
         }
+
         if (settings.getValueOpt("separator_width", separatorWidth)) {
             reRender = true;
         }
+
+        if (settings.getValueOpt("band_subdivisions", numSubdivisionsBands)) {
+            reRender = true;
+            setNumSubdivisionsManually = true;
+        }
+
         if (settings.getValueOpt("use_uniform_twist_line_width", useUniformTwistLineWidth)) {
             shallReloadGatherShader = true;
         }
+
+        if (settings.getValueOpt("helicity_rotation_factor", helicityRotationFactor)) {
+            reRender = true;
+        }
+
+        if (settings.getValueOpt("use_twist_line_texture", useTwistLineTexture)) {
+            if (isTwistLineTextureLoaded) {
+                reRender = true;
+                shallReloadGatherShader = true;
+            }
+        }
+
+        if (settings.getValueOpt("twist_line_texture", twistLineTextureFilenameGui)) {
+            loadTwistLineTexture();
+            shallReloadGatherShader = true;
+            reRender = true;
+        }
+
+        std::string textureFilteringModeName;
+        if (settings.getValueOpt("twist_line_texture_filtering_mode", textureFilteringModeName)) {
+            int i;
+            for (i = 0; i < IM_ARRAYSIZE(textureFilteringModeNames); i++) {
+                if (textureFilteringModeNames[i] == textureFilteringModeName) {
+                    textureFilteringModeIndex = i;
+                    break;
+                }
+            }
+            if (i != IM_ARRAYSIZE(textureFilteringModeNames)) {
+                loadTwistLineTexture();
+                reRender = true;
+            } else {
+                sgl::Logfile::get()->writeError(
+                        "Error in LineDataFlow::setNewSettings: Invalid texture filtering mode name \""
+                        + textureFilteringModeName + "\".");
+            }
+
+            loadTwistLineTexture();
+            reRender = true;
+        }
+
+        if (settings.getValueOpt("twist_line_texture_filtering_mode_index", textureFilteringModeIndex)) {
+            if (textureFilteringModeIndex < 0 || textureFilteringModeIndex >= IM_ARRAYSIZE(textureFilteringModeNames)) {
+                sgl::Logfile::get()->writeError(
+                        "Error in LineDataFlow::setNewSettings: Invalid texture filtering mode index \""
+                        + std::to_string(textureFilteringModeIndex) + "\".");
+            }
+            loadTwistLineTexture();
+            reRender = true;
+        }
+
+        if (settings.getValueOpt("twist_line_texture_max_anisotropy", maxAnisotropy)) {
+            maxAnisotropy = std::clamp(maxAnisotropy, 1, maxSamplerAnisotropy);
+            loadTwistLineTexture();
+            reRender = true;
+        }
+
         if (settings.getValueOpt("use_multi_var_rendering", useMultiVarRendering)) {
             dirty = true;
             shallReloadGatherShader = true;
             recomputeColorLegend();
             recomputeWidgetPositions();
+        }
+
+        std::string variablesString;
+        if (settings.getValueOpt("selected_multi_vars_string", variablesString)) {
+            std::vector<std::string> variableNameArray;
+            std::unordered_set<std::string> variableNameSet;
+            sgl::splitString(variablesString, ',', variableNameArray);
+            for (const std::string& varName : variableNameArray) {
+                variableNameSet.insert(varName);
+            }
+            for (unsigned int& isAttributeSelected : isAttributeSelectedArray) {
+                isAttributeSelected = 0;
+            }
+            selectedAttributes.clear();
+            comboValue = "";
+            for (size_t varIdx = 0; varIdx < attributeNames.size(); varIdx++) {
+                if (variableNameSet.find(attributeNames.at(varIdx)) != variableNameSet.end()) {
+                    isAttributeSelectedArray.at(varIdx) = 1;
+                    selectedAttributes.push_back(uint32_t(varIdx));
+                    if (!comboValue.empty()) {
+                        comboValue += ',';
+                    }
+                    comboValue += attributeNames.at(varIdx);
+                }
+            }
+            recomputeWidgetPositions();
+            reRender = true;
         }
     }
 
@@ -685,12 +952,17 @@ void LineDataFlow::setVulkanRenderDataDescriptors(const sgl::vk::RenderDataPtr& 
                     multiVarTransferFunctionWindow.getMinMaxSsboVulkan(), "MinMaxBuffer");
         }
     }
+
+    if (useRotatingHelicityBands && useTwistLineTexture && isTwistLineTextureLoaded) {
+        renderData->setStaticTextureOptional(twistLineTexture, "helicityBandsTexture");
+    }
 }
 
 void LineDataFlow::updateVulkanUniformBuffers(LineRenderer* lineRenderer, sgl::vk::Renderer* renderer) {
     if (useMultiVarRendering || useRotatingHelicityBands) {
         lineUniformData.numSubdivisionsBands = numSubdivisionsBands;
         lineUniformData.separatorBaseWidth = separatorWidth;
+        lineUniformData.helicityRotationFactor = helicityRotationFactor;
     }
 
     LineData::updateVulkanUniformBuffers(lineRenderer, renderer);
@@ -1010,7 +1282,7 @@ void LineDataFlow::getLinePassTubeRenderDataGeneral(
                 if (j < trajectory.positions.size() - 1) {
                     lineSegmentLength = glm::length(trajectory.positions.at(j + 1) - trajectory.positions.at(j));
                 }
-                rotation += helicities.at(j) / maxHelicity * sgl::PI * helicityRotationFactor * lineSegmentLength / 0.005f;
+                rotation += helicities.at(j) / maxHelicity * sgl::PI * lineSegmentLength / 0.005f;
             }
         }
 
@@ -1157,6 +1429,10 @@ void LineDataFlow::getLinePassTubeRenderDataGeneral(
 
 LinePassTubeRenderData LineDataFlow::getLinePassTubeRenderData() {
     rebuildInternalRepresentationIfNecessary();
+    if (cachedRenderDataProgrammablePull.indexBuffer) {
+        return cachedRenderDataGeometryShader;
+    }
+    removeOtherCachedDataTypes(RequestMode::GEOMETRY_SHADER);
 
     std::vector<uint32_t> lineIndices;
     std::vector<glm::vec3> vertexPositions;
@@ -1262,11 +1538,16 @@ LinePassTubeRenderData LineDataFlow::getLinePassTubeRenderData() {
                 VMA_MEMORY_USAGE_GPU_ONLY);
     }
 
+    cachedRenderDataGeometryShader = tubeRenderData;
     return tubeRenderData;
 }
 
 LinePassTubeRenderDataMeshShader LineDataFlow::getLinePassTubeRenderDataMeshShader() {
     rebuildInternalRepresentationIfNecessary();
+    if (cachedRenderDataMeshShader.meshletDataBuffer) {
+        return cachedRenderDataMeshShader;
+    }
+    removeOtherCachedDataTypes(RequestMode::MESH_SHADER);
 
     // We can emit a maximum of 64 vertices/primitives from the mesh shader.
     int numLineSegmentsPerMeshlet = 64 / tubeNumSubdivisions - 1;
@@ -1348,11 +1629,17 @@ LinePassTubeRenderDataMeshShader LineDataFlow::getLinePassTubeRenderDataMeshShad
                 VMA_MEMORY_USAGE_GPU_ONLY);
     }
 
+    cachedRenderDataMeshShader = renderData;
+    cachedTubeNumSubdivisions = tubeNumSubdivisions;
     return renderData;
 }
 
 LinePassTubeRenderDataProgrammablePull LineDataFlow::getLinePassTubeRenderDataProgrammablePull() {
     rebuildInternalRepresentationIfNecessary();
+    if (cachedRenderDataProgrammablePull.indexBuffer) {
+        return cachedRenderDataProgrammablePull;
+    }
+    removeOtherCachedDataTypes(RequestMode::PROGRAMMABLE_PULL);
 
     std::vector<uint32_t> triangleIndices;
     std::vector<LinePointDataUnified> linePoints;
@@ -1420,7 +1707,7 @@ LinePassTubeRenderDataProgrammablePull LineDataFlow::getLinePassTubeRenderDataPr
     // Add the index buffer.
     renderData.indexBuffer = std::make_shared<sgl::vk::Buffer>(
             device, triangleIndices.size() * sizeof(uint32_t), triangleIndices.data(),
-            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VMA_MEMORY_USAGE_GPU_ONLY);
 
     // Add the line point data buffer.
@@ -1436,6 +1723,8 @@ LinePassTubeRenderDataProgrammablePull LineDataFlow::getLinePassTubeRenderDataPr
                 VMA_MEMORY_USAGE_GPU_ONLY);
     }
 
+    cachedRenderDataProgrammablePull = renderData;
+    cachedTubeNumSubdivisions = tubeNumSubdivisions;
     return renderData;
 }
 
@@ -1602,11 +1891,24 @@ LinePassQuadsRenderData LineDataFlow::getLinePassQuadsRenderData() {
 }
 
 
-TubeTriangleRenderData LineDataFlow::getLinePassTubeTriangleMeshRenderData(bool isRasterizer, bool vulkanRayTracing) {
+TubeTriangleRenderData LineDataFlow::getLinePassTubeTriangleMeshRenderDataPayload(
+        bool isRasterizer, bool vulkanRayTracing, TubeTriangleRenderDataPayloadPtr& payload) {
     rebuildInternalRepresentationIfNecessary();
-    if (vulkanTubeTriangleRenderData.vertexBuffer && vulkanTubeTriangleRenderDataIsRayTracing == vulkanRayTracing) {
-        return vulkanTubeTriangleRenderData;
+    bool payloadCompatible = true;
+    if (payload && cachedTubeTriangleRenderDataPayload) {
+        payloadCompatible = payload->settingsEqual(cachedTubeTriangleRenderDataPayload.get());
+    } else if (payload && !cachedTubeTriangleRenderDataPayload) {
+        payloadCompatible = false;
     }
+    if (cachedTubeTriangleRenderData.vertexBuffer && cachedTubeTriangleRenderDataIsRayTracing == vulkanRayTracing
+            && payloadCompatible) {
+        if (cachedTubeTriangleRenderDataPayload) {
+            payload = cachedTubeTriangleRenderDataPayload;
+        }
+        return cachedTubeTriangleRenderData;
+    }
+    removeOtherCachedDataTypes(RequestMode::TRIANGLES);
+    cachedTubeTriangleRenderDataPayload = payload;
 
     std::vector<std::vector<glm::vec3>> lineCentersList;
 
@@ -1704,7 +2006,7 @@ TubeTriangleRenderData LineDataFlow::getLinePassTubeTriangleMeshRenderData(bool 
                             - trajectory.positions.at(linePointReference.linePointIndex));
                 }
             }
-            rotation += helicity / maxHelicity * sgl::PI * helicityRotationFactor * lineSegmentLength / 0.005f;
+            rotation += helicity / maxHelicity * sgl::PI * lineSegmentLength / 0.005f;
         }
 
         if (useMultiVarRendering) {
@@ -1717,47 +2019,51 @@ TubeTriangleRenderData LineDataFlow::getLinePassTubeTriangleMeshRenderData(bool 
 
 
     sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
-    vulkanTubeTriangleRenderData = {};
-    vulkanTubeTriangleRenderDataIsRayTracing = vulkanRayTracing;
+    cachedTubeTriangleRenderData = {};
+    cachedTubeTriangleRenderDataIsRayTracing = vulkanRayTracing;
 
     if (tubeTriangleIndices.empty()) {
-        return vulkanTubeTriangleRenderData;
+        return cachedTubeTriangleRenderData;
     }
 
     if (generateSplitTriangleData) {
         splitTriangleIndices(tubeTriangleIndices, tubeTriangleVertexDataList);
     }
+    if (payload) {
+        payload->createPayloadPre(
+                device, tubeTriangleIndices, tubeTriangleVertexDataList, tubeTriangleLinePointDataList);
+    }
 
     uint32_t indexBufferFlags =
-            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     uint32_t vertexBufferFlags =
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     if (vulkanRayTracing) {
         indexBufferFlags |=
-                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
                 | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
         vertexBufferFlags |=
                 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
                 | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
     }
 
-    vulkanTubeTriangleRenderData.indexBuffer = std::make_shared<sgl::vk::Buffer>(
+    cachedTubeTriangleRenderData.indexBuffer = std::make_shared<sgl::vk::Buffer>(
             device, tubeTriangleIndices.size() * sizeof(uint32_t), tubeTriangleIndices.data(),
             indexBufferFlags, VMA_MEMORY_USAGE_GPU_ONLY);
 
-    vulkanTubeTriangleRenderData.vertexBuffer = std::make_shared<sgl::vk::Buffer>(
+    cachedTubeTriangleRenderData.vertexBuffer = std::make_shared<sgl::vk::Buffer>(
             device, tubeTriangleVertexDataList.size() * sizeof(TubeTriangleVertexData),
             tubeTriangleVertexDataList.data(),
             vertexBufferFlags, VMA_MEMORY_USAGE_GPU_ONLY);
 
-    vulkanTubeTriangleRenderData.linePointDataBuffer = std::make_shared<sgl::vk::Buffer>(
+    cachedTubeTriangleRenderData.linePointDataBuffer = std::make_shared<sgl::vk::Buffer>(
             device, tubeTriangleLinePointDataList.size() * sizeof(LinePointDataUnified),
             tubeTriangleLinePointDataList.data(),
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
             VMA_MEMORY_USAGE_GPU_ONLY);
 
     if (useMultiVarRendering) {
-        vulkanTubeTriangleRenderData.multiVarAttributeDataBuffer = std::make_shared<sgl::vk::Buffer>(
+        cachedTubeTriangleRenderData.multiVarAttributeDataBuffer = std::make_shared<sgl::vk::Buffer>(
                 device, multiVarAttributeData.size() * sizeof(float), multiVarAttributeData.data(),
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 VMA_MEMORY_USAGE_GPU_ONLY);
@@ -1770,21 +2076,26 @@ TubeTriangleRenderData LineDataFlow::getLinePassTubeTriangleMeshRenderData(bool 
             instanceTriangleIndexOffsets.push_back(batchIndexBufferOffset);
             batchIndexBufferOffset += uint32_t(batchNumIndices) / 3u;
         }
-        vulkanTubeTriangleRenderData.instanceTriangleIndexOffsetBuffer = std::make_shared<sgl::vk::Buffer>(
+        cachedTubeTriangleRenderData.instanceTriangleIndexOffsetBuffer = std::make_shared<sgl::vk::Buffer>(
                 device, instanceTriangleIndexOffsets.size() * sizeof(uint32_t),
                 instanceTriangleIndexOffsets.data(),
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                 VMA_MEMORY_USAGE_GPU_ONLY);
     }
 
-    return vulkanTubeTriangleRenderData;
+    if (payload) {
+        payload->createPayloadPost(device, cachedTubeTriangleRenderData);
+    }
+
+    return cachedTubeTriangleRenderData;
 }
 
 TubeAabbRenderData LineDataFlow::getLinePassTubeAabbRenderData(bool isRasterizer) {
     rebuildInternalRepresentationIfNecessary();
-    if (vulkanTubeAabbRenderData.indexBuffer) {
-        return vulkanTubeAabbRenderData;
+    if (cachedTubeAabbRenderData.indexBuffer) {
+        return cachedTubeAabbRenderData;
     }
+    removeOtherCachedDataTypes(RequestMode::AABBS);
 
     glm::vec3 lineWidthOffset(LineRenderer::getLineWidth() * 0.5f);
 
@@ -1851,7 +2162,7 @@ TubeAabbRenderData LineDataFlow::getLinePassTubeAabbRenderData(bool isRasterizer
                 if (i < trajectory.positions.size() - 1) {
                     lineSegmentLength = glm::length(trajectory.positions.at(i + 1) - trajectory.positions.at(i));
                 }
-                rotation += helicity / maxHelicity * sgl::PI * helicityRotationFactor * lineSegmentLength / 0.005f;
+                rotation += helicity / maxHelicity * sgl::PI * lineSegmentLength / 0.005f;
             }
             tubeLinePointDataList.push_back(linePointData);
 
@@ -1894,10 +2205,10 @@ TubeAabbRenderData LineDataFlow::getLinePassTubeAabbRenderData(bool isRasterizer
     }
 
     sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
-    vulkanTubeAabbRenderData = {};
+    cachedTubeAabbRenderData = {};
 
     if (lineSegmentPointIndices.empty()) {
-        return vulkanTubeAabbRenderData;
+        return cachedTubeAabbRenderData;
     }
 
     uint32_t indexBufferFlags =
@@ -1909,15 +2220,15 @@ TubeAabbRenderData LineDataFlow::getLinePassTubeAabbRenderData(bool isRasterizer
             | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
             | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
-    vulkanTubeAabbRenderData.indexBuffer = std::make_shared<sgl::vk::Buffer>(
+    cachedTubeAabbRenderData.indexBuffer = std::make_shared<sgl::vk::Buffer>(
             device, lineSegmentPointIndices.size() * sizeof(uint32_t), lineSegmentPointIndices.data(),
             indexBufferFlags, VMA_MEMORY_USAGE_GPU_ONLY);
 
-    vulkanTubeAabbRenderData.aabbBuffer = std::make_shared<sgl::vk::Buffer>(
+    cachedTubeAabbRenderData.aabbBuffer = std::make_shared<sgl::vk::Buffer>(
             device, lineSegmentAabbs.size() * sizeof(VkAabbPositionsKHR), lineSegmentAabbs.data(),
             vertexBufferFlags, VMA_MEMORY_USAGE_GPU_ONLY);
 
-    vulkanTubeAabbRenderData.linePointDataBuffer = std::make_shared<sgl::vk::Buffer>(
+    cachedTubeAabbRenderData.linePointDataBuffer = std::make_shared<sgl::vk::Buffer>(
             device, tubeLinePointDataList.size() * sizeof(LinePointDataUnified),
             tubeLinePointDataList.data(),
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
@@ -1925,13 +2236,13 @@ TubeAabbRenderData LineDataFlow::getLinePassTubeAabbRenderData(bool isRasterizer
             VMA_MEMORY_USAGE_GPU_ONLY);
 
     if (useMultiVarRendering) {
-        vulkanTubeTriangleRenderData.multiVarAttributeDataBuffer = std::make_shared<sgl::vk::Buffer>(
+        cachedTubeTriangleRenderData.multiVarAttributeDataBuffer = std::make_shared<sgl::vk::Buffer>(
                 device, multiVarAttributeData.size() * sizeof(float), multiVarAttributeData.data(),
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 VMA_MEMORY_USAGE_GPU_ONLY);
     }
 
-    return vulkanTubeAabbRenderData;
+    return cachedTubeAabbRenderData;
 }
 
 void LineDataFlow::getVulkanShaderPreprocessorDefines(
@@ -1950,6 +2261,9 @@ void LineDataFlow::getVulkanShaderPreprocessorDefines(
         preprocessorDefines.insert(std::make_pair("USE_ROTATING_HELICITY_BANDS", ""));
         if (useUniformTwistLineWidth) {
             preprocessorDefines.insert(std::make_pair("UNIFORM_HELICITY_BAND_WIDTH", ""));
+        }
+        if (useTwistLineTexture && isTwistLineTextureLoaded) {
+            preprocessorDefines.insert({ "USE_HELICITY_BANDS_TEXTURE", "" });
         }
     }
     bool isQuadsMode =

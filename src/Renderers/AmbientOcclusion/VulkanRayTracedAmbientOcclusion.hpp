@@ -87,6 +87,8 @@ public:
     /// Called when the resolution of the application window has changed.
     void onResolutionChanged() override;
 
+    bool setNewSettings(const SettingsMap& settings) override;
+
     /// Returns whether the baking process was re-run.
     bool renderGuiPropertyEditorNodes(sgl::PropertyEditor& propertyEditor) override;
 
@@ -107,12 +109,14 @@ private:
 class VulkanRayTracedAmbientOcclusionPass : public sgl::vk::ComputePass {
     friend class VulkanRayTracedAmbientOcclusion;
 public:
-    explicit VulkanRayTracedAmbientOcclusionPass(SceneData* sceneData, sgl::vk::Renderer* renderer);
+    VulkanRayTracedAmbientOcclusionPass(
+            SceneData* sceneData, sgl::vk::Renderer* renderer, std::function<void()> onHasMovedCallback);
 
     // Public interface.
     void recreateSwapchain(uint32_t width, uint32_t height) override;
     void setLineData(LineDataPtr& data, bool isNewData);
     inline void setFrameNumber(uint32_t frameNumber) { uniformData.frameNumber = frameNumber; }
+    void setFileDialogInstance(ImGuiFileDialog* _fileDialogInstance);
 
     sgl::vk::TexturePtr getAmbientOcclusionTextureVk() { return resultTexture; }
 
@@ -120,6 +124,8 @@ public:
     void onHasMoved();
     /// Returns if the data needs to be re-rendered, but the visualization mapping is valid.
     virtual bool needsReRender() { bool tmp = reRender; reRender = false; return tmp; }
+    /// Similar to @see renderGuiPropertyEditorNodes, but it is called when settings are changed programmatically.
+    virtual bool setNewSettings(const SettingsMap& settings);
     /// Renders the GUI. The "reRender" flag might be set depending on the user's actions.
     virtual bool renderGuiPropertyEditorNodes(sgl::PropertyEditor& propertyEditor);
 
@@ -128,10 +134,14 @@ private:
     void setComputePipelineInfo(sgl::vk::ComputePipelineInfo& pipelineInfo) override;
     void createComputeData(sgl::vk::Renderer* renderer, sgl::vk::ComputePipelinePtr& computePipeline) override;
     void _render() override;
+    void recreateFeatureMaps();
+    void checkRecreateFeatureMaps();
 
     SceneData* sceneData;
     bool reRender = true;
     LineDataPtr lineData;
+    std::function<void()> onHasMovedParent;
+    ImGuiFileDialog* fileDialogInstance = nullptr;
 
     // Resolution of the ambient occlusion data.
     uint32_t numAmbientOcclusionSamplesPerFrame = 4;
@@ -141,6 +151,11 @@ private:
     uint32_t lastViewportWidth = 0, lastViewportHeight = 0;
 
     sgl::vk::TexturePtr accumulationTexture;
+    sgl::vk::TexturePtr normalMapTexture;
+    sgl::vk::TexturePtr depthMapTexture;
+    sgl::vk::TexturePtr positionMapTexture;
+    sgl::vk::TexturePtr albedoTexture;
+    sgl::vk::TexturePtr flowMapTexture;
     sgl::vk::TexturePtr denoisedTexture;
     sgl::vk::TexturePtr resultTexture;
 
@@ -157,11 +172,15 @@ private:
     DenoiserType denoiserType = DenoiserType::NONE;
     bool useDenoiser = true;
     std::shared_ptr<Denoiser> denoiser;
+    glm::mat4 lastFrameViewProjectionMatrix;
 
     // Uniform buffer object storing the camera settings.
     struct UniformData {
+        glm::mat4 viewMatrix;
         glm::mat4 inverseViewMatrix;
         glm::mat4 inverseProjectionMatrix;
+        glm::mat4 inverseTransposedViewMatrix;
+        glm::mat4 lastFrameViewProjectionMatrix;
 
         // The number of this frame (used for accumulation of samples across frames).
         uint32_t frameNumber{};

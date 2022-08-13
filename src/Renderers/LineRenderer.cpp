@@ -98,7 +98,8 @@ bool LineRenderer::needsReRender() {
 bool LineRenderer::getIsTriangleRepresentationUsed() const {
     bool primitiveModeUsesTriMesh =
             lineData->getLinePrimitiveMode() == LineData::LINE_PRIMITIVES_TUBE_TRIANGLE_MESH
-            || lineData->getLinePrimitiveMode() == LineData::LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH;
+            || lineData->getLinePrimitiveMode() == LineData::LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH
+            || getRenderingMode() == RENDERING_MODE_DEFERRED_SHADING;
     return (lineData && primitiveModeUsesTriMesh) || (useAmbientOcclusion && ambientOcclusionBaker);
 }
 
@@ -117,6 +118,8 @@ void LineRenderer::getVulkanShaderPreprocessorDefines(std::map<std::string, std:
     if (useDepthCues) {
         preprocessorDefines.insert(std::make_pair("USE_DEPTH_CUES", ""));
         preprocessorDefines.insert(std::make_pair("COMPUTE_DEPTH_CUES_GPU", ""));
+    }
+    if (useDepthCues || (useAmbientOcclusion && ambientOcclusionBaker)) {
         preprocessorDefines.insert(std::make_pair("USE_SCREEN_SPACE_POSITION", ""));
     }
     if (useAmbientOcclusion && ambientOcclusionBaker) {
@@ -397,11 +400,17 @@ void LineRenderer::computeDepthRange() {
 bool LineRenderer::setNewSettings(const SettingsMap& settings) {
     bool shallReloadGatherShader = false;
 
-    if (settings.getValueOpt("line_width", lineWidth) && lineData) {
-        lineData->setTriangleRepresentationDirty();
+    float newLineWidth = lineWidth;
+    if (settings.getValueOpt("line_width", lineWidth)) {
+        if (newLineWidth != lineWidth && lineData) {
+            lineData->setTriangleRepresentationDirty();
+        }
     }
-    if (settings.getValueOpt("band_width", bandWidth) && lineData) {
-        lineData->setTriangleRepresentationDirty();
+    float newBandWidth = bandWidth;
+    if (settings.getValueOpt("band_width", bandWidth)) {
+        if (newBandWidth != bandWidth && lineData) {
+            lineData->setTriangleRepresentationDirty();
+        }
     }
 
     if (settings.getValueOpt("depth_cue_strength", depthCueStrength)) {
@@ -432,6 +441,10 @@ bool LineRenderer::setNewSettings(const SettingsMap& settings) {
 
     if (settings.getValueOpt("ambient_occlusion_gamma", ambientOcclusionGamma)) {
         reRender = false;
+    }
+
+    if (ambientOcclusionBaker) {
+        ambientOcclusionBaker->setNewSettings(settings);
     }
 
     return shallReloadGatherShader;
@@ -629,30 +642,11 @@ void LineRenderer::reloadGatherShader() {
             hullRasterPass->setShaderDirty();
         }
     }
-
-    // TODO
-    //hullRasterPass->setShaderDirty();
-
-    /*if (lineData && lineData->hasSimulationMeshOutline() && !isVulkanRenderer) {
-        gatherShaderHull = lineData->reloadGatherShaderHull();
-        if (canCopyShaderAttributes && shaderAttributesHull) {
-            shaderAttributesHull = shaderAttributesHull->copy(gatherShaderHull);
-        }
-    }*/
 }
 
 void LineRenderer::renderHull() {
     if (lineData && lineData->hasSimulationMeshOutline() && lineData->getShallRenderSimulationMeshBoundary()) {
         hullRasterPass->render();
-        /*if (!gatherShaderHull) {
-            reloadGatherShader();
-            shaderAttributesHull = lineData->getGatherShaderAttributesHull(gatherShaderHull);
-        }
-        lineData->setUniformGatherShaderDataHull_Pass(gatherShaderHull);
-        gatherShaderHull->setUniformOptional("cameraPosition", sceneData->camera->getPosition());
-        glDisable(GL_CULL_FACE);
-        sgl::Renderer->render(shaderAttributesHull);
-        glEnable(GL_CULL_FACE);*/
     }
 }
 

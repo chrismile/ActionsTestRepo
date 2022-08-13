@@ -70,7 +70,7 @@ public:
             std::string windowName, SceneData* sceneData, sgl::TransferFunctionWindow& transferFunctionWindow);
     virtual void initialize();
     virtual ~LineRenderer();
-    virtual RenderingMode getRenderingMode()=0;
+    [[nodiscard]] virtual RenderingMode getRenderingMode() const = 0;
     virtual bool getIsTransparencyUsed() { return true; }
 
     /// Returns if the visualization mapping needs to be re-generated.
@@ -84,6 +84,8 @@ public:
     /// Returns whether live visualization mapping updates can be used or whether the data set is too large.
     [[nodiscard]] virtual bool getCanUseLiveUpdate(LineDataAccessType accessType) const;
     [[nodiscard]] inline bool getIsRasterizer() const { return isRasterizer; }
+    // Returns true when the renderer uses a triangle mesh internally even when a different mapping is selected.
+    [[nodiscard]] virtual bool getUsesTriangleMeshInternally() const { return false; }
 
     /**
      * Re-generates the visualization mapping.
@@ -132,6 +134,8 @@ public:
      */
     virtual void setUseLinearRGB(bool useLinearRGB) {}
     virtual void setFileDialogInstance(ImGuiFileDialog* fileDialogInstance) {}
+    /// Returns the integer resolution scaling factor used internally by the renderer.
+    [[nodiscard]] virtual int getResolutionIntegerScalingFactor() const { return 1; }
 
     /**
      * Called when whether the simulation mesh hull should be rendered might have changed.
@@ -153,6 +157,7 @@ public:
 
     inline const std::string& getWindowName() { return windowName; }
     [[nodiscard]] inline SceneData* getSceneData() const { return sceneData; }
+    [[nodiscard]] inline const LineDataPtr& getLineData() const { return lineData; }
     [[nodiscard]] inline bool getHasLineData() const { return lineData.get() != nullptr; }
 
     // Tiling mode.

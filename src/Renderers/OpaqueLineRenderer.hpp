@@ -41,7 +41,7 @@ class OpaqueLineRenderer : public LineRenderer {
 public:
     OpaqueLineRenderer(SceneData* sceneData, sgl::TransferFunctionWindow& transferFunctionWindow);
     ~OpaqueLineRenderer() override = default;
-    RenderingMode getRenderingMode() override { return RENDERING_MODE_ALL_LINES_OPAQUE; }
+    [[nodiscard]] RenderingMode getRenderingMode() const override { return RENDERING_MODE_ALL_LINES_OPAQUE; }
     bool getIsTransparencyUsed() override { return false; }
 
     /**
@@ -69,6 +69,7 @@ public:
 
     /// For changing performance measurement modes.
     void setNewState(const InternalState& newState) override;
+    bool setNewSettings(const SettingsMap& settings) override;
 
     /// For visualizing the seeding order in an animation (called by MainApp).
     void setVisualizeSeedingProcess(bool visualizeSeeding) override;

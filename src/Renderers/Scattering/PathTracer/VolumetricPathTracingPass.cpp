@@ -95,7 +95,10 @@ VolumetricPathTracingPass::~VolumetricPathTracingPass() {
 }
 
 void VolumetricPathTracingPass::createDenoiser() {
-    denoiser = createDenoiserObject(denoiserType, renderer);
+    denoiser = createDenoiserObject(denoiserType, renderer, DenoisingMode::VOLUMETRIC_PATH_TRACING);
+    if (denoiser) {
+        denoiser->setFileDialogInstance(fileDialogInstance);
+    }
 
     if (resultImageTexture) {
         setDenoiserFeatureMaps();
@@ -119,7 +122,7 @@ void VolumetricPathTracingPass::setOutputImage(sgl::vk::ImageViewPtr& imageView)
     resultTexture = std::make_shared<sgl::vk::Texture>(
             resultImageView, sgl::vk::ImageSamplerSettings());
     imageSettings.usage =
-            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT
             | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     denoisedImageView = std::make_shared<sgl::vk::ImageView>(
             std::make_shared<sgl::vk::Image>(device, imageSettings));
@@ -144,10 +147,37 @@ void VolumetricPathTracingPass::setOutputImage(sgl::vk::ImageViewPtr& imageView)
 
 void VolumetricPathTracingPass::setDenoiserFeatureMaps() {
     if (denoiser) {
-        denoiser->setFeatureMap("color", resultImageTexture);
-        denoiser->setFeatureMap("position", firstXTexture);
-        denoiser->setFeatureMap("normal", firstWTexture);
+        if (denoiser->getUseFeatureMap(FeatureMapType::COLOR)) {
+            denoiser->setFeatureMap(FeatureMapType::COLOR, resultImageTexture);
+        }
+        if (denoiser->getUseFeatureMap(FeatureMapType::POSITION)) {
+            denoiser->setFeatureMap(FeatureMapType::POSITION, firstXTexture);
+        }
+        if (denoiser->getUseFeatureMap(FeatureMapType::NORMAL)) {
+            denoiser->setFeatureMap(FeatureMapType::NORMAL, firstWTexture);
+        }
         denoiser->setOutputImage(denoisedImageView);
+
+        featureMapUsedArray.resize(IM_ARRAYSIZE(FEATURE_MAP_NAMES));
+        for (int i = 0; i < IM_ARRAYSIZE(FEATURE_MAP_NAMES); i++) {
+            featureMapUsedArray.at(i) = denoiser->getUseFeatureMap(FeatureMapType(i));
+        }
+    }
+}
+
+void VolumetricPathTracingPass::checkResetDenoiserFeatureMaps() {
+    bool shallResetFeatureMaps = false;
+    if (denoiser) {
+        for (int i = 0; i < IM_ARRAYSIZE(FEATURE_MAP_NAMES); i++) {
+            if (denoiser->getUseFeatureMap(FeatureMapType(i)) != featureMapUsedArray.at(i)) {
+                shallResetFeatureMaps = true;
+            }
+        }
+    }
+
+    if (shallResetFeatureMaps) {
+        setDenoiserFeatureMaps();
+        //changedDenoiserSettings = false;
     }
 }
 
@@ -286,8 +316,8 @@ void VolumetricPathTracingPass::setUseLinearRGB(bool useLinearRGB) {
     setShaderDirty();
 }
 
-void VolumetricPathTracingPass::setFileDialogInstance(ImGuiFileDialog* fileDialogInstance) {
-    this->fileDialogInstance = fileDialogInstance;
+void VolumetricPathTracingPass::setFileDialogInstance(ImGuiFileDialog* _fileDialogInstance) {
+    this->fileDialogInstance = _fileDialogInstance;
 }
 
 void VolumetricPathTracingPass::onHasMoved() {
@@ -413,6 +443,13 @@ void VolumetricPathTracingPass::loadShader() {
         customPreprocessorDefines.insert({ "USE_DELTA_TRACKING", "" });
     } else if (vptMode == VptMode::SPECTRAL_DELTA_TRACKING) {
         customPreprocessorDefines.insert({ "USE_SPECTRAL_DELTA_TRACKING", "" });
+        if (sdtCollisionProbability == SpectralDeltaTrackingCollisionProbability::MAX_BASED) {
+            customPreprocessorDefines.insert({ "MAX_BASED_PROBABILITY", "" });
+        } else if (sdtCollisionProbability == SpectralDeltaTrackingCollisionProbability::AVG_BASED) {
+            customPreprocessorDefines.insert({ "AVG_BASED_PROBABILITY", "" });
+        } else { // SpectralDeltaTrackingCollisionProbability::PATH_HISTORY_AVG_BASED
+            customPreprocessorDefines.insert({ "PATH_HISTORY_AVG_BASED_PROBABILITY", "" });
+        }
     } else if (vptMode == VptMode::RATIO_TRACKING) {
         customPreprocessorDefines.insert({ "USE_RATIO_TRACKING", "" });
     } else if (vptMode == VptMode::RESIDUAL_RATIO_TRACKING) {
@@ -604,7 +641,7 @@ void VolumetricPathTracingPass::_render() {
     changedDenoiserSettings = false;
     timerStopped = false;
 
-    if (featureMapType == FeatureMapType::RESULT) {
+    if (featureMapType == FeatureMapTypeVpt::RESULT) {
         if (useDenoiser && denoiser && denoiser->getIsEnabled()) {
             denoiser->denoise();
             renderer->transitionImageLayout(
@@ -614,37 +651,29 @@ void VolumetricPathTracingPass::_render() {
             denoisedImageView->getImage()->blit(
                     sceneImageView->getImage(), renderer->getVkCommandBuffer());
         } else {
-            renderer->transitionImageLayout(
-                    resultImageView->getImage(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            blitResultRenderPass->render();
             /*renderer->transitionImageLayout(
-                     resultImageView->getImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-             renderer->transitionImageLayout(
-                     sceneImageView->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-             resultImageView->getImage()->blit(
-                     sceneImageView->getImage(), renderer->getVkCommandBuffer());*/
+                    resultImageView->getImage(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            blitResultRenderPass->render();*/
+            renderer->transitionImageLayout(
+                    resultImageView->getImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            renderer->transitionImageLayout(
+                    sceneImageView->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            resultImageView->getImage()->blit(
+                    sceneImageView->getImage(), renderer->getVkCommandBuffer());
         }
-    } else if (featureMapType == FeatureMapType::FIRST_X) {
+    } else if (featureMapType == FeatureMapTypeVpt::FIRST_X) {
         renderer->transitionImageLayout(firstXTexture->getImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         renderer->transitionImageLayout(sceneImageView->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         firstXTexture->getImage()->blit(sceneImageView->getImage(), renderer->getVkCommandBuffer());
-    } else if (featureMapType == FeatureMapType::FIRST_W) {
+    } else if (featureMapType == FeatureMapTypeVpt::FIRST_W) {
         renderer->transitionImageLayout(firstWTexture->getImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         renderer->transitionImageLayout(sceneImageView->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         firstWTexture->getImage()->blit(sceneImageView->getImage(), renderer->getVkCommandBuffer());
-    } else if (featureMapType == FeatureMapType::PRIMARY_RAY_ABSORPTION_MOMENTS) {
+    } else if (featureMapType == FeatureMapTypeVpt::PRIMARY_RAY_ABSORPTION_MOMENTS) {
         blitPrimaryRayMomentTexturePass->render();
-    } else if (featureMapType == FeatureMapType::SCATTER_RAY_ABSORPTION_MOMENTS) {
+    } else if (featureMapType == FeatureMapTypeVpt::SCATTER_RAY_ABSORPTION_MOMENTS) {
         blitScatterRayMomentTexturePass->render();
     }
-
-    /*renderer->transitionImageLayout(
-            sceneImageView->getImage(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);*/
-    /*renderer->insertImageMemoryBarrier(
-            sceneImageView->getImage(),
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);*/
 
     if (!reachedTarget) {
         accumulationTimer->endGPU(eventName);
@@ -727,22 +756,33 @@ bool VolumetricPathTracingPass::renderGuiPropertyEditorNodes(sgl::PropertyEditor
             optionChanged = true;
         }
         if (propertyEditor.addCombo(
-                "Feature Map", (int*)&featureMapType, FEATURE_MAP_NAMES,
-                IM_ARRAYSIZE(FEATURE_MAP_NAMES))) {
+                "Feature Map", (int*)&featureMapType, VPT_FEATURE_MAP_NAMES,
+                IM_ARRAYSIZE(VPT_FEATURE_MAP_NAMES))) {
             optionChanged = true;
             blitPrimaryRayMomentTexturePass->setVisualizeMomentTexture(
-                    featureMapType == FeatureMapType::PRIMARY_RAY_ABSORPTION_MOMENTS);
+                    featureMapType == FeatureMapTypeVpt::PRIMARY_RAY_ABSORPTION_MOMENTS);
             blitScatterRayMomentTexturePass->setVisualizeMomentTexture(
-                    featureMapType == FeatureMapType::SCATTER_RAY_ABSORPTION_MOMENTS);
+                    featureMapType == FeatureMapTypeVpt::SCATTER_RAY_ABSORPTION_MOMENTS);
         }
         if (propertyEditor.addCombo(
                 "VPT Mode", (int*)&vptMode, VPT_MODE_NAMES,
-                IM_ARRAYSIZE(VPT_MODE_NAMES))) {
+                IM_ARRAYSIZE(VPT_MODE_NAMES) - 1)) {
             optionChanged = true;
             updateVptMode();
             setShaderDirty();
             setDataDirty();
         }
+
+        if (vptMode == VptMode::SPECTRAL_DELTA_TRACKING) {
+            if (propertyEditor.addCombo(
+                    "Collision Probability", (int*)&sdtCollisionProbability,
+                    SPECTRAL_DELTA_TRACKING_COLLISION_PROBABILITY_NAMES,
+                    IM_ARRAYSIZE(SPECTRAL_DELTA_TRACKING_COLLISION_PROBABILITY_NAMES))) {
+                optionChanged = true;
+                setShaderDirty();
+            }
+        }
+
         if (vptMode == VptMode::RESIDUAL_RATIO_TRACKING || vptMode == VptMode::DECOMPOSITION_TRACKING) {
             if (propertyEditor.addSliderInt("Super Voxel Size", &superVoxelSize, 1, 64)) {
                 optionChanged = true;
@@ -751,6 +791,7 @@ bool VolumetricPathTracingPass::renderGuiPropertyEditorNodes(sgl::PropertyEditor
                 setDataDirty();
             }
         }
+
         if (propertyEditor.addCheckbox("Use Sparse Grid", &useSparseGrid)) {
             optionChanged = true;
             setGridData();
@@ -781,7 +822,7 @@ bool VolumetricPathTracingPass::renderGuiPropertyEditorNodes(sgl::PropertyEditor
             IGFD_OpenModal(
                     fileDialogInstance,
                     "ChooseEnvironmentMapImage", "Choose an Environment Map Image",
-                    ".*,.png",
+                    ".*,.png,.exr",
                     sgl::AppSettings::get()->getDataDirectory().c_str(),
                     "", 1, nullptr,
                     ImGuiFileDialogFlags_ConfirmOverwrite);
@@ -846,6 +887,9 @@ bool VolumetricPathTracingPass::renderGuiPropertyEditorNodes(sgl::PropertyEditor
             bool denoiserReRender = denoiser->renderGuiPropertyEditorNodes(propertyEditor);
             reRender = denoiserReRender || reRender;
             changedDenoiserSettings = denoiserReRender || changedDenoiserSettings;
+            if (denoiserReRender) {
+                checkResetDenoiserFeatureMaps();
+            }
             propertyEditor.endNode();
         }
     }

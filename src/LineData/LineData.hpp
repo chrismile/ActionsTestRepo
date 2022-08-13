@@ -56,6 +56,11 @@ class TopLevelAccelerationStructure;
 typedef std::shared_ptr<TopLevelAccelerationStructure> TopLevelAccelerationStructurePtr;
 }}
 
+namespace IGFD {
+class FileDialog;
+}
+typedef IGFD::FileDialog ImGuiFileDialog;
+
 struct Trajectory;
 typedef std::vector<Trajectory> Trajectories;
 
@@ -168,7 +173,12 @@ public:
     virtual LinePassTubeRenderDataMeshShader getLinePassTubeRenderDataMeshShader()=0;
     virtual LinePassTubeRenderDataProgrammablePull getLinePassTubeRenderDataProgrammablePull()=0;
     virtual LinePassQuadsRenderData getLinePassQuadsRenderData() { return {}; }
-    virtual TubeTriangleRenderData getLinePassTubeTriangleMeshRenderData(bool isRasterizer, bool vulkanRayTracing)=0;
+    virtual TubeTriangleRenderData getLinePassTubeTriangleMeshRenderDataPayload(
+            bool isRasterizer, bool vulkanRayTracing, TubeTriangleRenderDataPayloadPtr& payload)=0;
+    inline TubeTriangleRenderData getLinePassTubeTriangleMeshRenderData(bool isRasterizer, bool vulkanRayTracing) {
+        TubeTriangleRenderDataPayloadPtr emptyPayload;
+        return getLinePassTubeTriangleMeshRenderDataPayload(isRasterizer, vulkanRayTracing, emptyPayload);
+    }
     virtual TubeAabbRenderData getLinePassTubeAabbRenderData(bool isRasterizer)=0;
     virtual HullTriangleRenderData getVulkanHullTriangleRenderData(bool vulkanRayTracing);
     sgl::vk::TopLevelAccelerationStructurePtr getRayTracingTubeTriangleTopLevelAS();
@@ -229,6 +239,8 @@ public:
     /// Set current rendering modes (e.g. for making visible certain UI options only for certain renderers).
     virtual void setLineRenderers(const std::vector<LineRenderer*>& lineRenderers);
     virtual void setRenderingModes(const std::vector<RenderingMode>& renderingModes) {}
+    // Sets the global file dialog.
+    void setFileDialogInstance(ImGuiFileDialog* fileDialogInstance);
     [[nodiscard]] inline bool getShallRenderSimulationMeshBoundary() const { return shallRenderSimulationMeshBoundary; }
     [[nodiscard]] inline const std::string& getLineDataWindowName() const { return lineDataWindowName; }
     /// Returns whether the gather shader needs to be reloaded.
@@ -277,6 +289,11 @@ public:
                 || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH
                 || linePrimitiveMode == LINE_PRIMITIVES_TUBE_RIBBONS_MESH_SHADER;
     }
+
+    enum class RequestMode {
+        NO_CACHE_SUPPORTED, TRIANGLES, AABBS, GEOMETRY_SHADER, PROGRAMMABLE_PULL, MESH_SHADER
+    };
+
     static inline float getMinBandThickness() { return minBandThickness; }
 
     /// This function should be called by sub-classes before accessing internal rendering data.
@@ -288,6 +305,7 @@ protected:
     virtual void recomputeColorLegend();
     int getAttributeNameIndex(const std::string& attributeName);
     bool updateLinePrimitiveMode(LineRenderer* lineRenderer);
+    void removeOtherCachedDataTypes(RequestMode requestMode);
 
     ///< The maximum number of line points to be considered a small data set (important, e.g., for live UI updates).
     const size_t SMALL_DATASET_LINE_POINTS_MAX = 10000;
@@ -304,6 +322,7 @@ protected:
     bool triangleRepresentationDirty = false; ///< Should be set to true if the triangle mesh representation changed.
     bool reRender = false;
     sgl::TransferFunctionWindow& transferFunctionWindow;
+    ImGuiFileDialog* fileDialogInstance = nullptr;
 
     // Color legend widgets for different attributes.
     bool shallRenderColorLegendWidgets = true;
@@ -312,9 +331,10 @@ protected:
     // Rendering settings.
     std::vector<LineRenderer*> lineRenderersCached;
     static LinePrimitiveMode linePrimitiveMode;
-    static int tubeNumSubdivisions; ///< Number of tube subdivisions for LINE_PRIMITIVES_TUBE_GEOMETRY_SHADER.
+    static int tubeNumSubdivisions; ///< Number of tube subdivisions for, e.g., LINE_PRIMITIVES_TUBE_GEOMETRY_SHADER.
     std::vector<std::string> supportedRenderingModes;
     bool useCappedTubes = true;
+    bool useHalos = true;
     bool showLineDataWindow = true;
     std::string lineDataWindowName;
 
@@ -323,21 +343,24 @@ protected:
     static bool renderThickBands;
     static float minBandThickness;
 
-    // Caches the rendering data when using Vulkan (as, e.g., the Vulkan ray tracer and AO baking could be used at the
-    // same time).
+    LinePrimitiveMode cacheLinePrimitiveMode = LinePrimitiveMode::LINE_PRIMITIVES_QUADS_GEOMETRY_SHADER;
+
+    // Caches the triangle render data. This is useful, e.g., when the Vulkan ray tracer and ambient occlusion baking
+    // are used at the same time.
     std::vector<sgl::vk::BottomLevelAccelerationStructurePtr> getTubeTriangleBottomLevelAS();
     sgl::vk::BottomLevelAccelerationStructurePtr getTubeAabbBottomLevelAS();
     sgl::vk::BottomLevelAccelerationStructurePtr getHullTriangleBottomLevelAS();
     void splitTriangleIndices(
             std::vector<uint32_t>& tubeTriangleIndices,
             const std::vector<TubeTriangleVertexData> &tubeTriangleVertexDataList);
-    TubeTriangleRenderData vulkanTubeTriangleRenderData;
+    TubeTriangleRenderData cachedTubeTriangleRenderData;
     TubeTriangleSplitData tubeTriangleSplitData;
-    TubeAabbRenderData vulkanTubeAabbRenderData;
-    HullTriangleRenderData vulkanHullTriangleRenderData;
-    bool vulkanTubeTriangleRenderDataIsRayTracing = false;
+    TubeAabbRenderData cachedTubeAabbRenderData;
+    HullTriangleRenderData cachedHullTriangleRenderData;
+    bool cachedTubeTriangleRenderDataIsRayTracing = false;
     const size_t batchSizeLimit = 1024 * 1024 * 32;
-    bool generateSplitTriangleData = false;
+    bool generateSplitTriangleData = false, cachedGenerateSplitTriangleData = false;
+    TubeTriangleRenderDataPayloadPtr cachedTubeTriangleRenderDataPayload{};
     std::vector<sgl::vk::BottomLevelAccelerationStructurePtr> tubeTriangleBottomLevelASes;
     sgl::vk::BottomLevelAccelerationStructurePtr tubeAabbBottomLevelAS;
     sgl::vk::BottomLevelAccelerationStructurePtr hullTriangleBottomLevelAS;
@@ -345,6 +368,15 @@ protected:
     sgl::vk::TopLevelAccelerationStructurePtr tubeTriangleAndHullTopLevelAS;
     sgl::vk::TopLevelAccelerationStructurePtr tubeAabbTopLevelAS;
     sgl::vk::TopLevelAccelerationStructurePtr tubeAabbAndHullTopLevelAS;
+
+    // Caches the line render data.
+    LinePassTubeRenderData cachedRenderDataGeometryShader;
+    LinePassTubeRenderDataProgrammablePull cachedRenderDataProgrammablePull;
+    LinePassTubeRenderDataMeshShader cachedRenderDataMeshShader;
+    int cachedTubeNumSubdivisions = 0;
+
+    // For deferred rendering.
+    // Array of triangle meshlets (aabb, start idx, end idx)
 
     struct LineUniformData {
         // Camera data.
@@ -365,7 +397,7 @@ protected:
         float ambientOcclusionStrength = 0.0f;
         float ambientOcclusionGamma = 1.0f;
         float separatorBaseWidth = 0.2f;
-        float lineUniformDataPadding = 0.0f;
+        float helicityRotationFactor = 0.0f;
 
         // Pre-baked ambient occlusion settings (STATIC_AMBIENT_OCCLUSION_PREBAKING).
         uint32_t numAoTubeSubdivisions = 0;

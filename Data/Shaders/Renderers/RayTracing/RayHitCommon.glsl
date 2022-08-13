@@ -26,7 +26,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if defined(VULKAN_RAY_TRACING_SHADER)
 #include "TubeRayTracingHeader.glsl"
+#endif
 #include "LineDataSSBO.glsl"
 #include "TransferFunction.glsl"
 
@@ -34,7 +36,7 @@
 #include "MlatInsert.glsl"
 #endif
 
-#define RAYTRACING
+#define ANALYTIC_HIT_COMPUTATION
 #include "Lighting.glsl"
 #include "Antialiasing.glsl"
 #include "MultiVar.glsl"
@@ -51,8 +53,18 @@ mat3 shearSymmetricMatrix(vec3 p) {
 
 #if defined(USE_ROTATING_HELICITY_BANDS) || defined(USE_MULTI_VAR_RENDERING)
 void drawSeparatorStripe(inout vec4 surfaceColor, in float varFraction, in float separatorWidth, in float aaf) {
-    float alphaBorder = smoothstep(separatorWidth - aaf, separatorWidth + aaf, varFraction);
-    surfaceColor.rgb = surfaceColor.rgb * alphaBorder;
+    aaf *= 10.0;
+    float alphaBorder1 = smoothstep(aaf, 0.0, varFraction);
+    float alphaBorder2 = smoothstep(separatorWidth - aaf * 0.5, separatorWidth + aaf * 0.5, varFraction);
+    surfaceColor.rgb = surfaceColor.rgb * max(alphaBorder1, alphaBorder2);
+}
+#endif
+
+#ifdef USE_HELICITY_BANDS_TEXTURE
+layout(binding = HELICITY_BANDS_TEXTURE_BINDING) uniform sampler2D helicityBandsTexture;
+vec4 sampleHelicityBandsTexture(in float u, in float globalPos) {
+    return texture(helicityBandsTexture, vec2(u, 0.5));
+    //return textureGrad(helicityBandsTexture, vec2(u, 0.5), vec2(dFdx(globalPos), 0.0), vec2(dFdy(globalPos), 0.0));
 }
 #endif
 
@@ -99,7 +111,7 @@ void computeFragmentColor(
         uint attributeIdx = uint(mod((phi + fragmentRotation) * 0.5 / float(M_PI), 1.0) * float(numSubdivisionsBands)) % numSelectedAttributes;
         uint attributeIdxReal = getRealAttributeIndex(attributeIdx);
         float sampledFragmentAttribute = sampleAttributeLinear(fragmentVertexId, attributeIdxReal);
-        fragmentColor = transferFunction(fragmentAttribute, attributeIdxReal);
+        fragmentColor = transferFunction(sampledFragmentAttribute, attributeIdxReal);
     }
 #elif !defined(USE_MULTI_VAR_RENDERING)
 #ifdef USE_PRINCIPAL_STRESS_DIRECTION_INDEX
@@ -165,6 +177,7 @@ void computeFragmentColor(
 
 #endif
 
+#if defined(USE_HALOS) || defined(USE_MULTI_VAR_RENDERING)
     float ribbonPosition;
 
 #ifdef USE_CAPPED_TUBES
@@ -191,11 +204,17 @@ void computeFragmentColor(
         if (dot(t, crossProdVn) < 0.0) {
             ribbonPosition2 = -ribbonPosition2;
         }
+        if (dot(t, crossProdVn) < 0.0) {
+            ribbonPosition = -ribbonPosition;
+        }
         // Normalize the ribbon position: [-1, 1] -> [0, 1].
         //ribbonPosition = ribbonPosition / 2.0 + 0.5;
         ribbonPosition2 = clamp(ribbonPosition2, -1.0, 1.0);
 
-        ribbonPosition = min(ribbonPosition, abs(ribbonPosition2));
+        //ribbonPosition = min(ribbonPosition, abs(ribbonPosition2));
+        if (abs(ribbonPosition2) < abs(ribbonPosition)) {
+            ribbonPosition = ribbonPosition2;
+        }
     } else {
 #endif
 
@@ -352,6 +371,8 @@ void computeFragmentColor(
     }
 #endif
 
+#endif // defined(USE_HALOS) || defined(USE_MULTI_VAR_RENDERING)
+
 
 #if defined(USE_DEPTH_CUES) || (defined(USE_AMBIENT_OCCLUSION) && !defined(STATIC_AMBIENT_OCCLUSION_PREBAKING))
     vec3 screenSpacePosition = (viewMatrix * vec4(fragmentPositionWorld, 1.0)).xyz;
@@ -366,7 +387,7 @@ void computeFragmentColor(
         uint attributeIdx = uint((ribbonPosition * 0.5 + 0.5) * float(numSubdivisionsView)) % numSelectedAttributes;
         uint attributeIdxReal = getRealAttributeIndex(attributeIdx);
         float sampledFragmentAttribute = sampleAttributeLinear(fragmentVertexId, attributeIdxReal);
-        fragmentColor = transferFunction(fragmentAttribute, attributeIdxReal);
+        fragmentColor = transferFunction(sampledFragmentAttribute, attributeIdxReal);
     }
 
 #if defined(USE_MLAT)
@@ -389,15 +410,20 @@ void computeFragmentColor(
 #endif
             n, t);
 
+#if defined(USE_HALOS) || defined(USE_MULTI_VAR_RENDERING)
     float absCoords = abs(ribbonPosition);
+#else
+    float absCoords = 0.0;
+#endif
+
     float fragmentDepth = length(fragmentPositionWorld - cameraPosition);
 #ifdef USE_BANDS
     //float EPSILON_OUTLINE = clamp(fragmentDepth * 0.0005 / (useBand ? bandWidth : lineWidth), 0.0, 0.49);
-    float EPSILON_OUTLINE = clamp(getAntialiasingFactor(fragmentDepth / (useBand ? bandWidth : lineWidth) * 2.0), 0.0, 0.49);
-    float EPSILON_WHITE = clamp(getAntialiasingFactor(fragmentDepth / (useBand ? bandWidth : lineWidth) * 2.0), 0.0, 0.49);
+    float EPSILON_OUTLINE = clamp(getAntialiasingFactor(fragmentDepth / (useBand ? bandWidth : lineWidth) * 0.25), 0.0, 0.49);
+    float EPSILON_WHITE = clamp(getAntialiasingFactor(fragmentDepth / (useBand ? bandWidth : lineWidth) * 0.25), 0.0, 0.49);
 #else
     //float EPSILON_OUTLINE = clamp(fragmentDepth * 0.0005 / lineWidth, 0.0, 0.49);
-    float EPSILON_OUTLINE = clamp(getAntialiasingFactor(fragmentDepth / lineWidth * 0.1), 0.0, 0.49);
+    float EPSILON_OUTLINE = clamp(getAntialiasingFactor(fragmentDepth / lineWidth * 0.05), 0.0, 0.49);
     float EPSILON_WHITE = clamp(getAntialiasingFactor(fragmentDepth / lineWidth * 2.0), 0.0, 0.49);
 #endif
 
@@ -409,18 +435,25 @@ void computeFragmentColor(
 #ifdef USE_MULTI_VAR_RENDERING
     drawSeparatorStripe(
             fragmentColor, mod(phi + fragmentRotation + separatorWidth * 0.5, 2.0 / float(numSubdivisionsBands) * float(M_PI)),
-            separatorWidth, EPSILON_OUTLINE);
+            separatorWidth, EPSILON_OUTLINE * 0.5 * float(numSubdivisionsBands));
+#else
+#ifdef USE_HELICITY_BANDS_TEXTURE
+    const float twoPi = 2.0 * float(M_PI);
+    fragmentColor *= sampleHelicityBandsTexture(
+            mod(phi + fragmentRotation + separatorWidth * 0.5, twoPi) / twoPi,
+            (phi + fragmentRotation) / twoPi);
 #else
     drawSeparatorStripe(
             fragmentColor, mod(phi + fragmentRotation + separatorWidth * 0.5, 2.0 / float(numSubdivisionsBands) * float(M_PI)),
             separatorWidth, EPSILON_OUTLINE);
+#endif
 #endif
 #elif defined(USE_MULTI_VAR_RENDERING)
     float separatorWidth = numSelectedAttributes > 1 ? 0.4 / float(numSelectedAttributes) : separatorBaseWidth;
     if (numSelectedAttributes > 0) {
         drawSeparatorStripe(
                 fragmentColor, mod((ribbonPosition * 0.5 + 0.5) * float(numSubdivisionsView) + 0.5 * separatorWidth, 1.0),
-                separatorBaseWidth, EPSILON_OUTLINE);
+                separatorBaseWidth, EPSILON_OUTLINE * 0.5 * float(numSubdivisionsView));
     }
 #endif
 
@@ -432,7 +465,12 @@ void computeFragmentColor(
     const float WHITE_THRESHOLD = 0.7;
 #endif
 
+#if defined(USE_HALOS) || defined(USE_MULTI_VAR_RENDERING)
     float coverage = 1.0 - smoothstep(1.0 - EPSILON_OUTLINE, 1.0, absCoords);
+#else
+    float coverage = 1.0;
+#endif
+
 #if !defined(USE_CAPPED_TUBES) && defined(USE_BANDS) && (defined(USE_NORMAL_STRESS_RATIO_TUBES) || defined(USE_HYPERSTREAMLINES))
     if (useBand) {
         coverage = 1.0;
@@ -464,7 +502,9 @@ void computeFragmentColor(
     }
 #endif
 
-#ifdef USE_MLAT
+#ifdef FRAGMENT_SHADER
+    fragColor = colorOut;
+#elif defined(USE_MLAT)
     insertNodeMlat(colorOut);
 #else
     payload.hitColor = colorOut;

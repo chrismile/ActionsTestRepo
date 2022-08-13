@@ -49,19 +49,19 @@ class FileDialog;
 }
 typedef IGFD::FileDialog ImGuiFileDialog;
 
-enum class FeatureMapType {
+enum class FeatureMapTypeVpt {
     RESULT, FIRST_X, FIRST_W, PRIMARY_RAY_ABSORPTION_MOMENTS, SCATTER_RAY_ABSORPTION_MOMENTS
 };
-const char* const FEATURE_MAP_NAMES[] = {
+const char* const VPT_FEATURE_MAP_NAMES[] = {
         "Result", "First X", "First W", "Primary Ray Absorption Moments", "Scatter Ray Absorption Moments"
 };
 
 enum class VptMode {
-    DELTA_TRACKING, SPECTRAL_DELTA_TRACKING, RATIO_TRACKING, RESIDUAL_RATIO_TRACKING, DECOMPOSITION_TRACKING
+    DELTA_TRACKING, SPECTRAL_DELTA_TRACKING, RATIO_TRACKING, DECOMPOSITION_TRACKING, RESIDUAL_RATIO_TRACKING
 };
 const char* const VPT_MODE_NAMES[] = {
-        "Delta Tracking", "Delta Tracking (Spectral)", "Ratio Tracking", "Residual Ratio Tracking",
-        "Decomposition Tracking"
+        "Delta Tracking", "Delta Tracking (Spectral)", "Ratio Tracking",
+        "Decomposition Tracking", "Residual Ratio Tracking"
 };
 
 enum class GridInterpolationType {
@@ -71,6 +71,17 @@ enum class GridInterpolationType {
 };
 const char* const GRID_INTERPOLATION_TYPE_NAMES[] = {
         "Nearest", "Stochastic", "Trilinear"
+};
+
+/**
+ * Choices of collision probabilities for spectral delta tracking.
+ * For more details see: https://jannovak.info/publications/SDTracking/SDTracking.pdf
+ */
+enum class SpectralDeltaTrackingCollisionProbability {
+    MAX_BASED, AVG_BASED, PATH_HISTORY_AVG_BASED
+};
+const char* const SPECTRAL_DELTA_TRACKING_COLLISION_PROBABILITY_NAMES[] = {
+        "Max-based", "Avg-based", "Path History Avg-based"
 };
 
 class VolumetricPathTracingPass : public sgl::vk::ComputePass {
@@ -87,7 +98,7 @@ public:
     void setSparseGridInterpolationType(GridInterpolationType type);
     void setCustomSeedOffset(uint32_t offset); //< Additive offset for the random seed in the VPT shader.
     void setUseLinearRGB(bool useLinearRGB);
-    void setFileDialogInstance(ImGuiFileDialog* fileDialogInstance);
+    void setFileDialogInstance(ImGuiFileDialog* _fileDialogInstance);
 
     // Called when the camera has moved.
     void onHasMoved();
@@ -109,10 +120,12 @@ private:
     const glm::ivec2 blockSize2D = glm::ivec2(16, 16);
     sgl::vk::ImageViewPtr sceneImageView;
     CloudDataPtr cloudData;
-    FeatureMapType featureMapType = FeatureMapType::RESULT;
+    FeatureMapTypeVpt featureMapType = FeatureMapTypeVpt::RESULT;
 
     void updateVptMode();
     VptMode vptMode = VptMode::DELTA_TRACKING;
+    SpectralDeltaTrackingCollisionProbability sdtCollisionProbability =
+            SpectralDeltaTrackingCollisionProbability::PATH_HISTORY_AVG_BASED;
     std::shared_ptr<SuperVoxelGridResidualRatioTracking> superVoxelGridResidualRatioTracking;
     std::shared_ptr<SuperVoxelGridDecompositionTracking> superVoxelGridDecompositionTracking;
     int superVoxelSize = 8;
@@ -167,10 +180,12 @@ private:
 
     void createDenoiser();
     void setDenoiserFeatureMaps();
+    void checkResetDenoiserFeatureMaps();
     DenoiserType denoiserType = DenoiserType::EAW;
     bool useDenoiser = true;
     bool denoiserChanged = false;
     std::shared_ptr<Denoiser> denoiser;
+    std::vector<bool> featureMapUsedArray;
 
     // Uniform buffer object storing the camera settings.
     struct UniformData {

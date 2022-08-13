@@ -41,7 +41,7 @@ public:
     explicit LineRasterPass(LineRenderer* lineRenderer);
 
     // Public interface.
-    void setLineData(LineDataPtr& lineData, bool isNewData);
+    virtual void setLineData(LineDataPtr& lineData, bool isNewData);
     [[nodiscard]] inline bool getIsDataEmpty() const {
         if (!rasterData) {
             return true;

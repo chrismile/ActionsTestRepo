@@ -88,7 +88,8 @@ public:
     LinePassQuadsRenderData getLinePassQuadsRenderData() override;
     LinePassQuadsRenderDataProgrammablePull getLinePassQuadsRenderDataProgrammablePull() override;
     TubeRenderDataOpacityOptimization getTubeRenderDataOpacityOptimization() override;
-    TubeTriangleRenderData getLinePassTubeTriangleMeshRenderData(bool isRasterizer, bool vulkanRayTracing) override;
+    TubeTriangleRenderData getLinePassTubeTriangleMeshRenderDataPayload(
+            bool isRasterizer, bool vulkanRayTracing, TubeTriangleRenderDataPayloadPtr& payload) override;
     TubeAabbRenderData getLinePassTubeAabbRenderData(bool isRasterizer) override;
     void getVulkanShaderPreprocessorDefines(
             std::map<std::string, std::string>& preprocessorDefines, bool isRasterizer) override;
@@ -123,6 +124,7 @@ public:
     /// Whether to use linear RGB when rendering.
     void setUseLinearRGB(bool useLinearRGB) override;
     bool shallRenderTransferFunctionWindow() override { return !useMultiVarRendering; }
+    inline MultiVarTransferFunctionWindow& getMultiVarTransferFunctionWindow() { return multiVarTransferFunctionWindow; }
 
 protected:
     void recomputeHistogram() override;
@@ -167,6 +169,16 @@ protected:
     static float separatorWidth;
     float helicityRotationFactor = 1.0f;
     float maxHelicity = 0.0f;
+    // Twist line texture.
+    void loadTwistLineTexture();
+    bool isTwistLineTextureLoaded = false;
+    bool useTwistLineTexture = false;
+    int textureFilteringModeIndex = 1;
+    int maxAnisotropy = 1;
+    int maxSamplerAnisotropy = 1;
+    std::string twistLineTextureFilenameGui;
+    std::string loadedTwistLineTextureFilename;
+    sgl::vk::TexturePtr twistLineTexture;
 
     /**
      * Multi-var rendering can be used (at the moment only together with helicity data).

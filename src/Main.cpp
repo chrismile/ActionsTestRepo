@@ -61,7 +61,11 @@ int main(int argc, char *argv[]) {
     sgl::AppSettings::get()->loadSettings(settingsFile.c_str());
     sgl::AppSettings::get()->getSettings().addKeyValue("window-multisamples", 0);
     sgl::AppSettings::get()->getSettings().addKeyValue("window-debugContext", true);
-    sgl::AppSettings::get()->getSettings().addKeyValue("window-vSync", true);
+    if (argc > 1 && strcmp(sgl::FileUtils::get()->get_argv()[1], "--perf") == 0) {
+        sgl::AppSettings::get()->getSettings().addKeyValue("window-vSync", false);
+    } else {
+        sgl::AppSettings::get()->getSettings().addKeyValue("window-vSync", true);
+    }
     sgl::AppSettings::get()->getSettings().addKeyValue("window-resizable", true);
     sgl::AppSettings::get()->getSettings().addKeyValue("window-savePosition", true);
 #ifdef DATA_PATH
@@ -74,13 +78,17 @@ int main(int argc, char *argv[]) {
     ImFontGlyphRangesBuilder builder;
     builder.AddChar(L'\u03BB'); // lambda
     builder.BuildRanges(&fontRanges);
-    sgl::AppSettings::get()->setLoadGUI(fontRanges.Data, true, false);
+    bool useMultiViewport = false;
+    if (sgl::AppSettings::get()->getSettings().getValueOpt("useDockSpaceMode", useMultiViewport)) {
+        useMultiViewport = !useMultiViewport;
+    }
+    sgl::AppSettings::get()->setLoadGUI(fontRanges.Data, true, useMultiViewport);
 
     sgl::AppSettings::get()->setRenderSystem(sgl::RenderSystem::VULKAN);
     sgl::Window* window = sgl::AppSettings::get()->createWindow();
 
     std::vector<const char*> optionalDeviceExtensions;
-#ifdef SUPPORT_OPTIX
+#ifdef SUPPORT_CUDA_INTEROP
     optionalDeviceExtensions = sgl::vk::Device::getCudaInteropDeviceExtensions();
 #endif
     std::vector<const char*> raytracingDeviceExtensions = {
@@ -99,6 +107,9 @@ int main(int argc, char *argv[]) {
     optionalDeviceExtensions.push_back(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
     optionalDeviceExtensions.push_back(VK_NV_MESH_SHADER_EXTENSION_NAME);
     optionalDeviceExtensions.push_back(VK_NV_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
+    optionalDeviceExtensions.push_back(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
+    optionalDeviceExtensions.push_back(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME);
+    optionalDeviceExtensions.push_back(VK_KHR_8BIT_STORAGE_EXTENSION_NAME);
 
     sgl::vk::Instance* instance = sgl::AppSettings::get()->getVulkanInstance();
     sgl::vk::Device* device = new sgl::vk::Device;
@@ -106,6 +117,9 @@ int main(int argc, char *argv[]) {
     requestedDeviceFeatures.optionalPhysicalDeviceFeatures.geometryShader = VK_TRUE; // For a rasterizer mode.
     requestedDeviceFeatures.optionalPhysicalDeviceFeatures.sampleRateShading = VK_TRUE; // For OpaqueLineRenderer.
     requestedDeviceFeatures.optionalPhysicalDeviceFeatures.independentBlend = VK_TRUE; // For WBOITRenderer.
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.samplerAnisotropy = VK_TRUE; // For LineDataFlow textures.
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.multiDrawIndirect = true; // For DeferredRenderer.
+    requestedDeviceFeatures.optionalEnableShaderDrawParametersFeatures = true; // For DeferredRenderer.
     // For PerPixelLinkedListRenderer, OpacityOptimizationRenderer, DepthComplexityRenderer, ...
     requestedDeviceFeatures.requestedPhysicalDeviceFeatures.fragmentStoresAndAtomics = VK_TRUE;
     device->createDeviceSwapchain(
