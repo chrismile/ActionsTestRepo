@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-18.04, ubuntu-20.04, ubuntu-22.04 ]
+        os: [ ubuntu-22.04 ]
 
     runs-on: ${{ matrix.os }}
     name: "Build on ${{ matrix.os }}"
@@ -118,6 +118,7 @@ jobs:
 
     - name: Build (LineVis)
       run: |
+        echo "${{env.PKG_CONFIG_PATH}}"
         if [ "${{env.PKG_CONFIG_PATH}}" != "" ]; then
           VK_LAYER_PATH=""
           source "VulkanSDK/$(ls VulkanSDK)/setup-env.sh"
