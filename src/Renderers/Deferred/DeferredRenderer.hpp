@@ -53,6 +53,7 @@ public:
     ~DeferredRenderer() override = default;
     [[nodiscard]] RenderingMode getRenderingMode() const override { return RENDERING_MODE_DEFERRED_SHADING; }
     bool getIsTransparencyUsed() override { return false; }
+    [[nodiscard]] bool getIsTriangleRepresentationUsed() const override;
     [[nodiscard]] bool getUsesTriangleMeshInternally() const override;
 
     /**
@@ -187,6 +188,14 @@ protected:
 
     // Draw indirect sub-modes.
     DrawIndirectReductionMode drawIndirectReductionMode = DrawIndirectReductionMode::ATOMIC_COUNTER;
+
+    // BVH draw indirect sub-modes.
+    BvhBuildAlgorithm bvhBuildAlgorithm = BvhBuildAlgorithm::SWEEP_SAH_CPU;
+    BvhBuildGeometryMode bvhBuildGeometryMode = BvhBuildGeometryMode::MESHLETS;
+    BvhBuildPrimitiveCenterMode bvhBuildPrimitiveCenterMode = BvhBuildPrimitiveCenterMode::PRIMITIVE_CENTROID;
+
+    // Task/mesh shader sub-modes.
+    bool useMeshShaderWritePackedPrimitiveIndicesIfAvailable = true;
 
     // Supersampling modes.
     const char* supersamplingModeNames[2] = {
