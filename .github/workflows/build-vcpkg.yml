@@ -36,3 +36,4 @@ jobs:
             PYTHON_EXECUTABLE="$VCPKG_ROOT/installed/x64-windows/tools/python3/python.exe"
         fi
         "$PYTHON_EXECUTABLE" -m ensurepip --upgrade
+        "$PYTHON_EXECUTABLE" -m pip install numpy
