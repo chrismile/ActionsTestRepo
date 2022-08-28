@@ -26,6 +26,7 @@ jobs:
     - name: Test pip installation
       shell: bash
       run: |
-        git clone https://github.com/microsoft/vcpkg.git $VCPKG_ROOT
-        "$VCPKG_ROOT/vcpkg" install python3
-        "$VCPKG_ROOT/packages/python3_x64-linux/tools/python3/python3.10" -m ensurepip --upgrade
+        echo "Test"
+        #git clone https://github.com/microsoft/vcpkg.git $VCPKG_ROOT
+        #"$VCPKG_ROOT/vcpkg" install python3
+        #"$VCPKG_ROOT/packages/python3_x64-linux/tools/python3/python3.10" -m ensurepip --upgrade
