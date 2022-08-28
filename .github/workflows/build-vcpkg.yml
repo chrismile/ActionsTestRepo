@@ -26,8 +26,13 @@ jobs:
     - name: Test pip installation
       shell: bash
       run: |
-        echo "Test"
         git clone https://github.com/microsoft/vcpkg.git $VCPKG_ROOT
         "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
         "$VCPKG_ROOT/vcpkg" install python3
-        "$VCPKG_ROOT/packages/python3_x64-linux/tools/python3/python3.10" -m ensurepip --upgrade
+        #"$VCPKG_ROOT/packages/python3_x64-linux/tools/python3/python3.10" -m ensurepip --upgrade
+        if [ "$RUNNER_OS" == "Linux" ]; then
+            PYTHON_EXECUTABLE="$VCPKG_ROOT/installed/x64-linux/tools/python3/python3.10"
+        elif [ "$RUNNER_OS" == "Windows" ]; then
+            PYTHON_EXECUTABLE="$VCPKG_ROOT/installed/x64-windows/tools/python3/python.exe"
+        fi
+        "$PYTHON_EXECUTABLE" -m ensurepip --upgrade
