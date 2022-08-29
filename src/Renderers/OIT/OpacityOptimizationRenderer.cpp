@@ -68,6 +68,8 @@ void OpacityOptimizationRenderer::initialize() {
         sampleModeNames.push_back(std::to_string(i));
     }
 
+    maxStorageBufferRange = (*sceneData->renderer)->getDevice()->getLimits().maxStorageBufferRange;
+
     ppllUniformDataBufferOpacities = std::make_shared<sgl::vk::Buffer>(
             renderer->getDevice(), sizeof(PpllUniformData),
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
@@ -519,14 +521,16 @@ void OpacityOptimizationRenderer::setFramebufferAttachments(
 
 void OpacityOptimizationRenderer::reallocateFragmentBuffer() {
     // Fragment buffer for opacities.
-    fragmentBufferSizeOpacity = size_t(expectedAvgDepthComplexity) * size_t(viewportWidthOpacity) * size_t(viewportHeightOpacity);
+    fragmentBufferSizeOpacity =
+            size_t(expectedAvgDepthComplexity) * size_t(viewportWidthOpacity) * size_t(viewportHeightOpacity);
     size_t fragmentBufferSizeOpacityBytes = 12ull * fragmentBufferSizeOpacity;
-    if (fragmentBufferSizeOpacityBytes >= (1ull << 32ull)) {
+    if (fragmentBufferSizeOpacityBytes > maxStorageBufferRange) {
         sgl::Logfile::get()->writeError(
-                std::string() + "Fragment buffer size was larger than or equal to 4GiB. Clamping to 4GiB.",
+                std::string() + "Fragment buffer size was larger than maxStorageBufferRange ("
+                + std::to_string(maxStorageBufferRange) + "). Clamping to maxStorageBufferRange.",
                 false);
-        fragmentBufferSizeOpacityBytes = (1ull << 32ull) - 12ull;
-        fragmentBufferSizeOpacity = fragmentBufferSizeOpacityBytes / 12ull;
+        fragmentBufferSizeOpacity = maxStorageBufferRange / 12ull;
+        fragmentBufferSizeOpacityBytes = fragmentBufferSizeOpacity * 12ull;
     }
 
     fragmentBufferOpacities = {}; // Delete old data first (-> refcount 0)
@@ -535,14 +539,16 @@ void OpacityOptimizationRenderer::reallocateFragmentBuffer() {
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
 
     // Fragment buffer for final color pass.
-    fragmentBufferSizeFinal = size_t(expectedAvgDepthComplexity) * size_t(viewportWidthFinal) * size_t(viewportHeightFinal);
+    fragmentBufferSizeFinal =
+            size_t(expectedAvgDepthComplexity) * size_t(viewportWidthFinal) * size_t(viewportHeightFinal);
     size_t fragmentBufferSizeFinalBytes = 12ull * fragmentBufferSizeFinal;
-    if (fragmentBufferSizeFinalBytes >= (1ull << 32ull)) {
+    if (fragmentBufferSizeFinalBytes > maxStorageBufferRange) {
         sgl::Logfile::get()->writeError(
-                std::string() + "Fragment buffer size was larger than or equal to 4GiB. Clamping to 4GiB.",
+                std::string() + "Fragment buffer size was larger than maxStorageBufferRange ("
+                + std::to_string(maxStorageBufferRange) + "). Clamping to maxStorageBufferRange.",
                 false);
-        fragmentBufferSizeFinalBytes = (1ull << 32ull) - 12ull;
-        fragmentBufferSizeFinal = fragmentBufferSizeFinalBytes / 12ull;
+        fragmentBufferSizeFinal = maxStorageBufferRange / 12ull;
+        fragmentBufferSizeFinalBytes = fragmentBufferSizeFinal * 12ull;
     }
 
     fragmentBufferFinal = {}; // Delete old data first (-> refcount 0)
@@ -927,6 +933,7 @@ void PpllOpacitiesLineRasterPass::setGraphicsPipelineInfo(sgl::vk::GraphicsPipel
 
     pipelineInfo.setVertexBufferBindingByLocationIndex("vertexPosition", sizeof(glm::vec3));
     pipelineInfo.setVertexBufferBindingByLocationIndex("vertexAttribute", sizeof(float));
+    pipelineInfo.setVertexBufferBindingByLocationIndexOptional("vertexNormal", sizeof(glm::vec3));
     pipelineInfo.setVertexBufferBindingByLocationIndex("vertexTangent", sizeof(glm::vec3));
     pipelineInfo.setVertexBufferBindingByLocationIndexOptional(
             "vertexOffsetLeft", sizeof(glm::vec3));
@@ -941,7 +948,7 @@ void PpllOpacitiesLineRasterPass::setGraphicsPipelineInfo(sgl::vk::GraphicsPipel
 
     lineRenderer->setGraphicsPipelineInfo(pipelineInfo, shaderStages);
     if ((lineData->getLinePrimitiveMode() == LineData::LINE_PRIMITIVES_TUBE_TRIANGLE_MESH && lineData->getUseCappedTubes())
-        || (lineRenderer->getIsTransparencyUsed() && lineData->getLinePrimitiveMode() != LineData::LINE_PRIMITIVES_RIBBON_QUADS_GEOMETRY_SHADER)) {
+            || (lineRenderer->getIsTransparencyUsed() && lineData->getLinePrimitiveMode() != LineData::LINE_PRIMITIVES_RIBBON_QUADS_GEOMETRY_SHADER)) {
         pipelineInfo.setCullMode(sgl::vk::CullMode::CULL_BACK);
     } else {
         pipelineInfo.setCullMode(sgl::vk::CullMode::CULL_NONE);
@@ -964,6 +971,7 @@ void PpllOpacitiesLineRasterPass::createRasterData(
     rasterData->setIndexBuffer(buffers.indexBuffer);
     rasterData->setVertexBuffer(buffers.vertexPositionBuffer, "vertexPosition");
     rasterData->setVertexBuffer(buffers.vertexAttributeBuffer, "vertexAttribute");
+    rasterData->setVertexBufferOptional(buffers.vertexNormalBuffer, "vertexNormal");
     rasterData->setVertexBuffer(buffers.vertexTangentBuffer, "vertexTangent");
     rasterData->setVertexBufferOptional(buffers.vertexOffsetLeftBuffer, "vertexOffsetLeft");
     rasterData->setVertexBufferOptional(buffers.vertexOffsetRightBuffer, "vertexOffsetRight");
@@ -1024,7 +1032,7 @@ void PpllFinalLineRasterPass::setGraphicsPipelineInfo(sgl::vk::GraphicsPipelineI
 
     lineRenderer->setGraphicsPipelineInfo(pipelineInfo, shaderStages);
     if ((lineData->getLinePrimitiveMode() == LineData::LINE_PRIMITIVES_TUBE_TRIANGLE_MESH && lineData->getUseCappedTubes())
-        || (lineRenderer->getIsTransparencyUsed() && lineData->getLinePrimitiveMode() != LineData::LINE_PRIMITIVES_RIBBON_QUADS_GEOMETRY_SHADER)) {
+            || (lineRenderer->getIsTransparencyUsed() && !lineData->getUseBandRendering())) {
         pipelineInfo.setCullMode(sgl::vk::CullMode::CULL_BACK);
     } else {
         pipelineInfo.setCullMode(sgl::vk::CullMode::CULL_NONE);

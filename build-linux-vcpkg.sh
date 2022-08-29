@@ -71,8 +71,9 @@ is_installed_pacman() {
 
 if command -v apt &> /dev/null; then
     if ! command -v cmake &> /dev/null || ! command -v git &> /dev/null || ! command -v curl &> /dev/null \
-            || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null; then
-        sudo apt install cmake git curl pkg-config build-essential
+            || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null \
+            || ! command -v patchelf &> /dev/null; then
+        sudo apt install -y cmake git curl pkg-config build-essential patchelf
     fi
 
     # Dependencies of vcpkg GLEW port.
@@ -81,8 +82,9 @@ if command -v apt &> /dev/null; then
     fi
 elif command -v pacman &> /dev/null; then
     if ! command -v cmake &> /dev/null || ! command -v git &> /dev/null || ! command -v curl &> /dev/null \
-            || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null; then
-        sudo pacman -S cmake git curl pkgconf base-devel
+            || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null \
+            || ! command -v patchelf &> /dev/null; then
+        sudo pacman -S cmake git curl pkgconf base-devel patchelf
     fi
 
     # Dependencies of vcpkg GLEW port.
@@ -149,7 +151,7 @@ if [[ ! -v VULKAN_SDK ]]; then
         fi
     fi
 
-    if [ -d "/usr/include/vulkan" ]; then
+    if [ -d "/usr/include/vulkan" ] && [ -d "/usr/include/shaderc" ]; then
         if ! grep -q VULKAN_SDK ~/.bashrc; then
             echo 'export VULKAN_SDK="/usr"' >> ~/.bashrc
         fi
@@ -251,7 +253,6 @@ params=()
 
 embree_version="3.13.3"
 if ! $is_embree_installed; then
-    echo "HERE: NOT INSTALLED"
     if [ ! -d "./embree-${embree_version}.x86_64.linux" ]; then
         echo "------------------------"
         echo "   downloading Embree   "
@@ -331,10 +332,21 @@ rsync -a "$build_dir/LineVis" "$destination_dir/bin"
 
 # Copy all dependencies of the application to the destination directory.
 ldd_output="$(ldd $build_dir/LineVis)"
+if ! $is_ospray_installed; then
+    libembree3_so="$(readlink -f "${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libembree3.so")"
+    libospray_module_cpu_so="$(readlink -f "${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libospray_module_cpu.so")"
+    libopenvkl_so="$(readlink -f "${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl.so")"
+    libopenvkl_module_cpu_device_so="$(readlink -f "${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device.so")"
+    libopenvkl_module_cpu_device_4_so="$(readlink -f "${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device_4.so")"
+    libopenvkl_module_cpu_device_8_so="$(readlink -f "${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device_8.so")"
+    libopenvkl_module_cpu_device_16_so="$(readlink -f "${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device_16.so")"
+    ldd_output="$ldd_output $libembree3_so $libospray_module_cpu_so $libopenvkl_so $libopenvkl_module_cpu_device_so"
+    ldd_output="$ldd_output $libopenvkl_module_cpu_device_4_so $libopenvkl_module_cpu_device_8_so $libopenvkl_module_cpu_device_16_so"
+fi
 library_blacklist=(
     "libOpenGL" "libGL"
     "libwayland" "libffi." "libX" "libxcb" "libxkbcommon"
-    "ld-linux" "libdl." "libutil." "libm." "libc." "libbsd."
+    "ld-linux" "libdl." "libutil." "libm." "libc." "libpthread." "libbsd."
 )
 for library in $ldd_output
 do
@@ -356,6 +368,20 @@ do
     patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/$(basename "$library")"
 done
 patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/LineVis"
+if ! $is_ospray_installed; then
+    ln -sf "./$(basename "$libembree3_so")" "$destination_dir/bin/libembree3.so"
+    ln -sf "./$(basename "$libospray_module_cpu_so")" "$destination_dir/bin/libospray_module_cpu.so"
+    ln -sf "./$(basename "$libopenvkl_so")" "$destination_dir/bin/libopenvkl.so"
+    ln -sf "./$(basename "$libopenvkl_so")" "$destination_dir/bin/libopenvkl.so.1"
+    ln -sf "./$(basename "$libopenvkl_module_cpu_device_so")" "$destination_dir/bin/libopenvkl_module_cpu_device.so"
+    ln -sf "./$(basename "$libopenvkl_module_cpu_device_so")" "$destination_dir/bin/libopenvkl_module_cpu_device.so.1"
+    ln -sf "./$(basename "$libopenvkl_module_cpu_device_4_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_4.so"
+    ln -sf "./$(basename "$libopenvkl_module_cpu_device_4_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_4.so.1"
+    ln -sf "./$(basename "$libopenvkl_module_cpu_device_8_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_8.so"
+    ln -sf "./$(basename "$libopenvkl_module_cpu_device_8_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_8.so.1"
+    ln -sf "./$(basename "$libopenvkl_module_cpu_device_16_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_16.so"
+    ln -sf "./$(basename "$libopenvkl_module_cpu_device_16_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_16.so.1"
+fi
 
 # Copy python3 to the destination directory.
 [ -d $destination_dir/bin/python3 ]     || mkdir $destination_dir/bin/python3
@@ -389,6 +415,9 @@ if [[ -z "${LD_LIBRARY_PATH+x}" ]]; then
     export LD_LIBRARY_PATH="${PROJECTPATH}/third_party/sgl/install/lib"
 elif [[ ! "${LD_LIBRARY_PATH}" == *"${PROJECTPATH}/third_party/sgl/install/lib"* ]]; then
     export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${PROJECTPATH}/third_party/sgl/install/lib"
+fi
+if ! $is_ospray_installed; then
+    export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib"
 fi
 export PYTHONHOME="../Shipping/bin/python3"
 ./LineVis

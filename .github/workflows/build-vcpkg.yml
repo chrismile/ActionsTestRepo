@@ -18,7 +18,7 @@ jobs:
         linking: [ dynamic, static ]
 
     runs-on: ${{ matrix.os }}
-    name: "${{ github.workflow }}: ${{ matrix.os }}"
+    name: "${{ github.workflow }}: ${{ matrix.os }} (${{ matrix.linking }})"
 
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
@@ -110,6 +110,9 @@ jobs:
         cp "${{env.VCPKG_ROOT}}/triplets/${{env.VCPKG_COPY_TRIPLET}}.cmake" "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
         echo "set(VCPKG_BUILD_TYPE release)" >> "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
         sed -i -e 's/.*VCPKG_LIBRARY_LINKAGE.*/set(VCPKG_LIBRARY_LINKAGE ${{matrix.linking}})/g' "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
+        if [ "$RUNNER_OS" == "Linux" ] && [ "${{matrix.linking}}" = "dynamic" ]; then
+            echo "set(VCPKG_FIXUP_ELF_RPATH ON)" >> "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
+        fi
 
     - name: Configure CMake (sgl)
       shell: bash
