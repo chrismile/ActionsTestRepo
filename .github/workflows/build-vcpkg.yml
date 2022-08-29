@@ -32,13 +32,13 @@ jobs:
       run: |
         if [ "$RUNNER_OS" == "Linux" ]; then
           echo "VCPKG_COPY_TRIPLET=x64-linux" >> $GITHUB_ENV
-          echo "VCPKG_DEFAULT_TRIPLET=x64-linux-release-only" >> $GITHUB_ENV
+          echo "VCPKG_DEFAULT_TRIPLET=x64-linux-${{matrix.linking}}-release-only" >> $GITHUB_ENV
         elif [ "$RUNNER_OS" == "Windows" ]; then
           echo "VCPKG_COPY_TRIPLET=x64-windows" >> $GITHUB_ENV
-          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-release-only" >> $GITHUB_ENV
+          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-${{matrix.linking}}-release-only" >> $GITHUB_ENV
         elif [ "$RUNNER_OS" == "macOS" ]; then
           echo "VCPKG_COPY_TRIPLET=x64-osx" >> $GITHUB_ENV
-          echo "VCPKG_DEFAULT_TRIPLET=x64-osx-release-only" >> $GITHUB_ENV
+          echo "VCPKG_DEFAULT_TRIPLET=x64-osx-${{matrix.linking}}-release-only" >> $GITHUB_ENV
         else
           echo "$RUNNER_OS is not supported."
           exit 1
@@ -110,8 +110,10 @@ jobs:
         cp "${{env.VCPKG_ROOT}}/triplets/${{env.VCPKG_COPY_TRIPLET}}.cmake" "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
         echo "set(VCPKG_BUILD_TYPE release)" >> "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
         sed -i -e 's/.*VCPKG_LIBRARY_LINKAGE.*/set(VCPKG_LIBRARY_LINKAGE ${{matrix.linking}})/g' "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
-        if [ "$RUNNER_OS" == "Linux" ] && [ "${{matrix.linking}}" = "dynamic" ]; then
-            echo "set(VCPKG_FIXUP_ELF_RPATH ON)" >> "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
+        if [ "$RUNNER_OS" == "Linux" ]; then
+            if [ "${{matrix.linking}}" == "dynamic" ]; then
+                echo "set(VCPKG_FIXUP_ELF_RPATH ON)" >> "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
+            fi
         fi
 
     - name: Configure CMake (sgl)
@@ -131,6 +133,13 @@ jobs:
           source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
         fi
         cmake "${{env.sgl_REPO_DIR}}" -B "${{env.sgl_REPO_DIR}}/build" -DCMAKE_TOOLCHAIN_FILE="${{env.VCPKG_ROOT}}/scripts/buildsystems/vcpkg.cmake" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DVCPKG_TARGET_TRIPLET=${{env.VCPKG_DEFAULT_TRIPLET}} -DCMAKE_INSTALL_PREFIX="${{env.sgl_DIR}}"
+
+    - name: Check build logs
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: fail-logs
+        path: /Users/runner/work/ActionsTestRepo/ActionsTestRepo/vcpkg/buildtrees/sdl2-image/install-x64-osx-release-only-rel-out.log
 
     - name: Build (sgl)
       run: cmake --build ${{env.sgl_REPO_DIR}}/build --config ${{env.BUILD_TYPE}} --parallel 4
