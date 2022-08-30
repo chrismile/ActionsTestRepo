@@ -85,8 +85,8 @@ jobs:
         fi
         cp "$VCPKG_ROOT/triplets/x64-linux.cmake" "$VCPKG_ROOT/triplets/x64-linux-dynamic.cmake"
         sed -i -e 's/VCPKG_LIBRARY_LINKAGE static/VCPKG_LIBRARY_LINKAGE dynamic/g' "$VCPKG_ROOT/triplets/x64-linux-dynamic.cmake"
-        "$VCPKG_ROOT/vcpkg" install --triplet=${{env.VCPKG_DEFAULT_TRIPLET}} boost-core boost-algorithm boost-filesystem boost-locale libpng sdl2[vulkan] tinyxml2 glew glm libarchive libarchive[bzip2,core,lz4,lzma,zstd] vulkan vulkan-headers shaderc eigen3 jsoncpp python3 cppzmq netcdf-c openexr
-        # TODO: SDL2_image
+        "$VCPKG_ROOT/vcpkg" install --triplet=${{env.VCPKG_DEFAULT_TRIPLET}} boost-core boost-algorithm boost-filesystem boost-locale libpng sdl2[vulkan] tinyxml2 glew glm libarchive libarchive[bzip2,core,lz4,lzma,zstd] vulkan vulkan-headers shaderc eigen3 jsoncpp cppzmq netcdf-c openexr
+        # TODO: SDL2_image python3
 
     - name: Check build logs
       if: failure()
