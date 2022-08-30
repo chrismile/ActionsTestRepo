@@ -15,7 +15,19 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-20.04, windows-2019, windows-2022, macos-latest ]
-        linking: [ dynamic, static ]
+        #linking: [ dynamic, static ]
+        include:
+          - os: ubuntu-20.04
+            linking: dynamic
+          - os: ubuntu-20.04
+            linking: static
+          - os: windows-2019
+            linking: dynamic
+          - os: windows-2022
+            linking: dynamic
+          # dynamic fails in SDL2_image compilation.
+          - os: macos-latest
+            linking: static
 
     runs-on: ${{ matrix.os }}
     name: "${{ github.workflow }}: ${{ matrix.os }} (${{ matrix.linking }})"
@@ -150,6 +162,9 @@ jobs:
       shell: bash
       run: |
         if [ "$RUNNER_OS" == "Linux" ]; then
+          if [ "${{matrix.linking}}" == "dynamic" ]; then
+            cp "${{env.sgl_REPO_DIR}}/build/libsgl.so" "${{env.sgl_DIR}}/libsgl.so"
+          fi
           if [ "${{env.PKG_CONFIG_PATH}}" != "" ]; then
             VK_LAYER_PATH=""
             source "VulkanSDK/$(ls VulkanSDK)/setup-env.sh"
