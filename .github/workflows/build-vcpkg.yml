@@ -15,19 +15,28 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-20.04, windows-2019, windows-2022, macos-latest ]
-        #linking: [ dynamic, static ]
-        include:
-          - os: ubuntu-20.04
-            linking: dynamic
-          - os: ubuntu-20.04
-            linking: static
-          - os: windows-2019
-            linking: dynamic
-          - os: windows-2022
-            linking: dynamic
+        linking: [ dynamic, static ]
+        exclude:
           # dynamic fails in SDL2_image compilation.
           - os: macos-latest
+            linking: dynamic
+          # Windows always runs without a problem with both configs, no need to test.
+          - os: windows-2019
             linking: static
+          - os: windows-2022
+            linking: static
+        #include:
+        #  - os: ubuntu-20.04
+        #    linking: dynamic
+        #  - os: ubuntu-20.04
+        #    linking: static
+        #  - os: windows-2019
+        #    linking: dynamic
+        #  - os: windows-2022
+        #    linking: dynamic
+        #  # dynamic fails in SDL2_image compilation.
+        #  - os: macos-latest
+        #    linking: static
 
     runs-on: ${{ matrix.os }}
     name: "${{ github.workflow }}: ${{ matrix.os }} (${{ matrix.linking }})"
