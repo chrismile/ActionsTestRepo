@@ -22,7 +22,6 @@ jobs:
 
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg/bincache
 
     steps:
     - name: Set up vcpkg
@@ -30,13 +29,7 @@ jobs:
       run: |
         git clone https://github.com/microsoft/vcpkg.git $VCPKG_ROOT
         "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
-        if [ "$RUNNER_OS" == "Linux" ]; then
-          echo "VCPKG_COPY_TRIPLET=x64-linux" >> $GITHUB_ENV
-          echo "VCPKG_DEFAULT_TRIPLET=x64-linux-${{matrix.linking}}-release-only" >> $GITHUB_ENV
-        elif [ "$RUNNER_OS" == "Windows" ]; then
-          echo "VCPKG_COPY_TRIPLET=x64-windows" >> $GITHUB_ENV
-          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-${{matrix.linking}}-release-only" >> $GITHUB_ENV
-        elif [ "$RUNNER_OS" == "macOS" ]; then
+        if [ "$RUNNER_OS" == "macOS" ]; then
           echo "VCPKG_COPY_TRIPLET=x64-osx" >> $GITHUB_ENV
           echo "VCPKG_DEFAULT_TRIPLET=x64-osx-${{matrix.linking}}-release-only" >> $GITHUB_ENV
         else
