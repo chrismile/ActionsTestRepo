@@ -2,9 +2,9 @@ name: Build using Homebrew
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 env:
   BUILD_TYPE: Release
@@ -41,7 +41,7 @@ jobs:
         # /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
         # https://stackoverflow.com/questions/25128546/how-to-automate-homebrew-installation
         if [ "$RUNNER_OS" == "Linux" ]; then
-          if ! command -v pacman &> /dev/null; then
+          if ! command -v brew &> /dev/null; then
             sudo apt install curl
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
           fi
