@@ -471,7 +471,8 @@ void computeFragmentColor(
     float coverage = 1.0;
 #endif
 
-#if !defined(USE_CAPPED_TUBES) && defined(USE_BANDS) && (defined(USE_NORMAL_STRESS_RATIO_TUBES) || defined(USE_HYPERSTREAMLINES))
+#if (!defined(USE_CAPPED_TUBES) && defined(USE_BANDS) && (defined(USE_NORMAL_STRESS_RATIO_TUBES) || defined(USE_HYPERSTREAMLINES))) \
+        || (defined(USE_BANDS) && defined(ANALYTIC_ELLIPTIC_TUBE_INTERSECTIONS))
     if (useBand) {
         coverage = 1.0;
     }

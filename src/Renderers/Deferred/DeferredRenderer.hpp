@@ -35,16 +35,24 @@
 #include "Renderers/ResolvePass.hpp"
 #include "DeferredModes.hpp"
 
-class DeferredResolvePass;
-class DownsampleBlitPass;
+// Draw indexed.
 class VisibilityBufferDrawIndexedPass;
+// Draw indexed indirect.
 class VisibilityBufferDrawIndexedIndirectPass;
 class MeshletDrawCountNoReductionPass;
 class MeshletDrawCountAtomicPass;
 class MeshletVisibilityPass;
 class VisibilityBufferPrefixSumScanPass;
 class MeshletDrawCountPass;
+// Task/mesh.
 class MeshletTaskMeshPass;
+// BVH.
+class VisibilityBufferBVHDrawIndexedIndirectPass;
+class NodesBVHClearQueuePass;
+class NodesBVHDrawCountPass;
+// Resolve.
+class DeferredResolvePass;
+class DownsampleBlitPass;
 
 class DeferredRenderer : public LineRenderer {
 public:
@@ -113,9 +121,10 @@ protected:
     std::shared_ptr<MeshletDrawCountPass> meshletDrawCountPass;
     // DeferredRenderingMode::TASK_MESH_SHADER
     std::shared_ptr<MeshletTaskMeshPass> meshletTaskMeshPasses[2];
-    // DeferredRenderingMode::HLBVH_DRAW_INDIRECT
-    void renderHLBVH();
-    std::shared_ptr<VisibilityBufferDrawIndexedPass> visibilityBufferHLBVHDrawIndirectPass;
+    // DeferredRenderingMode::BVH_DRAW_INDIRECT
+    std::shared_ptr<NodesBVHClearQueuePass> nodesBVHClearQueuePass;
+    std::shared_ptr<NodesBVHDrawCountPass> nodesBVHDrawCountPasses[2];
+    std::shared_ptr<VisibilityBufferBVHDrawIndexedIndirectPass> visibilityBufferBVHDrawIndexedIndirectPasses[2];
     // Resolve/further passes.
     std::shared_ptr<DeferredResolvePass> deferredResolvePass;
     std::shared_ptr<DownsampleBlitPass> downsampleBlitPass;
@@ -165,13 +174,20 @@ protected:
     std::vector<sgl::vk::TexturePtr> depthMipLevelTexturesPingPong[2];
     std::vector<sgl::vk::BlitRenderPassPtr> depthMipBlitRenderPassesPingPong[2];
 
+    void updateTaskMeshShaderMode();
+    bool supportsTaskMeshShadersNV = false;
+    bool supportsTaskMeshShadersEXT = false;
     bool supportsTaskMeshShaders = false;
     bool supportsDrawIndirect = false;
     bool supportsDrawIndirectCount = false;
     uint32_t drawIndirectMaxNumPrimitivesPerMeshlet = 128;
     uint32_t taskMeshShaderMaxNumPrimitivesPerMeshlet = 126;
     uint32_t taskMeshShaderMaxNumVerticesPerMeshlet = 64;
-    uint32_t taskMeshShaderMaxNumPrimitivesSupported = 512;
+    uint32_t taskMeshShaderMaxNumPrimitivesSupportedNV = 512;
+    uint32_t taskMeshShaderMaxNumVerticesSupportedNV = 256;
+    uint32_t taskMeshShaderMaxNumPrimitivesSupportedEXT = 256;
+    uint32_t taskMeshShaderMaxNumVerticesSupportedEXT = 256;
+    uint32_t taskMeshShaderMaxNumPrimitivesSupported = 256;
     uint32_t taskMeshShaderMaxNumVerticesSupported = 256;
 
     // Visible meshlets in pass 1/2.
@@ -179,6 +195,12 @@ protected:
     uint32_t visibleMeshletCounters[2] = { 0, 0 };
     std::vector<sgl::vk::BufferPtr> visibleMeshletsStagingBuffers;
     std::vector<bool> frameHasNewStagingDataList;
+
+    // Max work left test buffer for debugging purposes.
+    bool showMaxWorkLeftDebugInfo = true;
+    std::vector<sgl::vk::BufferPtr> maxWorkLeftStagingBuffers;
+    int32_t maxWorkLeft0 = 0;
+    int32_t maxWorkLeft1 = 0;
 
     // Current rendering mode.
     DeferredRenderingMode deferredRenderingMode = DeferredRenderingMode::DRAW_INDEXED;
@@ -191,11 +213,12 @@ protected:
 
     // BVH draw indirect sub-modes.
     BvhBuildAlgorithm bvhBuildAlgorithm = BvhBuildAlgorithm::SWEEP_SAH_CPU;
-    BvhBuildGeometryMode bvhBuildGeometryMode = BvhBuildGeometryMode::MESHLETS;
+    BvhBuildGeometryMode bvhBuildGeometryMode = BvhBuildGeometryMode::TRIANGLES;
     BvhBuildPrimitiveCenterMode bvhBuildPrimitiveCenterMode = BvhBuildPrimitiveCenterMode::PRIMITIVE_CENTROID;
 
     // Task/mesh shader sub-modes.
-    bool useMeshShaderWritePackedPrimitiveIndicesIfAvailable = true;
+    bool useMeshShaderNV = false; ///< Whether to use VK_EXT_mesh_shader oder VK_NV_mesh_shader.
+    bool useMeshShaderWritePackedPrimitiveIndicesIfAvailable = true; ///< Sub-mode for VK_NV_mesh_shader.
 
     // Supersampling modes.
     const char* supersamplingModeNames[2] = {

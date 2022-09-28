@@ -33,6 +33,11 @@ PROJECTPATH="$SCRIPTPATH"
 pushd $SCRIPTPATH > /dev/null
 
 debug=false
+link_dynamic=false
+params_link=()
+if [ $link_dynamic = true ]; then
+    params_link+=(-DVCPKG_TARGET_TRIPLET=x64-linux-dynamic)
+fi
 build_dir_debug=".build_debug"
 build_dir_release=".build_release"
 if [ $debug = true ]; then
@@ -51,6 +56,21 @@ else
     is_ospray_installed=false
 fi
 
+# Process command line arguments.
+custom_glslang=false
+for ((i=1;i<=$#;i++));
+do
+    if [ ${!i} = "--custom-glslang" ]; then
+        custom_glslang=true
+    fi
+    if [ ${!i} = "--link-static" ]; then
+        link_dynamic=false
+    fi
+    if [ ${!i} = "--link-dynamic" ]; then
+        link_dynamic=true
+    fi
+done
+
 is_installed_apt() {
     local pkg_name="$1"
     if [ "$(dpkg -l | awk '/'"$pkg_name"'/ {print }'|wc -l)" -ge 1 ]; then
@@ -63,6 +83,24 @@ is_installed_apt() {
 is_installed_pacman() {
     local pkg_name="$1"
     if pacman -Qs $pkg_name > /dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+is_installed_yum() {
+    local pkg_name="$1"
+    if yum list installed "$pkg_name" > /dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+is_installed_rpm() {
+    local pkg_name="$1"
+    if rpm -q "$pkg_name" > /dev/null 2>&1; then
         return 0
     else
         return 1
@@ -87,9 +125,26 @@ elif command -v pacman &> /dev/null; then
         sudo pacman -S cmake git curl pkgconf base-devel patchelf
     fi
 
-    # Dependencies of vcpkg GLEW port.
-    if ! is_installed_pacman "libgl" || ! is_installed_pacman "vulkan-devel" || ! is_installed_pacman "shaderc"; then
-        sudo pacman -S libgl vulkan-devel shaderc
+    # Dependencies of vcpkg GLEW and Python ports.
+    if ! is_installed_pacman "libgl" || ! is_installed_pacman "vulkan-devel" || ! is_installed_pacman "shaderc" \
+            || ! is_installed_pacman "openssl"; then
+        sudo pacman -S libgl vulkan-devel shaderc openssl
+    fi
+elif command -v yum &> /dev/null; then
+    if ! command -v cmake &> /dev/null || ! command -v git &> /dev/null || ! command -v curl &> /dev/null \
+            || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null \
+            || ! command -v patchelf &> /dev/null; then
+        echo "------------------------"
+        echo "installing build essentials"
+        echo "------------------------"
+        sudo yum install -y cmake git curl pkgconf gcc gcc-c++ patchelf
+    fi
+
+    # Dependencies of vcpkg openssl, GLEW, SDL2 and python3 ports.
+    if ! is_installed_rpm "perl" || ! is_installed_rpm "libstdc++-devel" || ! is_installed_rpm "libstdc++-static" \
+            || ! is_installed_rpm "glew-devel" || ! is_installed_rpm "libXext-devel" \
+            || ! is_installed_rpm "vulkan-devel" || ! is_installed_rpm "libshaderc-devel"; then
+        sudo yum install -y perl libstdc++-devel libstdc++-static glew-devel vulkan-headers libshaderc-devel libXext-devel
     fi
 else
     echo "Warning: Unsupported system package manager detected." >&2
@@ -123,6 +178,7 @@ fi
 [ -d "./third_party/" ] || mkdir "./third_party/"
 pushd third_party > /dev/null
 
+os_arch="$(uname -m)"
 if [[ ! -v VULKAN_SDK ]]; then
     echo "------------------------"
     echo "searching for Vulkan SDK"
@@ -133,7 +189,7 @@ if [[ ! -v VULKAN_SDK ]]; then
     if [ -d "VulkanSDK" ]; then
         VK_LAYER_PATH=""
         source "VulkanSDK/$(ls VulkanSDK)/setup-env.sh"
-        export PKG_CONFIG_PATH="$(realpath "VulkanSDK/$(ls VulkanSDK)/x86_64/lib/pkgconfig")"
+        export PKG_CONFIG_PATH="$(realpath "VulkanSDK/$(ls VulkanSDK)/$os_arch/lib/pkgconfig")"
         found_vulkan=true
     fi
 
@@ -147,7 +203,7 @@ if [[ ! -v VULKAN_SDK ]]; then
             https://packages.lunarg.com/vulkan/lunarg-vulkan-${distro_code_name}.list \
             --output /etc/apt/sources.list.d/lunarg-vulkan-${distro_code_name}.list
             sudo apt update
-            sudo apt install -y vulkan-sdk shaderc
+            sudo apt install -y vulkan-sdk shaderc glslang-dev
         fi
     fi
 
@@ -155,7 +211,7 @@ if [[ ! -v VULKAN_SDK ]]; then
         if ! grep -q VULKAN_SDK ~/.bashrc; then
             echo 'export VULKAN_SDK="/usr"' >> ~/.bashrc
         fi
-        VULKAN_SDK="/usr"
+        export VULKAN_SDK="/usr"
         found_vulkan=true
     fi
 
@@ -167,11 +223,11 @@ if [[ ! -v VULKAN_SDK ]]; then
         source "VulkanSDK/$(ls VulkanSDK)/setup-env.sh"
 
         # Fix pkgconfig file.
-        shaderc_pkgconfig_file="VulkanSDK/$(ls VulkanSDK)/x86_64/lib/pkgconfig/shaderc.pc"
-        prefix_path=$(realpath "VulkanSDK/$(ls VulkanSDK)/x86_64")
+        shaderc_pkgconfig_file="VulkanSDK/$(ls VulkanSDK)/$os_arch/lib/pkgconfig/shaderc.pc"
+        prefix_path=$(realpath "VulkanSDK/$(ls VulkanSDK)/$os_arch")
         sed -i '3s;.*;prefix=\"'$prefix_path'\";' "$shaderc_pkgconfig_file"
         sed -i '5s;.*;libdir=${prefix}/lib;' "$shaderc_pkgconfig_file"
-        export PKG_CONFIG_PATH="$(realpath "VulkanSDK/$(ls VulkanSDK)/x86_64/lib/pkgconfig")"
+        export PKG_CONFIG_PATH="$(realpath "VulkanSDK/$(ls VulkanSDK)/$os_arch/lib/pkgconfig")"
         found_vulkan=true
     fi
 
@@ -193,6 +249,31 @@ if [ ! -d "./vcpkg" ]; then
     git clone --depth 1 https://github.com/Microsoft/vcpkg.git
     vcpkg/bootstrap-vcpkg.sh -disableMetrics
     vcpkg/vcpkg install
+fi
+
+params_sgl=()
+
+if $custom_glslang; then
+    if [ ! -d "./glslang" ]; then
+        echo "------------------------"
+        echo "  downloading glslang   "
+        echo "------------------------"
+        # Make sure we have no leftovers from a failed build attempt.
+        if [ -d "./glslang-src" ]; then
+            rm -rf "./glslang-src"
+        fi
+        git clone https://github.com/KhronosGroup/glslang.git glslang-src
+        pushd glslang-src >/dev/null
+        ./update_glslang_sources.py
+        mkdir build
+        pushd build >/dev/null
+        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${PROJECTPATH}/third_party/glslang" ..
+        make -j $(nproc)
+        make install
+        popd >/dev/null
+        popd >/dev/null
+    fi
+    params_sgl+=(-Dglslang_DIR="${PROJECTPATH}/third_party/glslang" -DUSE_SHADERC=Off)
 fi
 
 if [ ! -d "./sgl" ]; then
@@ -230,21 +311,25 @@ if [ ! -d "./sgl/install" ]; then
     cmake .. \
          -DCMAKE_BUILD_TYPE=Debug \
          -DCMAKE_TOOLCHAIN_FILE="../../vcpkg/scripts/buildsystems/vcpkg.cmake" \
-         -DCMAKE_INSTALL_PREFIX="../install"
+         -DCMAKE_INSTALL_PREFIX="../install" \
+         -DUSE_STATIC_STD_LIBRARIES=On "${params_link[@]}" "${params_sgl[@]}"
     popd >/dev/null
 
     pushd $build_dir_release >/dev/null
     cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_TOOLCHAIN_FILE="../../vcpkg/scripts/buildsystems/vcpkg.cmake" \
-        -DCMAKE_INSTALL_PREFIX="../install"
+        -DCMAKE_INSTALL_PREFIX="../install" \
+        -DUSE_STATIC_STD_LIBRARIES=On "${params_link[@]}" "${params_sgl[@]}"
     popd >/dev/null
 
     cmake --build $build_dir_debug --parallel $(nproc)
     cmake --build $build_dir_debug --target install
+    cp $build_dir_debug/libsgld.so install/lib/libsgld.so
 
     cmake --build $build_dir_release --parallel $(nproc)
     cmake --build $build_dir_release --target install
+    cp $build_dir_release/libsgl.so install/lib/libsgl.so
 
     popd >/dev/null
 fi
@@ -252,7 +337,7 @@ fi
 params=()
 
 embree_version="3.13.3"
-if ! $is_embree_installed; then
+if ! $is_embree_installed && [ $os_arch = "x86_64" ]; then
     if [ ! -d "./embree-${embree_version}.x86_64.linux" ]; then
         echo "------------------------"
         echo "   downloading Embree   "
@@ -264,7 +349,7 @@ if ! $is_embree_installed; then
 fi
 
 ospray_version="2.9.0"
-if ! $is_ospray_installed; then
+if ! $is_ospray_installed && [ $os_arch = "x86_64" ]; then
     if [ ! -d "./ospray-${ospray_version}.x86_64.linux" ]; then
         echo "------------------------"
         echo "   downloading OSPRay   "
@@ -313,7 +398,7 @@ cmake .. \
       -DPYTHONHOME="./python3" \
       -DCMAKE_BUILD_TYPE=$cmake_config \
       -Dsgl_DIR="$PROJECTPATH/third_party/sgl/install/lib/cmake/sgl/" \
-      "${params[@]}"
+      -DUSE_STATIC_STD_LIBRARIES=On "${params_link[@]}" "${params[@]}"
 Python3_VERSION=$(cat pythonversion.txt)
 popd >/dev/null
 
@@ -332,7 +417,7 @@ rsync -a "$build_dir/LineVis" "$destination_dir/bin"
 
 # Copy all dependencies of the application to the destination directory.
 ldd_output="$(ldd $build_dir/LineVis)"
-if ! $is_ospray_installed; then
+if ! $is_ospray_installed && [ $os_arch = "x86_64" ]; then
     libembree3_so="$(readlink -f "${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libembree3.so")"
     libospray_module_cpu_so="$(readlink -f "${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libospray_module_cpu.so")"
     libopenvkl_so="$(readlink -f "${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl.so")"
@@ -344,10 +429,29 @@ if ! $is_ospray_installed; then
     ldd_output="$ldd_output $libopenvkl_module_cpu_device_4_so $libopenvkl_module_cpu_device_8_so $libopenvkl_module_cpu_device_16_so"
 fi
 library_blacklist=(
-    "libOpenGL" "libGL"
+    "libOpenGL" "libGLdispatch" "libGL.so" "libGLX.so"
     "libwayland" "libffi." "libX" "libxcb" "libxkbcommon"
     "ld-linux" "libdl." "libutil." "libm." "libc." "libpthread." "libbsd."
+    # We build with libstdc++.so and libgcc_s.so statically. If we were to ship them, libraries opened with dlopen will
+    # use our, potentially older, versions. Then, we will get errors like "version `GLIBCXX_3.4.29' not found" when
+    # the Vulkan loader attempts to load a Vulkan driver that was built with a never version of libstdc++.so.
+    # I tried to solve this by using "patchelf --replace-needed" to directly link to the patch version of libstdc++.so,
+    # but that made no difference whatsoever for dlopen.
+    # OSPRay depends on libstdc++.so, but it is hopefully a very old version available on a wide range of systems.
+    "libstdc++.so" "libgcc_s.so"
 )
+# Get name of libstdc++.so.* and path to it.
+#for library in $ldd_output
+#do
+#  if [[ $library != "/"* ]]; then
+#      continue
+#  fi
+#  if [[ "$(basename $library)" == "libstdc++.so"* ]]; then
+#      libstdcpp_so_path="$library"
+#      libstdcpp_so_filename_original="$(basename "$library")"
+#      libstdcpp_so_filename_resolved="$(basename "$(readlink -f "$library")")"
+#  fi
+#done
 for library in $ldd_output
 do
     if [[ $library != "/"* ]]; then
@@ -363,10 +467,18 @@ do
     if [ $is_blacklisted = true ]; then
         continue
     fi
-    echo "$library"
+    #if [[ "$(basename $library)" == "libstdc++.so"* ]]; then
+    #    cp "$(readlink -f "$library")" "$destination_dir/bin"
+    #    patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/$(basename "$(readlink -f "$library")")"
+    #else
+    #    cp "$library" "$destination_dir/bin"
+    #    patchelf --replace-needed "$libstdcpp_so_filename_original" "$libstdcpp_so_filename_resolved" "$destination_dir/bin/$(basename "$library")"
+    #    patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/$(basename "$library")"
+    #fi
     cp "$library" "$destination_dir/bin"
     patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/$(basename "$library")"
 done
+#patchelf --replace-needed "$libstdcpp_so_filename_original" "$libstdcpp_so_filename_resolved" "$destination_dir/bin/LineVis"
 patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/LineVis"
 if ! $is_ospray_installed; then
     ln -sf "./$(basename "$libembree3_so")" "$destination_dir/bin/libembree3.so"
@@ -402,7 +514,7 @@ if [ ! -d "$destination_dir/docs" ]; then
 fi
 
 # Create a run script.
-printf "#!/bin/bash\npushd \"\$(dirname \"\$0\")/bin\" >/dev/null\n./LineVis\npopd\n" > "$destination_dir/run.sh"
+printf "#!/bin/bash\npushd \"\$(dirname \"\$0\")/bin\" >/dev/null\n./LineVis\npopd >/dev/null\n" > "$destination_dir/run.sh"
 chmod +x "$destination_dir/run.sh"
 
 
@@ -416,7 +528,7 @@ if [[ -z "${LD_LIBRARY_PATH+x}" ]]; then
 elif [[ ! "${LD_LIBRARY_PATH}" == *"${PROJECTPATH}/third_party/sgl/install/lib"* ]]; then
     export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${PROJECTPATH}/third_party/sgl/install/lib"
 fi
-if ! $is_ospray_installed; then
+if ! $is_ospray_installed && [ $os_arch = "x86_64" ]; then
     export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${PROJECTPATH}/third_party/ospray-${ospray_version}.x86_64.linux/lib"
 fi
 export PYTHONHOME="../Shipping/bin/python3"

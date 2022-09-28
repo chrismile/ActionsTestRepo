@@ -45,6 +45,7 @@ endif()
 option(USE_GTEST "Build the GoogleTest test suites." OFF)
 option(USE_PYTHON "Build with Python 3 support for replay scripts." ON)
 option(VCPKG_EXTERNAL_EMBREE "Use external Embree package if vcpkg is used for compilation." OFF)
+option(USE_STATIC_STD_LIBRARIES "Link with standard libraries statically (only supported on Linux for now)." OFF)
 
 set(DATA_PATH "${CMAKE_SOURCE_DIR}/Data" CACHE PATH "Location of folder 'Data'")
 add_definitions(-DDATA_PATH=\"${DATA_PATH}\")
@@ -78,7 +79,7 @@ if (USE_PYTHON)
     if (${CMAKE_VERSION} VERSION_GREATER "3.11")
         # 2021-05-06: CMake won't find vcpkg version if we don't search for the interpreter.
         # 2022-08-29: Finding interpreter fails with dynamic vcpkg build on Linux and macOS.
-        if(VCPKG_TOOLCHAIN)
+        if(VCPKG_TOOLCHAIN) #  AND (NOT UNIX OR VCPKG_LIBRARY_LINKAGE STREQUAL "static")
             find_package(Python3 COMPONENTS Development Interpreter REQUIRED)
         else()
             find_package(Python3 COMPONENTS Development REQUIRED)
@@ -235,6 +236,10 @@ elseif(APPLE)
     add_executable(LineVis MACOSX_BUNDLE ${SOURCES})
 else()
     add_executable(LineVis ${SOURCES})
+endif()
+
+if(${USE_STATIC_STD_LIBRARIES})
+    target_link_options(LineVis PRIVATE -static-libgcc -static-libstdc++)
 endif()
 
 if (APPLE)
@@ -451,7 +456,8 @@ endif()
 
 # sgl provides Vulkan headers in its interface, which are provided if Vulkan was not found during its build.
 find_package(Vulkan QUIET)
-if (${Vulkan_FOUND} AND ${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.21.0")
+if (${Vulkan_FOUND} AND NOT "USE_SGL_VULKAN_HEADERS" IN_LIST SGL_INTERFACE_COMPILE_DEFINITIONS
+        AND ${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.21.0")
     target_link_libraries(LineVis PUBLIC Vulkan::Headers)
 endif()
 

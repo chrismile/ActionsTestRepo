@@ -37,6 +37,15 @@ build_dir_debug=".build_debug"
 build_dir_release=".build_release"
 destination_dir="Shipping"
 
+# Process command line arguments.
+custom_glslang=false
+for ((i=1;i<=$#;i++));
+do
+    if [ ${!i} = "--custom-glslang" ]; then
+        custom_glslang=true
+    fi
+done
+
 is_installed_pacman() {
     local pkg_name="$1"
     if pacman -Qs $pkg_name > /dev/null; then
@@ -69,6 +78,8 @@ if command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_
             || ! is_installed_pacman "mingw-w64-x86_64-vulkan-loader" \
             || ! is_installed_pacman "mingw-w64-x86_64-vulkan-validation-layers" \
             || ! is_installed_pacman "mingw-w64-x86_64-shaderc" \
+            || ! is_installed_pacman "mingw-w64-x86_64-opencl-headers" \
+            || ! is_installed_pacman "mingw-w64-x86_64-opencl-icd" \
             || ! is_installed_pacman "mingw-w64-x86_64-jsoncpp" \
             || ! is_installed_pacman "mingw-w64-x86_64-netcdf" \
             || ! is_installed_pacman "mingw-w64-x86_64-zeromq" \
@@ -86,6 +97,7 @@ if command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_
         mingw64/mingw-w64-x86_64-SDL2 mingw64/mingw-w64-x86_64-SDL2_image mingw64/mingw-w64-x86_64-glew \
         mingw64/mingw-w64-x86_64-vulkan-headers mingw64/mingw-w64-x86_64-vulkan-loader \
         mingw64/mingw-w64-x86_64-vulkan-validation-layers mingw64/mingw-w64-x86_64-shaderc \
+        mingw64/mingw-w64-x86_64-opencl-headers mingw64/mingw-w64-x86_64-opencl-icd \
         mingw64/mingw-w64-x86_64-jsoncpp mingw64/mingw-w64-x86_64-netcdf mingw64/mingw-w64-x86_64-zeromq \
         mingw64/mingw-w64-x86_64-eigen3 mingw64/mingw-w64-x86_64-python mingw64/mingw-w64-x86_64-python-numpy \
         mingw64/mingw-w64-x86_64-openexr mingw64/mingw-w64-x86_64-eccodes
@@ -121,6 +133,31 @@ fi
 [ -d "./third_party/" ] || mkdir "./third_party/"
 pushd third_party > /dev/null
 
+params_sgl=()
+
+if $custom_glslang; then
+    if [ ! -d "./glslang" ]; then
+        echo "------------------------"
+        echo "  downloading glslang   "
+        echo "------------------------"
+        # Make sure we have no leftovers from a failed build attempt.
+        if [ -d "./glslang-src" ]; then
+            rm -rf "./glslang-src"
+        fi
+        git clone https://github.com/KhronosGroup/glslang.git glslang-src
+        pushd glslang-src >/dev/null
+        ./update_glslang_sources.py
+        mkdir build
+        pushd build >/dev/null
+        cmake -G "MSYS Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${PROJECTPATH}/third_party/glslang" ..
+        make -j $(nproc)
+        make install
+        popd >/dev/null
+        popd >/dev/null
+    fi
+    params_sgl+=(-Dglslang_DIR="${PROJECTPATH}/third_party/glslang" -DUSE_SHADERC=Off)
+fi
+
 if [ ! -d "./sgl" ]; then
     echo "------------------------"
     echo "     fetching sgl       "
@@ -141,16 +178,18 @@ if [ ! -d "./sgl/install" ]; then
     cmake .. \
          -G "MSYS Makefiles" \
          -DCMAKE_BUILD_TYPE=Debug \
-         -DCMAKE_INSTALL_PREFIX="../install"
+         -DCMAKE_INSTALL_PREFIX="../install" \
+         "${params_sgl[@]}"
     make -j $(nproc)
     make install
     popd >/dev/null
 
     pushd $build_dir_release >/dev/null
     cmake .. \
-         -G "MSYS Makefiles" \
+        -G "MSYS Makefiles" \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX="../install"
+        -DCMAKE_INSTALL_PREFIX="../install" \
+        "${params_sgl[@]}"
     make -j $(nproc)
     make install
     popd >/dev/null
