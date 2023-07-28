@@ -57,12 +57,12 @@ if not defined VCINSTALLDIR (
     set cmake_generator=
 )
 
-if not exist .\third_party\ mkdir .\third_party\
-pushd third_party
-
 set cmake_args_general=-DCMAKE_TOOLCHAIN_FILE="%~dp0/third_party/vcpkg/scripts/buildsystems/vcpkg.cmake" ^
                -DVCPKG_TARGET_TRIPLET=%vcpkg_triplet%
 echo cmake_args_general: %cmake_args_general%
+
+if not exist .\third_party\ mkdir .\third_party\
+pushd third_party
 
 if %build_with_zarr_support% == true (
     if not exist ".\xtl" (
