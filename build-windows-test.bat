@@ -57,9 +57,14 @@ if not defined VCINSTALLDIR (
     set cmake_generator=
 )
 
-set cmake_args_general=-DCMAKE_TOOLCHAIN_FILE="%~dp0/third_party/vcpkg/scripts/buildsystems/vcpkg.cmake" ^
+set third_party_dir=%~dp0/third_party
+set cmake_args=-DCMAKE_TOOLCHAIN_FILE="third_party/vcpkg/scripts/buildsystems/vcpkg.cmake" ^
+               -DVCPKG_TARGET_TRIPLET=%vcpkg_triplet%                                      ^
+               -DCMAKE_CXX_FLAGS="/MP"                                                     ^
+               -Dsgl_DIR="third_party/sgl/install/lib/cmake/sgl/"
+
+set cmake_args_general=-DCMAKE_TOOLCHAIN_FILE="%third_party_dir%/vcpkg/scripts/buildsystems/vcpkg.cmake" ^
                -DVCPKG_TARGET_TRIPLET=%vcpkg_triplet%
-echo cmake_args_general: %cmake_args_general%
 
 if not exist .\third_party\ mkdir .\third_party\
 pushd third_party
@@ -77,7 +82,7 @@ if %build_with_zarr_support% == true (
         if not exist .\xtl-src\build\ mkdir .\xtl-src\build\
         pushd "xtl-src\build"
         cmake %cmake_generator% %cmake_args_general% ^
-        -DCMAKE_INSTALL_PREFIX="%~dp0/third_party/xtl" ..
+        -DCMAKE_INSTALL_PREFIX="%third_party_dir%/xtl" ..
         cmake --build . --config Release --target install || exit /b 1
         popd
     )
@@ -93,8 +98,8 @@ if %build_with_zarr_support% == true (
         if not exist .\xtensor-src\build\ mkdir .\xtensor-src\build\
         pushd "xtensor-src\build"
         cmake %cmake_generator% %cmake_args_general% ^
-        -Dxtl_DIR="%~dp0/third_party/xtl/share/cmake/xtl" ^
-        -DCMAKE_INSTALL_PREFIX="%~dp0/third_party/xtensor" ..
+        -Dxtl_DIR="%third_party_dir%/xtl/share/cmake/xtl" ^
+        -DCMAKE_INSTALL_PREFIX="%third_party_dir%/xtensor" ..
         cmake --build . --config Release --target install || exit /b 1
         popd
     )
@@ -110,9 +115,9 @@ if %build_with_zarr_support% == true (
         if not exist .\xsimd-src\build\ mkdir .\xsimd-src\build\
         pushd "xsimd-src\build"
         cmake %cmake_generator% %cmake_args_general% ^
-        -Dxtl_DIR="%~dp0/third_party/xtl/share/cmake/xtl" ^
+        -Dxtl_DIR="%third_party_dir%/xtl/share/cmake/xtl" ^
         -DENABLE_XTL_COMPLEX=ON ^
-        -DCMAKE_INSTALL_PREFIX="%~dp0/third_party/xsimd" ..
+        -DCMAKE_INSTALL_PREFIX="%third_party_dir%/xsimd" ..
         cmake --build . --config Release --target install || exit /b 1
         popd
     )
@@ -134,20 +139,20 @@ if %build_with_zarr_support% == true (
         powershell -Command "(gc z5-src/CMakeLists.txt) -replace 'set\(CMAKE_MODULE_PATH \$\{CMAKE_CURRENT_SOURCE_DIR\}\/cmake\)', 'list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)' | Out-File -encoding ASCII z5-src/CMakeLists.txt"
         powershell -Command "(gc z5-src/CMakeLists.txt) -replace 'set\(CMAKE_PREFIX_PATH \$\{CMAKE_PREFIX_PATH\} CACHE PATH \"\"\)', '#set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} CACHE PATH "")' | Out-File -encoding ASCII z5-src/CMakeLists.txt"
         powershell -Command "(gc z5-src/CMakeLists.txt) -replace 'if\(NOT WITHIN_TRAVIS\)', 'if(FALSE)' | Out-File -encoding ASCII z5-src/CMakeLists.txt"
-        echo {> %~dp0/third_party/z5-src/vcpkg.json
-        echo "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",>> %~dp0/third_party/z5-src/vcpkg.json
-        echo "name": "z5",>> %~dp0/third_party/z5-src/vcpkg.json
-        echo "version": "0.1.0",>> %~dp0/third_party/z5-src/vcpkg.json
-        echo "dependencies": [ "boost-core", "boost-filesystem", "nlohmann-json", "blosc" ]>> %~dp0/third_party/z5-src/vcpkg.json
-        echo }>> %~dp0/third_party/z5-src/vcpkg.json
+        echo {> %third_party_dir%/z5-src/vcpkg.json
+        echo "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",>> %third_party_dir%/z5-src/vcpkg.json
+        echo "name": "z5",>> %third_party_dir%/z5-src/vcpkg.json
+        echo "version": "0.1.0",>> %third_party_dir%/z5-src/vcpkg.json
+        echo "dependencies": [ "boost-core", "boost-filesystem", "nlohmann-json", "blosc" ]>> %third_party_dir%/z5-src/vcpkg.json
+        echo }>> %third_party_dir%/z5-src/vcpkg.json
         if not exist .\z5-src\build\ mkdir .\z5-src\build\
         pushd "z5-src\build"
         cmake %cmake_generator% %cmake_args_general% ^
-        -Dxtl_DIR="%~dp0/third_party/xtl/share/cmake/xtl" ^
-        -Dxtensor_DIR="%~dp0/third_party/xtensor/share/cmake/xtensor" ^
-        -Dxsimd_DIR="%~dp0/third_party/xsimd/lib/cmake/xsimd" ^
+        -Dxtl_DIR="%third_party_dir%/xtl/share/cmake/xtl" ^
+        -Dxtensor_DIR="%third_party_dir%/xtensor/share/cmake/xtensor" ^
+        -Dxsimd_DIR="%third_party_dir%/xsimd/lib/cmake/xsimd" ^
         -DBUILD_Z5PY=OFF -DWITH_ZLIB=ON -DWITH_LZ4=ON -DWITH_BLOSC=ON ^
-        -DCMAKE_INSTALL_PREFIX="%~dp0/third_party/z5" ..
+        -DCMAKE_INSTALL_PREFIX="%third_party_dir%/z5" ..
         cmake --build . --config Release --target install || exit /b 1
         popd
     )
