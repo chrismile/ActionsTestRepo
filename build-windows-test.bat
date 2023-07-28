@@ -164,3 +164,4 @@ set cmake_args=%cmake_args% -Dxtl_DIR="third_party/xtl/share/cmake/xtl" ^
 
 popd
 
+echo Finished!
