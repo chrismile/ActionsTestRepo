@@ -1,4 +1,4 @@
-name: Build on Windows
+name: Build using vcpkg
 
 on:
   push:
@@ -15,9 +15,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ windows-2022 ]
+        linking: [ dynamic, static ]
 
     runs-on: ${{ matrix.os }}
-    name: "Build on ${{ matrix.os }}"
+    name: "${{ github.workflow }}: ${{ matrix.os }} (${{ matrix.linking }})"
 
     env:
       VCPKG_ROOT: ${{ github.workspace }}/third_party/vcpkg
