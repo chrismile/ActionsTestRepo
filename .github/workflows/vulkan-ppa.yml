@@ -57,6 +57,8 @@ jobs:
             VULKAN_SDK_VERSION=$(echo $vulkansdk_filename | sed -r 's/^.*vulkansdk-macos-(.*)\.dmg.*$/\1/')
             curl -O https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg
             sudo hdiutil attach vulkan-sdk.dmg
+            ls /Volumes
+            ls /Volumes/VulkanSDK
             ls /Volumes/VulkanSDK/InstallVulkan.app/Contents/MacOS
             sudo /Volumes/VulkanSDK/InstallVulkan.app/Contents/MacOS/InstallVulkan \
             --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
