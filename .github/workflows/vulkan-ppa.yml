@@ -57,10 +57,10 @@ jobs:
             VULKAN_SDK_VERSION=$(echo $vulkansdk_filename | sed -r 's/^.*vulkansdk-macos-(.*)\.dmg.*$/\1/')
             curl -O https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg
             sudo hdiutil attach vulkan-sdk.dmg
-            ls /Volumes
-            ls /Volumes/VulkanSDK
-            ls /Volumes/VulkanSDK/InstallVulkan.app/Contents/MacOS
-            sudo /Volumes/VulkanSDK/InstallVulkan.app/Contents/MacOS/InstallVulkan \
+            # The directory was changed from '/Volumes/VulkanSDK' to, e.g., 'vulkansdk-macos-1.3.261.0'.
+            vulkan_dir=$(find /Volumes -maxdepth 1 -name '[Vv]ulkan*')
+            echo "vulkan_dir: ${vulkan_dir}"
+            sudo "${vulkan_dir}/InstallVulkan.app/Contents/MacOS/InstallVulkan" \
             --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
             cd ~/VulkanSDK/$VULKAN_SDK_VERSION
             sudo ./install_vulkan.py || true
