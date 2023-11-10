@@ -509,14 +509,8 @@ use_vulkan=true
 os_arch="$(uname -m)"
 
 search_for_vulkan_sdk=false
-if [ $use_macos = false ]; then
-    if [ $use_msys = false ] && [[ ! -v VULKAN_SDK ]]; then
-        search_for_vulkan_sdk=true
-    fi
-else
-    if [ -z "${VULKAN_SDK+1}" ]; then
-        search_for_vulkan_sdk=true
-    fi
+if [ $use_msys = false ] && [ -z "${VULKAN_SDK+1}" ]; then
+    search_for_vulkan_sdk=true
 fi
 
 if [ $search_for_vulkan_sdk = true ]; then
@@ -637,14 +631,8 @@ if $custom_glslang; then
     params_sgl+=(-Dglslang_DIR="${projectpath}/third_party/glslang" -DUSE_SHADERC=Off)
 fi
 
-if [ $use_macos = false ]; then
-    if [ $use_msys = false ] && [[ ! -v VULKAN_SDK ]]; then
-        vulkan_sdk_env_set=false
-    fi
-else
-    if [ -z "${VULKAN_SDK+1}" ]; then
-        vulkan_sdk_env_set=false
-    fi
+if [ $use_msys = false ] && [ -z "${VULKAN_SDK+1}" ]; then
+    vulkan_sdk_env_set=true
 fi
 
 if [ $use_vcpkg = true ] && [ ! -d "./vcpkg" ]; then
