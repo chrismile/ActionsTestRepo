@@ -622,7 +622,7 @@ if $custom_glslang; then
         ./update_glslang_sources.py
         mkdir build
         pushd build >/dev/null
-        cmake "${params_gen[@]}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/glslang" ..
+        cmake ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/glslang" ..
         make -j $(nproc)
         make install
         popd >/dev/null
@@ -692,7 +692,8 @@ if [ ! -d "./sgl/install" ]; then
     cmake .. \
          -DCMAKE_BUILD_TYPE=Debug \
          -DCMAKE_INSTALL_PREFIX="../install" \
-         "${params_gen[@]}" "${params_link[@]}" "${params_vcpkg[@]}" "${params_sgl[@]}"
+         ${params_gen[@]+"${params_gen[@]}"} ${params_link[@]+"${params_link[@]}"} \
+         ${params_vcpkg[@]+"${params_vcpkg[@]}"} ${params_sgl[@]+"${params_sgl[@]}"}
     if [ $use_vcpkg = false ] && [ $use_macos = false ]; then
         make -j $(nproc)
         make install
@@ -703,7 +704,8 @@ if [ ! -d "./sgl/install" ]; then
     cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="../install" \
-         "${params_gen[@]}" "${params_link[@]}" "${params_vcpkg[@]}" "${params_sgl[@]}"
+         ${params_gen[@]+"${params_gen[@]}"} ${params_link[@]+"${params_link[@]}"} \
+         ${params_vcpkg[@]+"${params_vcpkg[@]}"} ${params_sgl[@]+"${params_sgl[@]}"}
     if [ $use_vcpkg = false ] && [ $use_macos = false ]; then
         make -j $(nproc)
         make install
@@ -745,7 +747,7 @@ if $build_with_zarr_support; then
         git clone https://github.com/xtensor-stack/xtl.git xtl-src
         mkdir -p xtl-src/build
         pushd xtl-src/build >/dev/null
-        cmake "${params_gen[@]}" -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xtl" ..
+        cmake ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xtl" ..
         make install
         popd >/dev/null
     fi
@@ -760,7 +762,7 @@ if $build_with_zarr_support; then
         git clone https://github.com/xtensor-stack/xtensor.git xtensor-src
         mkdir -p xtensor-src/build
         pushd xtensor-src/build >/dev/null
-        cmake "${params_gen[@]}" -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
+        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
         -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xtensor" ..
         make install
         popd >/dev/null
@@ -776,7 +778,7 @@ if $build_with_zarr_support; then
         git clone https://github.com/xtensor-stack/xsimd.git xsimd-src
         mkdir -p xsimd-src/build
         pushd xsimd-src/build >/dev/null
-        cmake "${params_gen[@]}" -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
+        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
         -DENABLE_XTL_COMPLEX=ON \
         -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xsimd" ..
         make install
@@ -812,11 +814,11 @@ EOF
         fi
         mkdir -p z5-src/build
         pushd z5-src/build >/dev/null
-        cmake "${params_gen[@]}" -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
+        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
         -Dxtensor_DIR="${xtensor_CMAKE_DIR}" \
         -Dxsimd_DIR="${projectpath}/third_party/xsimd/lib/cmake/xsimd" \
         -DBUILD_Z5PY=OFF -DWITH_ZLIB=ON -DWITH_LZ4=ON -DWITH_BLOSC=ON \
-        -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/z5" "${params_vcpkg[@]}" ..
+        -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/z5" ${params_vcpkg[@]+"${params_vcpkg[@]}"} ..
         make install
         popd >/dev/null
     fi
@@ -886,7 +888,7 @@ if $build_with_vkvg_support; then
         git clone --recursive https://github.com/chrismile/vkvg vkvg-src
         mkdir -p vkvg-src/build
         pushd vkvg-src/build >/dev/null
-        cmake .. "${params_gen[@]}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/vkvg" \
+        cmake .. ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/vkvg" \
         -DVKVG_ENABLE_VK_SCALAR_BLOCK_LAYOUT=ON -DVKVG_ENABLE_VK_TIMELINE_SEMAPHORE=ON \
         -DVKVG_USE_FONTCONFIG=OFF -DVKVG_USE_HARFBUZZ=OFF -DVKVG_BUILD_TESTS=OFF
         make -j $(nproc)
@@ -907,7 +909,7 @@ if $build_with_osqp_support; then
         git clone https://github.com/osqp/osqp osqp-src
         mkdir -p osqp-src/build
         pushd osqp-src/build >/dev/null
-        cmake .. "${params_gen[@]}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/osqp"
+        cmake .. ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/osqp"
         make -j $(nproc)
         make install
         popd >/dev/null
@@ -1006,7 +1008,8 @@ pushd $build_dir >/dev/null
 cmake .. \
     -DCMAKE_BUILD_TYPE=$cmake_config \
     -Dsgl_DIR="$projectpath/third_party/sgl/install/lib/cmake/sgl/" \
-    "${params_gen[@]}" "${params_link[@]}" "${params_vcpkg[@]}" "${params[@]}"
+    ${params_gen[@]+"${params_gen[@]}"} ${params_link[@]+"${params_link[@]}"} \
+    ${params_vcpkg[@]+"${params_vcpkg[@]}"} ${params[@]+"${params[@]}"}
 popd >/dev/null
 
 echo "------------------------"
@@ -1200,7 +1203,7 @@ else
             continue
         fi
         is_blacklisted=false
-        for blacklisted_library in ${library_blacklist[@]}; do
+        for blacklisted_library in ${library_blacklist[@]+"${library_blacklist[@]}"}; do
             if [[ "$library" == *"$blacklisted_library"* ]]; then
                 is_blacklisted=true
                 break
@@ -1293,9 +1296,9 @@ else
 fi
 
 if [ $run_program = true ] && [ $use_macos = false ]; then
-    ./Correrender "${params_run[@]}"
+    ./Correrender ${params_run[@]+"${params_run[@]}"}
 elif [ $run_program = true ] && [ $use_macos = true ]; then
     #open ./Correrender.app
     #open ./Correrender.app --args --perf
-    ./Correrender.app/Contents/MacOS/Correrender "${params_run[@]}"
+    ./Correrender.app/Contents/MacOS/Correrender ${params_run[@]+"${params_run[@]}"}
 fi
