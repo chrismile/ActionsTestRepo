@@ -1,28 +1,61 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
-    "name": "linevis",
+    "name": "correrender",
     "version": "0.1.0",
     "dependencies": [
         "boost-core",
         "boost-algorithm",
         "boost-filesystem",
+        "boost-math",
+        "boost-parameter",
         {
             "name": "boost-interprocess",
             "platform": "windows"
         },
         {
             "name": "sdl2",
-            "features": [ "vulkan" ]
+            "features": [ "vulkan", "x11", "wayland" ],
+            "platform": "linux"
+        },
+        {
+            "name": "sdl2",
+            "features": [ "vulkan" ],
+            "platform": "!linux"
+        },
+        "sdl2-image",
+        {
+            "name": "glfw3",
+            "platform": "!linux"
         },
         "tinyxml2",
+        {
+            "name": "libarchive",
+            "default-features": true,
+            "features": [ "bzip2", "lz4", "lzma", "zstd" ]
+        },
         "vulkan-headers",
+        "shaderc",
         "opencl",
+        "glew",
         "glm",
+        "tbb",
         "eigen3",
         "jsoncpp",
+        "nlohmann-json",
         "python3",
-        "cppzmq",
         "netcdf-c",
-        "openexr"
-    ]
+        "blosc",
+        "eigen3",
+        "nlopt",
+        "curl",
+        "tiff"
+    ],
+    "features": {
+        "tbb": {
+            "description": "Use TBB instead of OpenMP for multi-threading",
+            "dependencies": [
+                "tbb"
+            ]
+        }
+    }
 }

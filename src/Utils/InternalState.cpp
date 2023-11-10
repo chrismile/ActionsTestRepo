@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2020, Christoph Neuhauser
+ * Copyright (c) 2022, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,255 +26,18 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "Renderers/OIT/SyncMode.hpp"
-#include "LineData/LineData.hpp"
 #include "InternalState.hpp"
 
-void getTestModesOpaque(std::vector<InternalState>& states, InternalState state) {
-    state.renderingMode = RENDERING_MODE_ALL_LINES_OPAQUE;
-    state.name = "Opaque";
+#include "Volume/VolumeData.hpp"
+#include "InternalState.hpp"
+
+void getTestModesDvr(std::vector<InternalState>& states, InternalState state) {
+    state.renderingMode = RENDERING_MODE_DIRECT_VOLUME_RENDERING;
+    state.name = "Direct Volume Rendering";
     states.push_back(state);
 }
 
-void getTestModesDepthComplexity(std::vector<InternalState>& states, InternalState state) {
-    state.renderingMode = RENDERING_MODE_DEPTH_COMPLEXITY;
-    state.name = "Depth Complexity";
-    states.push_back(state);
-}
-
-void getTestModesPerPixelLinkedLists(std::vector<InternalState>& states, InternalState state) {
-    state.renderingMode = RENDERING_MODE_PER_PIXEL_LINKED_LIST;
-    state.name = "PPLL";
-    state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{})};
-    states.push_back(state);
-}
-
-void getTestModesOpacityOptimization(std::vector<InternalState>& states, InternalState state) {
-    state.renderingMode = RENDERING_MODE_PER_PIXEL_LINKED_LIST;
-    state.name = "Opacity Optimization";
-    state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{})};
-    states.push_back(state);
-}
-
-void getTestModesMlab(std::vector<InternalState>& states, InternalState state) {
-    state.renderingMode = RENDERING_MODE_MLAB;
-
-    state.name = "MLAB (No Sync)";
-    state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{
-            { "syncMode", std::to_string((int)NO_SYNC) }
-    })};
-    states.push_back(state);
-
-    state.name = "MLAB (Spinlock)";
-    state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{
-            { "syncMode", std::to_string((int)SYNC_SPINLOCK) }
-    })};
-    states.push_back(state);
-
-    state.name = "MLAB (Unordered Interlock)";
-    state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{
-            { "syncMode", std::to_string((int)SYNC_FRAGMENT_SHADER_INTERLOCK) },
-            { "useOrderedFragmentShaderInterlock", "false" }
-    })};
-    states.push_back(state);
-
-    state.name = "MLAB (Ordered Interlock)";
-    state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{
-            { "syncMode", std::to_string((int)SYNC_FRAGMENT_SHADER_INTERLOCK) },
-            { "useOrderedFragmentShaderInterlock", "true" }
-    })};
-    states.push_back(state);
-}
-
-void getTestModesOITForDataSet(std::vector<InternalState>& states, InternalState state) {
-    //getTestModesDepthComplexity(states, state);
-    //getTestModesPerPixelLinkedLists(states, state);
-    //getTestModesOpacityOptimization(states, state);
-    //getTestModesOpacityOptimization(states, state);
-    getTestModesOpaque(states, state);
-    getTestModesDepthComplexity(states, state);
-    getTestModesPerPixelLinkedLists(states, state);
-    getTestModesMlab(states, state);
-}
-
-std::vector<InternalState> getTestModesOIT() {
-    std::vector<InternalState> states;
-    //std::vector<glm::ivec2> windowResolutions = {
-    //        glm::ivec2(1280, 720), glm::ivec2(1920, 1080), glm::ivec2(2560, 1440) };
-    std::vector<glm::ivec2> windowResolutions = { glm::ivec2(1920, 1080) };
-    //std::vector<glm::ivec2> windowResolutions = { glm::ivec2(2560, 1440) };
-    //std::vector<glm::ivec2> windowResolutions = { glm::ivec2(2186, 1358) };
-    std::vector<DataSetDescriptor> dataSetDescriptors = {
-            //DataSetDescriptor("Aneurysm"),
-            DataSetDescriptor("Femur (Vis2021)"),
-    };
-    std::vector<std::string> transferFunctionNames = {
-            //"Transparent_Aneurysm.xml",
-            "Standard.xml",
-    };
-    InternalState state;
-
-    /*for (size_t i = 0; i < windowResolutions.size(); i++) {
-        state.windowResolution = windowResolutions.at(i);
-        for (size_t j = 0; j < dataSetDescriptors.size(); j++) {
-            state.dataSetDescriptor = dataSetDescriptors.at(j);
-            if (transferFunctionNames.size() > 0) {
-                state.transferFunctionName = transferFunctionNames.at(j);
-            }
-            getTestModesOITForDataSet(states, state);
-        }
-    }*/
-    for (size_t i = 0; i < dataSetDescriptors.size(); i++) {
-        state.dataSetDescriptor = dataSetDescriptors.at(i);
-        for (size_t j = 0; j < windowResolutions.size(); j++) {
-            state.windowResolution = windowResolutions.at(j);
-            if (!transferFunctionNames.empty()) {
-                state.transferFunctionName = transferFunctionNames.at(i);
-            }
-            getTestModesOITForDataSet(states, state);
-        }
-    }
-
-    // Append model name to state name if more than one model is loaded
-    if (!dataSetDescriptors.empty() || windowResolutions.size() > 1) {
-        for (InternalState& state : states) {
-            state.name =
-                    sgl::toString(state.windowResolution.x) + "x" + sgl::toString(state.windowResolution.y)
-                    + " " + state.dataSetDescriptor.name + " " + state.name;
-        }
-    }
-
-    return states;
-}
-
-
-void setLinePrimitiveMode(InternalState& state, LineData::LinePrimitiveMode linePrimitiveMode) {
-    state.dataSetSettings = { SettingsMap(std::map<std::string, std::string>{
-            { "line_primitive_mode_index", std::to_string(int(linePrimitiveMode)) }
-    })};
-}
-void getTestModesRasterization(std::vector<InternalState>& states, InternalState state) {
-    sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
-
-    state.renderingMode = RENDERING_MODE_ALL_LINES_OPAQUE;
-    state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{
-            { "numSamples", "1" }
-    })};
-
-    if (device->getPhysicalDeviceFeatures().geometryShader) {
-        state.name = "Warm-up Run";
-        setLinePrimitiveMode(state, LineData::LINE_PRIMITIVES_RIBBON_QUADS_GEOMETRY_SHADER);
-        states.push_back(state);
-
-        state.name = "Quads Geometry Shader";
-        setLinePrimitiveMode(state, LineData::LINE_PRIMITIVES_RIBBON_QUADS_GEOMETRY_SHADER);
-        states.push_back(state);
-
-        state.name = "Geometry Shader";
-        setLinePrimitiveMode(state, LineData::LINE_PRIMITIVES_TUBE_RIBBONS_GEOMETRY_SHADER);
-        states.push_back(state);
-    }
-
-    state.name = "Programmable Pull";
-    setLinePrimitiveMode(state, LineData::LINE_PRIMITIVES_TUBE_RIBBONS_PROGRAMMABLE_PULL);
-    states.push_back(state);
-
-    if (device->getPhysicalDeviceMeshShaderFeaturesNV().meshShader) {
-        state.name = "Mesh Shader (NV)";
-        setLinePrimitiveMode(state, LineData::LINE_PRIMITIVES_TUBE_RIBBONS_MESH_SHADER_NV);
-        states.push_back(state);
-    }
-
-#ifdef VK_EXT_mesh_shader
-    if (device->getPhysicalDeviceMeshShaderFeaturesEXT().meshShader) {
-        state.name = "Mesh Shader (EXT)";
-        setLinePrimitiveMode(state, LineData::LINE_PRIMITIVES_TUBE_RIBBONS_MESH_SHADER);
-        states.push_back(state);
-    }
-#endif
-
-    // An out of memory error is triggered on Intel iGPUs for large data sets when trying to store the triangle mesh.
-    bool isIntelIntegratedGpu =
-            (device->getDeviceDriverId() == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS
-             || device->getDeviceDriverId() == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA)
-            && device->getDeviceType() == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
-    bool isLargeDataSet =
-            state.dataSetDescriptor.name == "Convection Rolls" || state.dataSetDescriptor.name == "Turbulence";
-    if (!isIntelIntegratedGpu || !isLargeDataSet) {
-        state.name = "Triangle Mesh";
-        setLinePrimitiveMode(state, LineData::LINE_PRIMITIVES_TUBE_RIBBONS_TRIANGLE_MESH);
-        states.push_back(state);
-    }
-}
-
-void getTestModesVulkanRayTracing(std::vector<InternalState>& states, InternalState state) {
-    if (sgl::AppSettings::get()->getPrimaryDevice()->getRayTracingPipelineSupported()) {
-        state.renderingMode = RENDERING_MODE_VULKAN_RAY_TRACER;
-
-        //state.name = "VRT Analytic";
-        //state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{
-        //        { "useAnalyticIntersections", "true" },
-        //        { "numSamplesPerFrame", "1" }
-        //})};
-        //states.push_back(state);
-
-        /*if (state.dataSetDescriptor.name != "Convection Rolls"
-                || sgl::AppSettings::get()->getPrimaryDevice()->getDeviceDriverId() != VK_DRIVER_ID_AMD_PROPRIETARY) {*/
-        state.name = "VRT Triangle Mesh";
-        state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{
-                { "useAnalyticIntersections", "false" },
-                { "numSamplesPerFrame", "1" }
-        })};
-        states.push_back(state);
-        //}
-    }
-}
-
-void getTestModesVoxelRayCasting(std::vector<InternalState>& states, InternalState state) {
-    //sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
-    // Intel integrated GPUs are too slow at the time of writing this code and TDR might be triggered for this mode.
-    // I increased the timeout using the following method to allow it to run anyways:
-    // https://substance3d.adobe.com/documentation/spdoc/gpu-drivers-crash-with-long-computations-tdr-crash-128745489.html
-    //if ((device->getDeviceDriverId() != VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS
-    //         && device->getDeviceDriverId() != VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA)
-    //        || device->getDeviceType() != VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
-    state.renderingMode = RENDERING_MODE_VOXEL_RAY_CASTING;
-    state.name = "Voxel Ray Casting";
-    if (state.dataSetDescriptor.name == "Convection Rolls") {
-        state.rendererSettings.addKeyValue("computeNearestFurthestHitsUsingHull", false);
-    }
-    states.push_back(state);
-    //}
-}
-
-#ifdef USE_OSPRAY
-void getTestModesOspray(std::vector<InternalState>& states, InternalState state) {
-    state.renderingMode = RENDERING_MODE_OSPRAY_RAY_TRACER;
-
-    state.name = "OSPRay Linear Curves";
-    state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{
-            { "geometryMode", "curves" }
-    })};
-    states.push_back(state);
-
-    state.name = "OSPRay Triangle Mesh";
-    state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{
-            { "geometryMode", "triangle_mesh" }
-    })};
-    states.push_back(state);
-}
-#endif
-
-void getTestModesPaperVMV(std::vector<InternalState>& states, const InternalState& state) {
-    getTestModesRasterization(states, state);
-    getTestModesVulkanRayTracing(states, state);
-    //getTestModesVoxelRayCasting(states, state);
-#ifdef USE_OSPRAY
-    //getTestModesOspray(states, state);
-#endif
-}
-
-std::vector<InternalState> getTestModesOpaqueRendering() {
+std::vector<InternalState> getTestModesPaper() {
     sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
     std::vector<InternalState> states;
     std::vector<glm::ivec2> windowResolutions = {
@@ -293,13 +56,12 @@ std::vector<InternalState> getTestModesOpaqueRendering() {
     }
     std::vector<DataSetDescriptor> dataSetDescriptors = {
             //DataSetDescriptor("Rings"),
-            //DataSetDescriptor("Aneurysm"),
+            DataSetDescriptor("Aneurysm"),
             //DataSetDescriptor("Convection Rolls"),
             //DataSetDescriptor("Femur (Vis2021)"),
             //DataSetDescriptor("Bearing"),
             //DataSetDescriptor("Convection Rolls"),
             //DataSetDescriptor("Tangaroa (t=200)"),
-            DataSetDescriptor("Centrifugal Pump (DES.res_t2564)"),
     };
     std::vector<std::string> transferFunctionNames = {
             //"Standard.xml"
@@ -313,51 +75,7 @@ std::vector<InternalState> getTestModesOpaqueRendering() {
             if (!transferFunctionNames.empty()) {
                 state.transferFunctionName = transferFunctionNames.at(i);
             }
-            getTestModesPaperVMV(states, state);
-        }
-    }
-
-    // Testing performance without the contributions introduced by the paper.
-    bool useContributions = true;
-
-    bool testRotatingHelicityBands = true;
-    if (testRotatingHelicityBands) {
-        std::vector<InternalState> oldStates = states;
-        states.clear();
-        for (size_t i = 0; i < oldStates.size(); i++) {
-            InternalState state = oldStates.at(i);
-            std::string nameBase = state.name;
-
-            state.name = nameBase + "(Ribbon)";
-            if (!useContributions) {
-                state.dataSetSettings.addKeyValue("use_halos", "false");
-            }
-            state.dataSetSettings.addKeyValue("use_ribbons", "true");
-            state.dataSetSettings.addKeyValue("rotating_helicity_bands", "false");
-            state.rendererSettings.addKeyValue("line_width", "0.006");
-            state.rendererSettings.addKeyValue("band_width", "0.007");
-            states.push_back(state);
-
-            state.name = nameBase + "(Twist)";
-            state.dataSetSettings.addKeyValue("use_ribbons", "false");
-            if (useContributions) {
-                int linePrimitiveModeIndex = 0;
-                state.dataSetSettings.getValueOpt("line_primitive_mode_index", linePrimitiveModeIndex);
-                if (LineData::LinePrimitiveMode(linePrimitiveModeIndex) != LineData::LINE_PRIMITIVES_RIBBON_QUADS_GEOMETRY_SHADER) {
-                    state.dataSetSettings.addKeyValue("rotating_helicity_bands", "true");
-                }
-            } else {
-                state.dataSetSettings.addKeyValue(
-                        "twist_line_texture",
-                        sgl::AppSettings::get()->getDataDirectory() + "Texture/Stripes.png");
-                state.dataSetSettings.addKeyValue(
-                        "use_twist_line_texture", "false");
-                state.dataSetSettings.addKeyValue(
-                        "twist_line_texture_filtering_mode", "Linear Mipmap Linear");
-                state.dataSetSettings.addKeyValue(
-                        "twist_line_texture_max_anisotropy", "16");
-            }
-            states.push_back(state);
+            getTestModesDvr(states, state);
         }
     }
 
@@ -391,5 +109,5 @@ std::vector<InternalState> getTestModesOpaqueRendering() {
 }
 
 std::vector<InternalState> getTestModes() {
-    return getTestModesOpaqueRendering();
+    return getTestModesPaper();
 }

@@ -36,40 +36,14 @@
 
 #include "AutomaticPerformanceMeasurer.hpp"
 
-// See: https://stackoverflow.com/questions/2513505/how-to-get-available-memory-c-g
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-size_t getUsedSystemMemoryBytes() {
-    MEMORYSTATUSEX status;
-    status.dwLength = sizeof(status);
-    GlobalMemoryStatusEx(&status);
-    return status.ullTotalPhys - status.ullAvailPhys;
-}
-#elif defined(__linux__)
-#include <unistd.h>
-size_t getUsedSystemMemoryBytes() {
-    size_t totalNumPages = sysconf(_SC_PHYS_PAGES);
-    size_t availablePages = sysconf(_SC_AVPHYS_PAGES);
-    size_t pageSizeBytes = sysconf(_SC_PAGE_SIZE);
-    return (totalNumPages - availablePages) * pageSizeBytes;
-}
-#else
-size_t getUsedSystemMemoryBytes() {
-    return 0;
-}
-#endif
-
 AutomaticPerformanceMeasurer::AutomaticPerformanceMeasurer(
         sgl::vk::Renderer* renderer, std::vector<InternalState> _states,
         const std::string& _csvFilename, const std::string& _depthComplexityFilename,
         std::function<void(const InternalState&)> _newStateCallback)
         : renderer(renderer), states(std::move(_states)), currentStateIndex(0),
           newStateCallback(std::move(_newStateCallback)),
-          file(_csvFilename), depthComplexityFile(_depthComplexityFilename),
-          perfFile("performance_list.csv"), ppllFile("PPLLUnified.csv") {
+          file(_csvFilename), perfFile("performance_list.csv"),
+          depthComplexityFilename(_depthComplexityFilename){
     sgl::FileUtils::get()->ensureDirectoryExists("images/");
 
     // Write header
@@ -78,13 +52,34 @@ AutomaticPerformanceMeasurer::AutomaticPerformanceMeasurer(
         "State Name", "Data Set Name", "Device Name", "Resolution",
         "Average Time (ms)", "Base Data Size (GiB)", "Buffer Size (GiB)", "OIT Buffer Size (GiB)",
         "Average FPS", "5% Percentile FPS", "95% Percentile FPS", "StdDev FPS", "PPLL Entries", "PPLL Size (GiB)"});
-    depthComplexityFile.writeRow(
-            {"State Name", "Data Set Name", "Device Name", "Resolution",
-             "Frame Number", "Min Depth Complexity", "Max Depth Complexity",
-             "Avg Depth Complexity Used", "Avg Depth Complexity All", "Total Number of Fragments",
-             "Fragment Buffer Memory (GiB)"});
     perfFile.writeRow({"Name", "Time per frame (ms)"});
-    ppllFile.writeRow({"Mode Name", "Time PPLL Clear (ms)", "Time F+C Gather (ms)", "Time PPLL Resolve (ms)"});
+}
+
+void AutomaticPerformanceMeasurer::openPpllFileIfNecessary() {
+    if (!ppllFile.getIsOpen()) {
+        ppllFile.open("PPLLUnified.csv");
+        ppllFile.writeRow({"Mode Name", "Time PPLL Clear (ms)", "Time F+C Gather (ms)", "Time PPLL Resolve (ms)"});
+    }
+}
+
+void AutomaticPerformanceMeasurer::openDepthComplexityFileIfNecessary() {
+    if (!depthComplexityFile.getIsOpen()) {
+        depthComplexityFile.open("PPLLUnified.csv");
+        depthComplexityFile.writeRow(
+                {"State Name", "Data Set Name", "Device Name", "Resolution",
+                 "Frame Number", "Min Depth Complexity", "Max Depth Complexity",
+                 "Avg Depth Complexity Used", "Avg Depth Complexity All", "Total Number of Fragments",
+                 "Fragment Buffer Memory (GiB)"});
+    }
+}
+
+void AutomaticPerformanceMeasurer::openDeferredRenderingFileIfNecessary() {
+    if (!deferredRenderingFile.getIsOpen()) {
+        deferredRenderingFile.open("DeferredRendering.csv");
+        deferredRenderingFile.writeRow(
+                {"Mode Name", "Time Sum (ms)", "DeferredRaster0 (ms)", "DeferredRaster1 (ms)",
+                 "DeferredVisibility0 (ms)", "DeferredVisibility1 (ms)", "DeferredHZB0 (ms)", "DeferredHZB1 (ms)"});
+    }
 }
 
 /*
@@ -100,13 +95,23 @@ void AutomaticPerformanceMeasurer::cleanup() {
     if (ppllTimer) {
         ppllTimer->finishGPU(commandBuffer);
     }
+    if (deferredRenderingTimer) {
+        deferredRenderingTimer->finishGPU(commandBuffer);
+    }
     renderer->getDevice()->endSingleTimeCommands(commandBuffer);
 
     writeCurrentModeData();
     file.close();
-    depthComplexityFile.close();
     perfFile.close();
-    ppllFile.close();
+    if (depthComplexityFile.getIsOpen()) {
+        depthComplexityFile.close();
+    }
+    if (ppllFile.getIsOpen()) {
+        ppllFile.close();
+    }
+    if (deferredRenderingFile.getIsOpen()) {
+        deferredRenderingFile.close();
+    }
 }
 
 AutomaticPerformanceMeasurer::~AutomaticPerformanceMeasurer() = default;
@@ -139,7 +144,12 @@ void AutomaticPerformanceMeasurer::writeCurrentModeData() {
         timeMS = timerVk->getTimeMS(currentState.name);
         frameTimesNS = timerVk->getFrameTimeList(currentState.name);
     } else {
+        openPpllFileIfNecessary();
         if (!isCleanup) {
+            renderer->getDevice()->waitIdle();
+            VkCommandBuffer commandBuffer = renderer->getDevice()->beginSingleTimeCommands();
+            ppllTimer->finishGPU(commandBuffer);
+            renderer->getDevice()->endSingleTimeCommands(commandBuffer);
             ppllTimer->finishGPU();
         }
         double timePPLLClear = ppllTimer->getTimeMS("PPLLClear");
@@ -153,6 +163,34 @@ void AutomaticPerformanceMeasurer::writeCurrentModeData() {
 
         frameTimesNS = ppllTimer->getFrameTimeList(currentState.name);
         timeMS = timePPLLClear + timeFCGather + timePPLLResolve;
+    }
+
+    if (deferredRenderingTimer) {
+        openDeferredRenderingFileIfNecessary();
+        if (!isCleanup) {
+            VkCommandBuffer commandBuffer = renderer->getDevice()->beginSingleTimeCommands();
+            deferredRenderingTimer->finishGPU(commandBuffer);
+            renderer->getDevice()->endSingleTimeCommands(commandBuffer);
+            //deferredRenderingTimer->finishGPU();
+        }
+        double deferredRaster0 = deferredRenderingTimer->getOptionalTimeMS("DeferredRaster0");
+        double deferredRaster1 = deferredRenderingTimer->getOptionalTimeMS("DeferredRaster1");
+        double deferredVisibility0 = deferredRenderingTimer->getOptionalTimeMS("DeferredVisibility0");
+        double deferredVisibility1 = deferredRenderingTimer->getOptionalTimeMS("DeferredVisibility1");
+        double deferredHZB0 = deferredRenderingTimer->getOptionalTimeMS("DeferredHZB0");
+        double deferredHZB1 = deferredRenderingTimer->getOptionalTimeMS("DeferredHZB1");
+        double timeSum =
+                deferredRaster0 + deferredRaster1 + deferredVisibility0 + deferredVisibility1
+                + deferredHZB0 + deferredHZB1;
+        deferredRenderingFile.writeCell(currentState.name);
+        deferredRenderingFile.writeCell(std::to_string(timeSum));
+        deferredRenderingFile.writeCell(std::to_string(deferredRaster0));
+        deferredRenderingFile.writeCell(std::to_string(deferredRaster1));
+        deferredRenderingFile.writeCell(std::to_string(deferredVisibility0));
+        deferredRenderingFile.writeCell(std::to_string(deferredVisibility1));
+        deferredRenderingFile.writeCell(std::to_string(deferredHZB0));
+        deferredRenderingFile.writeCell(std::to_string(deferredHZB1));
+        deferredRenderingFile.newRow();
     }
 
     // Write row with performance metrics of this mode.
@@ -233,7 +271,7 @@ void AutomaticPerformanceMeasurer::setNextState(bool first) {
     currentAlgorithmsBufferSizeBytes = 0;
     currentState = states.at(currentStateIndex);
     sgl::Logfile::get()->writeInfo(std::string() + "New state: " + currentState.name);
-    if (currentState.renderingMode == RENDERING_MODE_DEPTH_COMPLEXITY) {
+    if (false) {
         newDepthComplexityMode = true;
     }
     newStateCallback(currentState);
@@ -252,7 +290,7 @@ void AutomaticPerformanceMeasurer::beginRenderFunction() {
 }
 
 void AutomaticPerformanceMeasurer::startMeasure(float timeStamp) {
-    if (currentState.renderingMode == RENDERING_MODE_OSPRAY_RAY_TRACER) {
+    if (false) {
         // CPU rendering algorithm, thus use a CPU timer and not a GPU timer.
         timerVk->startCPU(currentState.name);
     } else {
@@ -261,7 +299,7 @@ void AutomaticPerformanceMeasurer::startMeasure(float timeStamp) {
 }
 
 void AutomaticPerformanceMeasurer::endMeasure() {
-    if (currentState.renderingMode == RENDERING_MODE_OSPRAY_RAY_TRACER) {
+    if (false) {
         // CPU rendering algorithm, thus use a CPU timer and not a GPU timer.
         timerVk->endCPU(currentState.name);
     } else {
@@ -277,6 +315,7 @@ void AutomaticPerformanceMeasurer::pushDepthComplexityFrame(
     }
     maxPPLLNumFragments = std::max(maxPPLLNumFragments, size_t(totalNumFragments));
 
+    openDepthComplexityFileIfNecessary();
     depthComplexityFile.writeCell(currentState.name);
     depthComplexityFile.writeCell(sgl::toString((int)depthComplexityFrameNumber));
     depthComplexityFile.writeCell(sgl::toString((int)minComplexity));

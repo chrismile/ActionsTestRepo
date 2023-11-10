@@ -26,8 +26,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef LINEVIS_DATAVIEW_HPP
-#define LINEVIS_DATAVIEW_HPP
+#ifndef CORRERENDER_DATAVIEW_HPP
+#define CORRERENDER_DATAVIEW_HPP
+
+#include <set>
 
 #include <Utils/SciVis/Navigation/CameraNavigator.hpp>
 #include <Graphics/Color.hpp>
@@ -38,15 +40,19 @@
 #include <Graphics/Vulkan/Render/Passes/BlitRenderPass.hpp>
 #include <ImGui/imgui.h>
 
+#include "Renderers/SceneData.hpp"
+
 namespace sgl { namespace vk {
 class Renderer;
 }}
 
-class LineRenderer;
+class Renderer;
+class DataView;
+typedef std::shared_ptr<DataView> DataViewPtr;
 
 class DataView {
 public:
-    DataView(SceneData* parentSceneData);
+    explicit DataView(SceneData* parentSceneData);
     ~DataView();
     virtual void resize(int newWidth, int newHeight);
     virtual void beginRender();
@@ -56,28 +62,21 @@ public:
     void saveScreenshotDataIfAvailable();
     [[nodiscard]] ImTextureID getImGuiTextureId() const;
     void setClearColor(const sgl::Color& color);
+    [[nodiscard]] inline int getSupersamplingFactor() const { return supersamplingFactor; }
 
-    /// For data views using 2D cameras. 3D cameras are handled by SciVisApp.
-    void updateCameraMode();
-    void moveCamera2dKeyboard(float dt);
-    void moveCamera2dMouse(float dt);
-
-    [[nodiscard]] inline std::string getWindowName(int index) const {
-        if (lineRenderer) {
-            return lineRenderer->getWindowName() + " (" + std::to_string(index + 1) + ")###data_view_"
-                    + std::to_string(index);
-        } else {
-            return "Data View (" + std::to_string(index + 1) + ")###data_view_" + std::to_string(index);
-        }
-    }
+    [[nodiscard]] inline std::string& getViewName() { return viewName; }
+    [[nodiscard]] std::string getWindowNameImGui(const std::vector<DataViewPtr>& dataViews, int index) const;
 
     SceneData* parentSceneData = nullptr;
     bool showWindow = true;
     bool useLinearRGB = false;
     sgl::Color clearColor;
+    std::string viewName = "Data View";
+    int viewIdx;
+    static std::set<int> usedViewIndices;
+    static std::set<int> freeViewIndices;
+    static std::vector<SceneData*> globalSceneData;
 
-    RenderingMode renderingMode = RENDERING_MODE_NONE, oldRenderingMode = RENDERING_MODE_NONE;
-    LineRenderer* lineRenderer = nullptr;
     bool reRender = false;
 
     sgl::vk::Renderer* renderer = nullptr;
@@ -86,8 +85,8 @@ public:
     sgl::vk::TexturePtr sceneTextureVk;
     sgl::vk::TexturePtr sceneDepthTextureVk;
     sgl::vk::TexturePtr compositedTextureVk; ///< The final RGBA8 texture.
-    sgl::vk::BlitRenderPassPtr sceneTextureBlitPass;
-    sgl::vk::BlitRenderPassPtr sceneTextureGammaCorrectionPass;
+    sgl::vk::BlitRenderPassPtr sceneTextureBlitPass, sceneTextureBlitDownscalePass;
+    sgl::vk::BlitRenderPassPtr sceneTextureGammaCorrectionPass, sceneTextureGammaCorrectionDownscalePass;
 
     sgl::vk::ScreenshotReadbackHelperPtr screenshotReadbackHelper; ///< For reading back screenshots from the GPU.
 
@@ -96,12 +95,14 @@ public:
     /// Scene data (e.g., camera, main framebuffer, ...).
     bool syncWithParentCamera = true;
     sgl::CameraPtr camera;
-    sgl::CameraPtr camera2d;
-    sgl::CameraNavigatorPtr camera2dNavigator;
+    int32_t viewportPositionX = 0;
+    int32_t viewportPositionY = 0;
     uint32_t viewportWidth = 0;
     uint32_t viewportHeight = 0;
+    uint32_t viewportWidthVirtual = 0; //< Includes the supersampling factor.
+    uint32_t viewportHeightVirtual = 0; //< Includes the supersampling factor.
+    int supersamplingFactor = 1;
     SceneData sceneData;
 };
-typedef std::shared_ptr<DataView> DataViewPtr;
 
-#endif //LINEVIS_DATAVIEW_HPP
+#endif //CORRERENDER_DATAVIEW_HPP

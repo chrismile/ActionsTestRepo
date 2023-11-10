@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2020, Christoph Neuhauser
+ * Copyright (c) 2022, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,8 +26,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef HEXVOLUMERENDERER_INTERNALSTATE_HPP
-#define HEXVOLUMERENDERER_INTERNALSTATE_HPP
+#ifndef CORRERENDER_INTERNALSTATE_HPP
+#define CORRERENDER_INTERNALSTATE_HPP
 
 #include <string>
 #include <map>
@@ -37,6 +37,7 @@
 #include <Utils/Convert.hpp>
 
 #include "Utils/VecStringConversion.hpp"
+#include "Loaders/DataSet.hpp"
 #include "Loaders/DataSetList.hpp"
 #include "Renderers/RenderingModes.hpp"
 
@@ -150,18 +151,18 @@ struct DataSetDescriptor {
         }
     }
     /// Assumes 'name' is a valid entry in datasets.json. Everything else is inferred from there.
-    DataSetDescriptor(const std::string& name)
-            : type(DATA_SET_TYPE_FLOW_LINES), name(name) {}
+    explicit DataSetDescriptor(const std::string& name)
+            : type(DataSetType::VOLUME), name(name) {}
 
     bool operator==(const DataSetDescriptor& rhs) const {
         return this->type == rhs.type && this->name == rhs.name && this->filenames == rhs.filenames
-                && this->enabledFileIndices == rhs.enabledFileIndices;
+               && this->enabledFileIndices == rhs.enabledFileIndices;
     }
     bool operator!=(const DataSetDescriptor& rhs) const {
         return !(*this == rhs);
     }
 
-    DataSetType type = DATA_SET_TYPE_NONE;
+    DataSetType type = DataSetType::NONE;
     std::string name;
     std::vector<std::string> filenames;
     std::vector<bool> enabledFileIndices;
@@ -186,7 +187,7 @@ struct InternalState {
 
     DataSetDescriptor dataSetDescriptor;
     std::string name, nameRaw;
-    RenderingMode renderingMode = RENDERING_MODE_ALL_LINES_OPAQUE;
+    RenderingMode renderingMode = RENDERING_MODE_DIRECT_VOLUME_RENDERING;
     SettingsMap rendererSettings;
     SettingsMap dataSetSettings;
     std::vector<SettingsMap> filterSettings;
@@ -199,4 +200,4 @@ struct InternalState {
 
 std::vector<InternalState> getTestModes();
 
-#endif //HEXVOLUMERENDERER_INTERNALSTATE_HPP
+#endif //CORRERENDER_INTERNALSTATE_HPP

@@ -48,9 +48,13 @@ layout(location = 0) out vec4 fragColorOut;
 
 layout(binding = 0) uniform sampler2D inputTexture;
 
+#ifdef VULKAN
 layout(push_constant) uniform PushConstants {
     int horzBlur;
 };
+#else
+uniform int horzBlur;
+#endif
 
 // Values for perfect weights and offsets that utilize bilinear texture filtering
 // are from http://rastergrid.com/blog/2010/09/efficient-gaussian-blur-with-linear-sampling/

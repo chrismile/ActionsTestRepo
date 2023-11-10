@@ -26,8 +26,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef LINEVIS_SCENEDATA_HPP
-#define LINEVIS_SCENEDATA_HPP
+#ifndef CORRERENDER_SCENEDATA_HPP
+#define CORRERENDER_SCENEDATA_HPP
 
 #include <Graphics/Scene/Camera.hpp>
 #include <Graphics/Color.hpp>
@@ -40,35 +40,84 @@ typedef std::shared_ptr<MsgBoxHandle> MsgBoxHandlePtr;
 
 namespace sgl { namespace vk {
 class Renderer;
+class Buffer;
+typedef std::shared_ptr<Buffer> BufferPtr;
+class ImageView;
+typedef std::shared_ptr<ImageView> ImageViewPtr;
 class Texture;
 typedef std::shared_ptr<Texture> TexturePtr;
 }}
 
 class AutomaticPerformanceMeasurer;
 
+struct GlobalData {
+    GlobalData(
+            sgl::vk::Renderer** renderer, bool* screenshotTransparentBackground,
+            AutomaticPerformanceMeasurer** performanceMeasurer,
+            bool* continuousRendering, bool* recordingMode, bool* useCameraFlight,
+            float* MOVE_SPEED, float* MOUSE_ROT_SPEED,
+            std::vector<sgl::dialog::MsgBoxHandlePtr>* nonBlockingMsgBoxHandles)
+            : renderer(renderer), screenshotTransparentBackground(screenshotTransparentBackground),
+              performanceMeasurer(performanceMeasurer),
+              continuousRendering(continuousRendering), recordingMode(recordingMode), useCameraFlight(useCameraFlight),
+              MOVE_SPEED(MOVE_SPEED), MOUSE_ROT_SPEED(MOUSE_ROT_SPEED),
+              nonBlockingMsgBoxHandles(nonBlockingMsgBoxHandles)
+    {}
+
+    sgl::vk::Renderer** renderer;
+    bool* screenshotTransparentBackground;
+    AutomaticPerformanceMeasurer** performanceMeasurer;
+    bool* continuousRendering;
+    bool* recordingMode;
+    bool* useCameraFlight;
+
+    float* MOVE_SPEED;
+    float* MOUSE_ROT_SPEED;
+
+    std::vector<sgl::dialog::MsgBoxHandlePtr>* nonBlockingMsgBoxHandles;
+};
+
+enum class RenderTargetAccess {
+    CLEAR, // Cleared in Vulkan.
+    RASTERIZER, // Used in Vulkan rasterizer as render target.
+    SAMPLED_FRAGMENT_SHADER, // Used as a sampled image in a Vulkan fragment shader.
+    SAMPLED_COMPUTE_SHADER, // Used as a sampled image in a Vulkan fragment shader.
+    COMPUTE, // Used in a compute shader as an image storage object.
+    CUDA // Used in CUDA.
+};
+
 struct SceneData {
     SceneData(
             sgl::vk::Renderer** renderer, sgl::vk::TexturePtr* sceneTexture, sgl::vk::TexturePtr* sceneDepthTexture,
+            int32_t* viewportPositionX, int32_t* viewportPositionY,
             uint32_t* viewportWidth, uint32_t* viewportHeight,
+            uint32_t* viewportWidthVirtual, uint32_t* viewportHeightVirtual,
             sgl::CameraPtr camera, sgl::Color* clearColor, bool* screenshotTransparentBackground,
             AutomaticPerformanceMeasurer** performanceMeasurer,
             bool* continuousRendering, bool* recordingMode, bool* useCameraFlight,
             float* MOVE_SPEED, float* MOUSE_ROT_SPEED,
             std::vector<sgl::dialog::MsgBoxHandlePtr>* nonBlockingMsgBoxHandles)
             : renderer(renderer), sceneTexture(sceneTexture), sceneDepthTexture(sceneDepthTexture),
-            viewportWidth(viewportWidth), viewportHeight(viewportHeight),
+              viewportPositionX(viewportPositionX), viewportPositionY(viewportPositionY),
+              viewportWidth(viewportWidth), viewportHeight(viewportHeight),
+              viewportWidthVirtual(viewportWidthVirtual), viewportHeightVirtual(viewportHeightVirtual),
               camera(std::move(camera)), clearColor(clearColor),
               screenshotTransparentBackground(screenshotTransparentBackground),
               performanceMeasurer(performanceMeasurer),
               continuousRendering(continuousRendering), recordingMode(recordingMode), useCameraFlight(useCameraFlight),
               MOVE_SPEED(MOVE_SPEED), MOUSE_ROT_SPEED(MOUSE_ROT_SPEED),
               nonBlockingMsgBoxHandles(nonBlockingMsgBoxHandles)
-            {}
+    {}
+
     sgl::vk::Renderer** renderer;
     sgl::vk::TexturePtr* sceneTexture;
     sgl::vk::TexturePtr* sceneDepthTexture;
+    int32_t* viewportPositionX;
+    int32_t* viewportPositionY;
     uint32_t* viewportWidth;
     uint32_t* viewportHeight;
+    uint32_t* viewportWidthVirtual;
+    uint32_t* viewportHeightVirtual;
 
     sgl::CameraPtr camera;
     sgl::Color* clearColor;
@@ -82,6 +131,20 @@ struct SceneData {
     float* MOUSE_ROT_SPEED;
 
     std::vector<sgl::dialog::MsgBoxHandlePtr>* nonBlockingMsgBoxHandles;
+
+    // Utility functions for passing back and forth color and depth buffer between Vulkan rasterizers,
+    // Vulkan compute shaders and CUDA renderers.
+    void initDepthColor();
+    void clearRenderTargetState();
+    void switchColorState(RenderTargetAccess access);
+    void switchDepthState(RenderTargetAccess access);
+    bool useDepthBuffer = true;
+    sgl::vk::ImageViewPtr sceneDepthColorImage;
+
+private:
+    RenderTargetAccess colorState = RenderTargetAccess::CLEAR;
+    RenderTargetAccess depthState = RenderTargetAccess::CLEAR;
+    sgl::vk::BufferPtr sceneDepthColorBuffer;
 };
 
-#endif //LINEVIS_SCENEDATA_HPP
+#endif //CORRERENDER_SCENEDATA_HPP
