@@ -801,9 +801,13 @@ if $build_with_zarr_support; then
             rm -rf "./z5-src"
         fi
         git clone https://github.com/constantinpape/z5.git z5-src
-        sed -i '/^SET(Boost_NO_SYSTEM_PATHS ON)$/s/^/#/' z5-src/CMakeLists.txt
+        if [ $use_macos = true ]; then
+            sed -i -e 's/SET(Boost_NO_SYSTEM_PATHS ON)/#SET(Boost_NO_SYSTEM_PATHS ON)/g' z5-src/CMakeLists.txt
+        else
+            sed -i '/^SET(Boost_NO_SYSTEM_PATHS ON)$/s/^/#/' z5-src/CMakeLists.txt
+        fi
         if [ $use_vcpkg = true ]; then
-          cat > z5-src/vcpkg.json <<EOF
+            cat > z5-src/vcpkg.json <<EOF
 {
     "\$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
     "name": "z5",
