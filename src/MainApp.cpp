@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2022, Christoph Neuhauser
+ * Copyright (c) 2020, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,179 +26,151 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <memory>
-#include <stack>
-#include <algorithm>
-#include <csignal>
-
 #define GLM_ENABLE_EXPERIMENTAL
+#include <climits>
+#include <chrono>
+#include <ctime>
+#include <algorithm>
+#include <thread>
+
 #include <glm/gtx/color_space.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/rotate_vector.hpp>
-#include <boost/algorithm/string.hpp>
-
-#ifdef USE_ZEROMQ
-#include <zmq.h>
-#endif
-
-#ifdef SUPPORT_QUICK_MLP
-#include <ckl/kernel_loader.h>
-#include <qmlp/qmlp.h>
-#endif
-
-#include <Utils/Timer.hpp>
-#include <Utils/StringUtils.hpp>
-#include <Utils/AppSettings.hpp>
-#include <Utils/Dialog.hpp>
-#include <Utils/File/Logfile.hpp>
-#include <Utils/File/FileUtils.hpp>
-#include <Utils/Regex/TransformString.hpp>
-#include <Utils/File/FileLoader.hpp>
-#include <Input/Keyboard.hpp>
-#include <Input/Mouse.hpp>
-#include <Math/Math.hpp>
-#include <Math/Geometry/MatrixUtil.hpp>
-#include <Graphics/Window.hpp>
-#include <Graphics/Vulkan/Utils/Instance.hpp>
-#include <Graphics/Vulkan/Utils/Swapchain.hpp>
-#include <Graphics/Vulkan/Render/Renderer.hpp>
-#ifdef SUPPORT_OPENCL_INTEROP
-#include <Graphics/Vulkan/Utils/InteropOpenCL.hpp>
-#endif
+#include <glm/gtx/euler_angles.hpp>
+#include <GL/glew.h>
+#include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/case_conv.hpp>
 
 #include <ImGui/ImGuiWrapper.hpp>
-#include <ImGui/ImGuiFileDialog/ImGuiFileDialog.h>
 #include <ImGui/imgui_internal.h>
 #include <ImGui/imgui_custom.h>
 #include <ImGui/imgui_stdlib.h>
-#include <ImGui/Widgets/ColorLegendWidget.hpp>
 
-#include "Volume/VolumeData.hpp"
-#include "Calculators/Similarity.hpp"
-#include "Renderers/DvrRenderer.hpp"
-#include "Renderers/IsoSurfaceRayCastingRenderer.hpp"
-#include "Renderers/IsoSurfaceRasterizer.hpp"
-#include "Renderers/DomainOutlineRenderer.hpp"
-#include "Renderers/SliceRenderer.hpp"
-#include "Renderers/WorldMapRenderer.hpp"
-#include "Renderers/Diagram/DiagramRenderer.hpp"
-#include "Renderers/Diagram/Scatter/ScatterPlotRenderer.hpp"
-#include "Utils/CurlWrapper.hpp"
-#include "Utils/AutomaticPerformanceMeasurer.hpp"
-#include "Optimization/TFOptimization.hpp"
+#include <Utils/AppSettings.hpp>
+#include <Utils/Timer.hpp>
+#include <Utils/File/FileUtils.hpp>
+#include <Utils/File/Logfile.hpp>
+#include <Utils/Events/EventManager.hpp>
+#include <Input/Keyboard.hpp>
+#include <Input/Mouse.hpp>
+#include <Math/Math.hpp>
+#include <Graphics/Window.hpp>
+#include <Graphics/Renderer.hpp>
+#include <Graphics/OpenGL/Texture.hpp>
 
-#include "Widgets/ViewManager.hpp"
 #include "Widgets/DataView.hpp"
+
+#include "Mesh/HexMesh/Loaders/VtkLoader.hpp"
+#include "Mesh/HexMesh/Loaders/MeshLoader.hpp"
+#include "Mesh/HexMesh/Loaders/DatLoader.hpp"
+#include "Mesh/HexMesh/Loaders/HexaLabDatasets.hpp"
+#include "Mesh/HexMesh/Loaders/DegStressLoader.hpp"
+#include "Mesh/Filters/PlaneFilter.hpp"
+#include "Mesh/Filters/PeelingFilter.hpp"
+#include "Mesh/Filters/QualityFilter.hpp"
+#include "Mesh/HexMesh/Renderers/SurfaceRenderer.hpp"
+#include "Mesh/HexMesh/Renderers/WireframeRenderer.hpp"
+#include "Mesh/HexMesh/Renderers/WireframeRenderer_Faces.hpp"
+#include "Mesh/HexMesh/Renderers/VolumeRenderer_Faces.hpp"
+#include "Mesh/HexMesh/Renderers/VolumeRenderer_FacesSlim.hpp"
+#include "Mesh/HexMesh/Renderers/VolumeRenderer_Volume.hpp"
+#include "Mesh/HexMesh/Renderers/ClearViewRenderer_Faces.hpp"
+#include "Mesh/HexMesh/Renderers/ClearViewRenderer_FacesUnified.hpp"
+#include "Mesh/HexMesh/Renderers/ClearViewRenderer_Volume.hpp"
+#include "Mesh/HexMesh/Renderers/ClearViewRenderer_Volume2.hpp"
+#include "Mesh/HexMesh/Renderers/DepthComplexityRenderer.hpp"
+#include "Mesh/HexMesh/Renderers/SingularityRenderer.hpp"
+#include "Mesh/HexMesh/Renderers/BaseComplexLineRenderer.hpp"
+#include "Mesh/HexMesh/Renderers/BaseComplexSurfaceRenderer.hpp"
+#include "Mesh/HexMesh/Renderers/PartitionLineRenderer.hpp"
+#include "Mesh/HexMesh/Renderers/LodLineRendererPerFragment.hpp"
+#include "Mesh/HexMesh/Renderers/LodLineRenderer.hpp"
+#include "Mesh/HexMesh/Renderers/LodLinePreviewRenderer.hpp"
+#include "Mesh/HexMesh/Renderers/LodLinePreviewRenderer_Sheets.hpp"
+#include "Mesh/HexMesh/Renderers/LodLinePreviewRenderer_SheetsFaces.hpp"
+#include "Mesh/HexMesh/Renderers/SingularityTypeCounterRenderer.hpp"
+#include "Mesh/HexMesh/Renderers/LineDensityControlRenderer.hpp"
+#include "Mesh/HexMesh/Renderers/HexSheetRenderer.hpp"
+#ifdef USE_EMBREE
+#include "Mesh/HexMesh/Renderers/Intersection/RayMeshIntersection_Embree.hpp"
+#endif
 #include "MainApp.hpp"
 
-void vulkanErrorCallback() {
-    SDL_CaptureMouse(SDL_FALSE);
+void openglErrorCallback() {
     std::cerr << "Application callback" << std::endl;
 }
 
-#ifdef __linux__
-void signalHandler(int signum) {
-    SDL_CaptureMouse(SDL_FALSE);
-    std::cerr << "Interrupt signal (" << signum << ") received." << std::endl;
-    exit(signum);
-}
+MainApp::MainApp()
+#ifdef USE_EMBREE
+        : rayMeshIntersection(new RayMeshIntersection_Embree(camera)),
+#else
+        : rayMeshIntersection(new RayMeshIntersection_NanoRT(camera)),
+#endif
+          sceneData(
+                  &sceneFramebuffer, &sceneTexture, &sceneDepthRBO, camera, clearColor, performanceMeasurer,
+                  recording, useCameraFlight, *rayMeshIntersection)
+#ifdef USE_PYTHON
+        , replayWidget(sceneData, transferFunctionWindow, checkpointWindow)
+#endif
+{
+#ifdef USE_STEAMWORKS
+    steamworks.initialize();
 #endif
 
-MainApp::MainApp()
-        : sceneData(
-                &rendererVk, &sceneTextureVk, &sceneDepthTextureVk,
-                &viewportPositionX, &viewportPositionY,
-                &viewportWidth, &viewportHeight, &viewportWidth, &viewportHeight,
-                camera, &clearColor, &screenshotTransparentBackground,
-                &performanceMeasurer, &continuousRendering, &recording,
-                &useCameraFlight, &MOVE_SPEED, &MOUSE_ROT_SPEED,
-                &nonBlockingMsgBoxHandles),
-          boundingBox() {
-    sgl::AppSettings::get()->getVulkanInstance()->setDebugCallback(&vulkanErrorCallback);
-    clearColor = sgl::Color(0, 0, 0, 255);
-    clearColorSelection = ImColor(0, 0, 0, 255);
-    std::string clearColorString;
-    if (sgl::AppSettings::get()->getSettings().getValueOpt("clearColor", clearColorString)) {
-        std::vector<std::string> clearColorStringParts;
-        sgl::splitString(clearColorString, ',', clearColorStringParts);
-        if (clearColorStringParts.size() == 3 || clearColorStringParts.size() == 4) {
-            clearColor.setR(uint8_t(sgl::fromString<int>(clearColorStringParts.at(0))));
-            clearColor.setG(uint8_t(sgl::fromString<int>(clearColorStringParts.at(1))));
-            clearColor.setB(uint8_t(sgl::fromString<int>(clearColorStringParts.at(2))));
-            clearColorSelection = ImColor(clearColor.getR(), clearColor.getG(), clearColor.getB(), 255);
+#ifdef USE_PYTHON
+    replayWidget.setLoadMeshCallback([this](const MeshDescriptor& meshDescriptor) {
+        std::string meshFilenameNew = meshDescriptor.getFilename();
+        if (loadedMeshFilename != meshFilenameNew) {
+            loadHexahedralMesh(meshFilenameNew);
         }
-    }
-
-#ifdef SUPPORT_CUDA_INTEROP
-    sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
-    if (device->getDeviceDriverId() == VK_DRIVER_ID_NVIDIA_PROPRIETARY) {
-        cudaInteropInitialized = true;
-        if (!sgl::vk::initializeCudaDeviceApiFunctionTable()) {
-            cudaInteropInitialized = false;
-            sgl::Logfile::get()->writeError(
-                    "Error in MainApp::MainApp: sgl::vk::initializeCudaDeviceApiFunctionTable() returned false.",
-                    false);
-        }
-
-        if (cudaInteropInitialized) {
-            CUresult cuResult = sgl::vk::g_cudaDeviceApiFunctionTable.cuInit(0);
-            if (cuResult == CUDA_ERROR_NO_DEVICE) {
-                sgl::Logfile::get()->writeInfo("No CUDA-capable device was found. Disabling CUDA interop support.");
-                cudaInteropInitialized = false;
-            } else {
-                sgl::vk::checkCUresult(cuResult, "Error in cuInit: ");
+    });
+    replayWidget.setLoadRendererCallback([this](const std::string& rendererName) {
+        RenderingMode renderingModeNew = renderingMode;
+        int i;
+        for (i = 0; i < IM_ARRAYSIZE(RENDERING_MODE_NAMES); i++) {
+            if (RENDERING_MODE_NAMES[i] == rendererName) {
+                renderingModeNew = RenderingMode(i);
+                break;
             }
         }
-
-        if (cudaInteropInitialized) {
-            CUresult cuResult = sgl::vk::g_cudaDeviceApiFunctionTable.cuCtxCreate(
-                    &cuContext, CU_CTX_SCHED_SPIN, cuDevice);
-            sgl::vk::checkCUresult(cuResult, "Error in cuCtxCreate: ");
+        if (i == IM_ARRAYSIZE(RENDERING_MODE_NAMES)) {
+            sgl::Logfile::get()->writeError(
+                    std::string() + "ERROR in replay widget load renderer callback: Unknown renderer name \""
+                    + rendererName + "\".");
         }
-    }
-
-    if (cudaInteropInitialized) {
-        nvrtcInitialized = true;
-        if (!sgl::vk::initializeNvrtcFunctionTable()) {
-            nvrtcInitialized = false;
-            sgl::Logfile::get()->writeWarning(
-                    "Warning in MainApp::MainApp: sgl::vk::initializeNvrtcFunctionTable() returned false.",
-                    false);
+        if (renderingModeNew != renderingMode) {
+            renderingMode = renderingModeNew;
+            setRenderers();
         }
-    }
+    });
 #endif
 
-#ifdef SUPPORT_OPENCL_INTEROP
-    openclInteropInitialized = true;
-    if (!sgl::vk::initializeOpenCLFunctionTable()) {
-        openclInteropInitialized = false;
-    }
-#endif
-
-    viewManager = new ViewManager(&clearColor, rendererVk);
-    sgl::ColorLegendWidget::setFontScaleStandard(1.0f);
-
-    checkpointWindow.setStandardWindowSize(1254, 390);
-    checkpointWindow.setStandardWindowPosition(841, 53);
-
-    propertyEditor.setInitWidthValues(sgl::ImGuiWrapper::get()->getScaleDependentSize(280.0f));
-
-    camera->setNearClipDistance(0.01f);
-    camera->setFarClipDistance(100.0f);
-
-    CAMERA_PATH_TIME_PERFORMANCE_MEASUREMENT = TIME_PERFORMANCE_MEASUREMENT;
-    usePerformanceMeasurementMode = false;
-    if (sgl::FileUtils::get()->get_argc() > 1) {
-        if (strcmp(sgl::FileUtils::get()->get_argv()[1], "--perf") == 0) {
-            usePerformanceMeasurementMode = true;
-        }
-    }
     cameraPath.setApplicationCallback([this](
             const std::string& modelFilename, glm::vec3& centerOffset, float& startAngle, float& pulseFactor,
             float& standardZoom) {
+        if (boost::starts_with(
+                modelFilename,
+                sgl::AppSettings::get()->getDataDirectory() +
+                "Meshes/2011 - All-Hex Mesh Generation via Volumetric PolyCube Deformation/anc101_a1.mesh")) {
+            centerOffset = glm::vec3(0.0f, -0.02f, 0.0f);
+            pulseFactor = 3.0f;
+            standardZoom = 1.6f;
+        }
+        if (boost::starts_with(
+                modelFilename,
+                sgl::AppSettings::get()->getDataDirectory() +
+                "Meshes/2014 - l1-Based Construction of Polycube Maps from Complex Shapes/cognit/hex.vtk")) {
+            centerOffset = glm::vec3(0.0f, -0.02f, 0.0f);
+            pulseFactor = 3.0f;
+            standardZoom = 1.6f;
+        }
+        if (usePerformanceMeasurementMode && boost::ends_with(modelFilename, "cubic128.vtk")) {
+            standardZoom = 1.3f;
+        }
     });
 
-    curlInitWrapper();
+    sgl::ColorLegendWidget::setFontScaleStandard(1.0f);
 
     useDockSpaceMode = true;
     sgl::AppSettings::get()->getSettings().getValueOpt("useDockSpaceMode", useDockSpaceMode);
@@ -208,7 +180,17 @@ MainApp::MainApp()
     fixedViewportSizeEdit = fixedViewportSize;
     showPropertyEditor = true;
     sgl::ImGuiWrapper::get()->setUseDockSpaceMode(useDockSpaceMode);
-    //useDockSpaceMode = false;
+
+    dataView = std::make_shared<DataView>(camera, screenshotTransparentBackground, useLinearRGB, gammaCorrectionShader);
+    if (useDockSpaceMode) {
+        sceneData.framebuffer = &dataView->sceneFramebuffer;
+        sceneData.sceneTexture = &dataView->sceneTexture;
+        sceneData.sceneDepthRBO = &dataView->sceneDepthRBO;
+    } else {
+        sceneData.framebuffer = &sceneFramebuffer;
+        sceneData.sceneTexture = &sceneTexture;
+        sceneData.sceneDepthRBO = &sceneDepthRBO;
+    }
 
 #ifdef NDEBUG
     showFpsOverlay = false;
@@ -218,131 +200,138 @@ MainApp::MainApp()
     sgl::AppSettings::get()->getSettings().getValueOpt("showFpsOverlay", showFpsOverlay);
     sgl::AppSettings::get()->getSettings().getValueOpt("showCoordinateAxesOverlay", showCoordinateAxesOverlay);
 
-    useLinearRGB = false;
+    clearColor = sgl::Color(0, 0, 0, 255);
+    clearColorSelection = ImColor(clearColor.getColorRGBA());
+    transferFunctionWindow.setClearColor(clearColor);
+    transferFunctionWindow.setUseLinearRGB(useLinearRGB);
+    colorLegendWidget.setClearColor(clearColor);
     coordinateAxesOverlayWidget.setClearColor(clearColor);
+    dataView->setClearColor(clearColor);
 
+    sgl::Renderer->setErrorCallback(&openglErrorCallback);
+    sgl::Renderer->setDebugVerbosity(sgl::DEBUG_OUTPUT_CRITICAL_ONLY);
     resolutionChanged(sgl::EventPtr());
+
+    rendererWindowNames = {
+            SurfaceRenderer::getWindowName(),
+            WireframeRenderer_Faces::getWindowName(),
+            DepthComplexityRenderer::getWindowName(),
+            ClearViewRenderer_FacesUnified::getWindowName(),
+            VolumeRenderer_FacesSlim::getWindowName(),
+            VolumeRenderer_Volume::getWindowName(),
+            ClearViewRenderer_Volume::getWindowName(),
+            VolumeRenderer_Faces::getWindowName(),
+            ClearViewRenderer_Faces::getWindowName(),
+            SingularityRenderer::getWindowName(),
+            BaseComplexLineRenderer::getWindowName(),
+            BaseComplexSurfaceRenderer::getWindowName(),
+            PartitionLineRenderer::getWindowName(),
+            LodLineRenderer::getWindowName(),
+            LodLineRendererPerFragment::getWindowName(),
+            LodLinePreviewRenderer::getWindowName(),
+            LodLinePreviewRenderer_SheetsFaces::getWindowName(),
+            SingularityTypeCounterRenderer::getWindowName(),
+            LineDensityControlRenderer::getWindowName(),
+            HexSheetRenderer::getWindowName(),
+            ClearViewRenderer_Volume2::getWindowName(),
+    };
+
+    selectedQualityMeasure = QUALITY_MEASURE_SCALED_JACOBIAN;
+    changeQualityMeasureType();
+
+    meshLoaderMap.insert(std::make_pair("vtk", new VtkLoader));
+    meshLoaderMap.insert(std::make_pair("mesh", new MeshLoader));
+    meshLoaderMap.insert(std::make_pair("dat", new DatCartesianGridLoader));
+    meshLoaderMap.insert(std::make_pair("degStress", new DegStressLoader));
+    meshFilters.push_back(new PlaneFilter);
+    meshFilters.push_back(new PeelingFilter);
+    meshFilters.push_back(new QualityFilter);
 
     if (usePerformanceMeasurementMode) {
         useCameraFlight = true;
     }
     if (useCameraFlight && recording) {
         sgl::Window *window = sgl::AppSettings::get()->getMainWindow();
-        window->setWindowSize(recordingResolution.x, recordingResolution.y);
+        if (useRecordingResolution) {
+            window->setWindowSize(recordingResolution.x, recordingResolution.y);
+        }
         realTimeCameraFlight = false;
-        loadVolumeDataSet({ sgl::AppSettings::get()->getDataDirectory() + "VolumeDataSets/test.nc" });
+        transferFunctionWindow.loadFunctionFromFile(
+                sgl::AppSettings::get()->getDataDirectory() + "TransferFunctions/Standard_PerVertex.xml");
+        loadHexahedralMesh(
+                sgl::AppSettings::get()->getDataDirectory()
+                + "Meshes/2011 - All-Hex Mesh Generation via Volumetric PolyCube Deformation/anc101_a1.mesh");
+        renderingMode = RENDERING_MODE_CLEAR_VIEW_FACES_UNIFIED;
     }
-
-    fileDialogInstance = IGFD_Create();
-    customDataSetFileName = sgl::FileUtils::get()->getUserDirectory();
-    loadAvailableDataSetInformation();
 
     if (!recording && !usePerformanceMeasurementMode) {
         // Just for convenience...
         int desktopWidth = 0;
         int desktopHeight = 0;
         int refreshRate = 60;
-        sgl::AppSettings::get()->getDesktopDisplayMode(desktopWidth, desktopHeight, refreshRate);
         if (desktopWidth == 3840 && desktopHeight == 2160) {
             sgl::Window *window = sgl::AppSettings::get()->getMainWindow();
             window->setWindowSize(2186, 1358);
         }
     }
 
-    //if (!useDockSpaceMode) {
-    //    setRenderer(sceneData, oldRenderingMode, renderingMode, volumeRenderer, 0);
-    //}
+    setRenderers();
+
+    customMeshFileName = sgl::FileUtils::get()->getUserDirectory();
+    const std::string meshDirectory = sgl::AppSettings::get()->getDataDirectory() + "Meshes/";
+    hexaLabDataSetsDownloaded = sgl::FileUtils::get()->exists(meshDirectory + "index.json");
+    loadAvailableDataSetSources();
 
     if (!sgl::AppSettings::get()->getSettings().hasKey("cameraNavigationMode")) {
         cameraNavigationMode = sgl::CameraNavigationMode::TURNTABLE;
         updateCameraNavigationMode();
     }
 
-    addNewDataView();
+    colorLegendWidget.setTransferFunctionColorMap(
+            transferFunctionWindow.getTransferFunctionMap_sRGB());
 
     recordingTimeStampStart = sgl::Timer->getTicksMicroseconds();
     usesNewState = true;
     if (usePerformanceMeasurementMode) {
         sgl::FileUtils::get()->ensureDirectoryExists("images");
-        performanceMeasurer = new AutomaticPerformanceMeasurer(
-                rendererVk, getTestModes(),
-                "performance.csv", "depth_complexity.csv",
-                [this](const InternalState &newState) { this->setNewState(newState); });
+        if (testSortingPerformance) {
+            performanceMeasurer = new AutomaticPerformanceMeasurer(
+                    getTestModesSorting(), "performance.csv", "depth_complexity.csv",
+                    [this](const InternalState &newState) { this->setNewState(newState); });
+        } else {
+            performanceMeasurer = new AutomaticPerformanceMeasurer(
+                    getTestModesPaper(), "performance.csv", "depth_complexity.csv",
+                    [this](const InternalState &newState) { this->setNewState(newState); });
+        }
+        performanceMeasurer->setInitialFreeMemKilobytes(gpuInitialFreeMemKilobytes);
     }
-
-    tfOptimization = new TFOptimization(rendererVk);
-#ifdef CUDA_ENABLED
-    if (cudaInteropInitialized) {
-        tfOptimization->setCudaContext(cuContext);
-    }
-#endif
-    tfOptimization->initialize();
-
-#ifdef __linux__
-    signal(SIGSEGV, signalHandler);
-#endif
 }
 
 MainApp::~MainApp() {
-    device->waitIdle();
-
     if (usePerformanceMeasurementMode) {
-        performanceMeasurer->cleanup();
         delete performanceMeasurer;
         performanceMeasurer = nullptr;
     }
 
-    delete tfOptimization;
-    volumeRenderers = {};
-    volumeData = {};
-    dataViews.clear();
-    delete viewManager;
-    viewManager = nullptr;
+    for (auto& it : meshLoaderMap) {
+        delete it.second;
+    }
+    meshLoaderMap.clear();
+    for (HexahedralMeshFilter* meshFilter : meshFilters) {
+        delete meshFilter;
+    }
+    meshFilters.clear();
+    for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+        delete meshRenderer;
+    }
+    meshRenderers.clear();
 
-    IGFD_Destroy(fileDialogInstance);
+    delete rayMeshIntersection;
 
-#ifdef SUPPORT_QUICK_MLP
-    qmlp::QuickMLP::DeleteInstance();
-    ckl::KernelLoader::DeleteInstance();
+#ifdef USE_STEAMWORKS
+    steamworks.shutdown();
 #endif
 
-#ifdef SUPPORT_CUDA_INTEROP
-    if (sgl::vk::getIsNvrtcFunctionTableInitialized()) {
-        sgl::vk::freeNvrtcFunctionTable();
-    }
-    if (sgl::vk::getIsCudaDeviceApiFunctionTableInitialized()) {
-        if (cuContext) {
-            CUresult cuResult = sgl::vk::g_cudaDeviceApiFunctionTable.cuCtxDestroy(cuContext);
-            sgl::vk::checkCUresult(cuResult, "Error in cuCtxDestroy: ");
-            cuContext = {};
-        }
-        sgl::vk::freeCudaDeviceApiFunctionTable();
-    }
-#endif
-#ifdef SUPPORT_OPENCL_INTEROP
-    if (sgl::vk::getIsOpenCLFunctionTableInitialized()) {
-        sgl::vk::freeOpenCLFunctionTable();
-    }
-#endif
-
-    curlFreeWrapper();
-
-    for (int i = 0; i < int(nonBlockingMsgBoxHandles.size()); i++) {
-        auto& handle = nonBlockingMsgBoxHandles.at(i);
-        if (handle->ready(0)) {
-            nonBlockingMsgBoxHandles.erase(nonBlockingMsgBoxHandles.begin() + i);
-            i--;
-        } else {
-            handle->kill();
-        }
-    }
-    nonBlockingMsgBoxHandles.clear();
-
-    std::string clearColorString =
-            std::to_string(int(clearColor.getR())) + ","
-            + std::to_string(int(clearColor.getG())) + ","
-            + std::to_string(int(clearColor.getB()));
-    sgl::AppSettings::get()->getSettings().addKeyValue("clearColor", clearColorString);
     sgl::AppSettings::get()->getSettings().addKeyValue("useDockSpaceMode", useDockSpaceMode);
     if (!usePerformanceMeasurementMode) {
         sgl::AppSettings::get()->getSettings().addKeyValue("useFixedSizeViewport", useFixedSizeViewport);
@@ -353,9 +342,17 @@ MainApp::~MainApp() {
     sgl::AppSettings::get()->getSettings().addKeyValue("showCoordinateAxesOverlay", showCoordinateAxesOverlay);
 }
 
-void MainApp::setNewState(const InternalState &newState) {
-    rendererVk->getDevice()->waitIdle();
+void MainApp::loadReplicabilityStampState() {
+#ifdef USE_PYTHON
+    replayWidget.loadReplicabilityStampState();
+    recordingTime = 0.0f;
+    realTimeReplayUpdates = false;
+#else
+    throw std::runtime_error("Error in MainApp::loadReplicabilityStampState: Program built without Python support!");
+#endif
+}
 
+void MainApp::setNewState(const InternalState &newState) {
     if (performanceMeasurer) {
         performanceMeasurer->setCurrentAlgorithmBufferSizeBytes(0);
     }
@@ -376,114 +373,51 @@ void MainApp::setNewState(const InternalState &newState) {
         }
     }
 
-    // 1.1. Handle the new tiling mode for SSBO accesses.
-    /*VolumeRenderer::setNewTilingMode(
-            newState.tilingWidth, newState.tilingHeight,
-            newState.useMortonCodeForTiling);
+    // 1.1. Handle the new tiling mode for SSBO accesses (TODO).
+    //setNewTilingMode(newState.tilingWidth, newState.tilingHeight, newState.useMortonCodeForTiling);
 
     // 1.2. Load the new transfer function if necessary.
     if (!newState.transferFunctionName.empty() && newState.transferFunctionName != lastState.transferFunctionName) {
         transferFunctionWindow.loadFunctionFromFile(
                 sgl::AppSettings::get()->getDataDirectory()
                 + "TransferFunctions/" + newState.transferFunctionName);
+        colorLegendWidget.setTransferFunctionColorMap(
+                transferFunctionWindow.getTransferFunctionMap_sRGB());
     }
 
     // 2.1. Do we need to load new renderers?
     if (firstState || newState.renderingMode != lastState.renderingMode
             || newState.rendererSettings != lastState.rendererSettings) {
-        dataViews.clear();
-        if (useDockSpaceMode) {
-            if (dataViews.empty()) {
-                addNewDataView();
-            }
-            RenderingMode newRenderingMode = newState.renderingMode;
-            setRenderer(
-                    dataViews[0]->sceneData, dataViews[0]->oldRenderingMode, newRenderingMode,
-                    dataViews[0]->volumeRenderer, 0);
-            dataViews[0]->renderingMode = newRenderingMode;
-            dataViews[0]->updateCameraMode();
-        } else {
-            renderingMode = newState.renderingMode;
-            setRenderer(sceneData, oldRenderingMode, renderingMode, volumeRenderer, 0);
+        for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+            delete meshRenderer;
         }
+        meshRenderers.clear();
+
+        renderingMode = newState.renderingMode;
+        setRenderers();
     }
 
-    // 2.2. Set the new renderer settings.
-    bool reloadGatherShader = false;
-    std::vector<bool> reloadGatherShaderDataViewList;
-    if (useDockSpaceMode) {
-        for (DataViewPtr& dataView : dataViews) {
-            bool reloadGatherShaderLocal = reloadGatherShader;
-            if (dataView->volumeRenderer) {
-                dataView->volumeRenderer->setNewState(newState);
-                reloadGatherShaderLocal |= dataView->volumeRenderer->setNewSettings(newState.rendererSettings);
-                reloadGatherShaderDataViewList.push_back(reloadGatherShaderLocal);
-            }
-        }
-    } else {
-        if (volumeRenderer) {
-            volumeRenderer->setNewState(newState);
-            reloadGatherShader |= volumeRenderer->setNewSettings(newState.rendererSettings);
-        }
+    // 2.2. Pass state change to renderers to handle internally necessary state changes.
+    for (HexahedralMeshRenderer* renderer : meshRenderers) {
+        renderer->setNewState(newState);
+    }
+    for (size_t i = 0; i < newState.rendererSettings.size(); i++) {
+        meshRenderers.at(i)->setNewSettings(newState.rendererSettings.at(i));
     }
 
-    // 3. Load the correct data set file.
-    if (newState.dataSetDescriptor != lastState.dataSetDescriptor) {
-        selectedDataSetIndex = 0;
-        std::string nameLower = boost::algorithm::to_lower_copy(newState.dataSetDescriptor.name);
-        for (size_t i = 0; i < dataSetInformationList.size(); i++) {
-            if (boost::algorithm::to_lower_copy(dataSetInformationList.at(i)->name) == nameLower) {
-                selectedDataSetIndex = int(i) + NUM_MANUAL_LOADERS;
-                break;
-            }
-        }
-        if (selectedDataSetIndex == 0) {
-            if (dataSetInformationList.at(selectedDataSetIndex - NUM_MANUAL_LOADERS)->type
-                    == DATA_SET_TYPE_STRESS_VOLUMES && newState.dataSetDescriptor.enabledFileIndices.size() == 3) {
-                VolumeDataStress::setUseMajorPS(newState.dataSetDescriptor.enabledFileIndices.at(0));
-                VolumeDataStress::setUseMediumPS(newState.dataSetDescriptor.enabledFileIndices.at(1));
-                VolumeDataStress::setUseMinorPS(newState.dataSetDescriptor.enabledFileIndices.at(2));
-            }
-            loadVolumeDataSet(newState.dataSetDescriptor.filenames, true);
-        } else {
-            if (newState.dataSetDescriptor.type == DATA_SET_TYPE_STRESS_VOLUMES
-                && newState.dataSetDescriptor.enabledFileIndices.size() == 3) {
-                VolumeDataStress::setUseMajorPS(newState.dataSetDescriptor.enabledFileIndices.at(0));
-                VolumeDataStress::setUseMediumPS(newState.dataSetDescriptor.enabledFileIndices.at(1));
-                VolumeDataStress::setUseMinorPS(newState.dataSetDescriptor.enabledFileIndices.at(2));
-            }
-            loadVolumeDataSet(getSelectedDataSetFilenames(), true);
-        }
-    }
-
-    // 4. Pass state change to filters to handle internally necessary state changes.
-    for (VolumeFilter* filter : dataFilters) {
+    // 3. Pass state change to filters to handle internally necessary state changes.
+    for (HexahedralMeshFilter* filter : meshFilters) {
         filter->setNewState(newState);
     }
     for (size_t i = 0; i < newState.filterSettings.size(); i++) {
-        dataFilters.at(i)->setNewSettings(newState.filterSettings.at(i));
+        meshFilters.at(i)->setNewSettings(newState.filterSettings.at(i));
     }
 
-    // 5. Pass state change to renderers to handle internally necessary state changes.
-    if (volumeData) {
-        reloadGatherShader |= volumeData->setNewSettings(newState.dataSetSettings);
+    // 4. Load the correct mesh file.
+    if (newState.meshDescriptor != lastState.meshDescriptor) {
+        deformationFactor = newState.meshDescriptor.deformation;
+        loadHexahedralMesh(newState.meshDescriptor.getFilename());
     }
-
-    // 6. Reload the gather shader if necessary.
-    if (useDockSpaceMode) {
-        size_t idx = 0;
-        for (DataViewPtr& dataView : dataViews) {
-            bool reloadGatherShaderLocal = reloadGatherShader || reloadGatherShaderDataViewList.at(idx);
-            if (dataView->volumeRenderer && reloadGatherShaderLocal) {
-                dataView->volumeRenderer->reloadGatherShaderExternal();
-            }
-            idx++;
-        }
-    } else {
-        if (volumeRenderer && reloadGatherShader) {
-            volumeRenderer->reloadGatherShaderExternal();
-        }
-    }*/
 
     recordingTime = 0.0f;
     recordingTimeLast = 0.0f;
@@ -493,239 +427,110 @@ void MainApp::setNewState(const InternalState &newState) {
     usesNewState = true;
 }
 
-void MainApp::scheduleRecreateSceneFramebuffer() {
-    scheduledRecreateSceneFramebuffer = true;
-}
-
-void MainApp::addNewRenderer(RenderingMode renderingMode) {
-    RendererPtr volumeRenderer;
-    setRenderer(renderingMode, volumeRenderer);
-
-    // Opaque surface renderers are always added before transparent renderers.
-    bool isOpaqueRenderer =
-            renderingMode != RenderingMode::RENDERING_MODE_DIRECT_VOLUME_RENDERING
-            && renderingMode != RenderingMode::RENDERING_MODE_DIAGRAM_RENDERER
-            && renderingMode != RenderingMode::RENDERING_MODE_SCATTER_PLOT;
-    bool isOverlayRenderer =
-            renderingMode == RenderingMode::RENDERING_MODE_DIAGRAM_RENDERER
-            || renderingMode == RenderingMode::RENDERING_MODE_SCATTER_PLOT;
-    if (isOpaqueRenderer && !isOverlayRenderer) {
-        // Push after last opaque renderer (or at the beginning).
-        auto it = volumeRenderers.begin();
-        while (it != volumeRenderers.end() && it->get()->getIsOpaqueRenderer()) {
-            ++it;
-        }
-        volumeRenderers.insert(it, volumeRenderer);
-    } else if (!isOverlayRenderer) {
-        // Push before the last overlay renderer.
-        auto it = volumeRenderers.begin();
-        while (it != volumeRenderers.end() && !it->get()->getIsOverlayRenderer()) {
-            ++it;
-        }
-        volumeRenderers.insert(it, volumeRenderer);
-    } else {
-        volumeRenderers.push_back(volumeRenderer);
+void MainApp::setRenderers() {
+    for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+        delete meshRenderer;
     }
-}
+    meshRenderers.clear();
 
-void MainApp::setRenderer(RenderingMode newRenderingMode, RendererPtr& newVolumeRenderer) {
-    size_t creationId;
-    if (newVolumeRenderer) {
-        creationId = newVolumeRenderer->getCreationId();
-        device->waitIdle();
-        newVolumeRenderer = {};
-    } else {
-        creationId = rendererCreationCounter;
-        rendererCreationCounter++;
+    if (renderingMode == RENDERING_MODE_SURFACE) {
+        meshRenderers.push_back(new SurfaceRenderer(sceneData, transferFunctionWindow));
+        meshRenderers.push_back(new WireframeRenderer_Faces(
+                sceneData, transferFunctionWindow, false, true));
+    } else if (renderingMode == RENDERING_MODE_WIREFRAME) {
+        meshRenderers.push_back(new WireframeRenderer_Faces(
+                sceneData, transferFunctionWindow, true, false));
+    } else if (renderingMode == RENDERING_MODE_DEPTH_COMPLEXITY) {
+        meshRenderers.push_back(new DepthComplexityRenderer(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_CLEAR_VIEW_FACES_UNIFIED) {
+        meshRenderers.push_back(new ClearViewRenderer_FacesUnified(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_PSEUDO_VOLUME) {
+        meshRenderers.push_back(new VolumeRenderer_FacesSlim(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_VOLUME) {
+        meshRenderers.push_back(new VolumeRenderer_Volume(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_CLEAR_VIEW) {
+        meshRenderers.push_back(new ClearViewRenderer_Volume(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_VOLUME_FACES) {
+        meshRenderers.push_back(new VolumeRenderer_Faces(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_CLEAR_VIEW_FACES) {
+        meshRenderers.push_back(new ClearViewRenderer_Faces(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_SINGULARITY) {
+        meshRenderers.push_back(new SingularityRenderer(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_BASE_COMPLEX_LINES) {
+        meshRenderers.push_back(new BaseComplexLineRenderer(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_BASE_COMPLEX_SURFACE) {
+        meshRenderers.push_back(new BaseComplexSurfaceRenderer(sceneData, transferFunctionWindow));
+        meshRenderers.push_back(new WireframeRenderer_Faces(
+                sceneData, transferFunctionWindow, false, true));
+    } else if (renderingMode == RENDERING_MODE_PARTITION_LINES) {
+        meshRenderers.push_back(new PartitionLineRenderer(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_LOD_LINES) {
+        meshRenderers.push_back(new LodLineRenderer(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_LOD_LINES_PER_FRAGMENT) {
+        meshRenderers.push_back(new LodLineRendererPerFragment(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_LOD_LINES_PREVIEW) {
+        meshRenderers.push_back(new LodLinePreviewRenderer(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_LOD_LINES_PREVIEW_SHEETS) {
+        meshRenderers.push_back(new LodLinePreviewRenderer_SheetsFaces(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_SINGULARITY_TYPE_COUNTER) {
+        meshRenderers.push_back(new LodLinePreviewRenderer_SheetsFaces(sceneData, transferFunctionWindow));
+        meshRenderers.push_back(new SingularityTypeCounterRenderer(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_LINE_DENSITY_CONTROL) {
+        meshRenderers.push_back(new LineDensityControlRenderer(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_HEX_SHEETS) {
+        meshRenderers.push_back(new HexSheetRenderer(sceneData, transferFunctionWindow));
+    } else if (renderingMode == RENDERING_MODE_CLEAR_VIEW_VOLUME2) {
+        meshRenderers.push_back(new ClearViewRenderer_Volume2(sceneData, transferFunctionWindow));
     }
-
-    if (newRenderingMode == RENDERING_MODE_DIRECT_VOLUME_RENDERING) {
-        newVolumeRenderer = std::make_shared<DvrRenderer>(viewManager);
-    } else if (newRenderingMode == RENDERING_MODE_ISOSURFACE_RAYCASTER) {
-        newVolumeRenderer = std::make_shared<IsoSurfaceRayCastingRenderer>(viewManager);
-    } else if (newRenderingMode == RENDERING_MODE_ISOSURFACE_RASTERIZER) {
-        newVolumeRenderer = std::make_shared<IsoSurfaceRasterizer>(viewManager);
-    } else if (newRenderingMode == RENDERING_MODE_DOMAIN_OUTLINE_RENDERER) {
-        newVolumeRenderer = std::make_shared<DomainOutlineRenderer>(viewManager);
-    } else if (newRenderingMode == RENDERING_MODE_SLICE_RENDERER) {
-        newVolumeRenderer = std::make_shared<SliceRenderer>(viewManager);
-    } else if (newRenderingMode == RENDERING_MODE_WORLD_MAP_RENDERER) {
-        newVolumeRenderer = std::make_shared<WorldMapRenderer>(viewManager);
-    } else if (newRenderingMode == RENDERING_MODE_DIAGRAM_RENDERER) {
-        newVolumeRenderer = std::make_shared<DiagramRenderer>(viewManager);
-    } else if (newRenderingMode == RENDERING_MODE_SCATTER_PLOT) {
-        newVolumeRenderer = std::make_shared<ScatterPlotRenderer>(viewManager);
-    } else {
-        int idx = std::clamp(int(newRenderingMode), 0, IM_ARRAYSIZE(RENDERING_MODE_NAMES) - 1);
-        std::string warningText =
-                std::string() + "The selected renderer \"" + RENDERING_MODE_NAMES[idx] + "\" is not "
-                + "supported in this build configuration or incompatible with this system.";
-        onUnsupportedRendererSelected(warningText, newVolumeRenderer);
-    }
-
-    newVolumeRenderer->setCreationId(creationId);
-    newVolumeRenderer->initialize();
-    newVolumeRenderer->setUseLinearRGB(useLinearRGB);
-    newVolumeRenderer->setFileDialogInstance(fileDialogInstance);
-
-    for (size_t viewIdx = 0; viewIdx < dataViews.size(); viewIdx++) {
-        newVolumeRenderer->addView(uint32_t(viewIdx));
-        auto& viewSceneData = dataViews.at(viewIdx)->sceneData;
-        if (*viewSceneData.sceneTexture) {
-            newVolumeRenderer->recreateSwapchainView(
-                    uint32_t(viewIdx), *viewSceneData.viewportWidthVirtual, *viewSceneData.viewportHeightVirtual);
-        }
-    }
-}
-
-void MainApp::onUnsupportedRendererSelected(const std::string& warningText, RendererPtr& newVolumeRenderer) {
-    sgl::Logfile::get()->writeWarning(
-            "Warning in MainApp::setRenderer: " + warningText, false);
-    auto handle = sgl::dialog::openMessageBox(
-            "Unsupported Renderer", warningText, sgl::dialog::Icon::WARNING);
-    nonBlockingMsgBoxHandles.push_back(handle);
-    newVolumeRenderer = std::make_shared<DvrRenderer>(viewManager);
 }
 
 void MainApp::resolutionChanged(sgl::EventPtr event) {
     SciVisApp::resolutionChanged(event);
-    if (!useDockSpaceMode) {
-        auto* window = sgl::AppSettings::get()->getMainWindow();
-        viewportWidth = uint32_t(window->getWidth());
-        viewportHeight = uint32_t(window->getHeight());
-        for (auto& volumeRenderer : volumeRenderers) {
-            volumeRenderer->recreateSwapchainView(0, viewportWidth, viewportHeight);
-        }
-        if (volumeData) {
-            volumeData->recreateSwapchainView(0, viewportWidth, viewportHeight);
-        }
+    for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+        meshRenderer->onResolutionChanged();
     }
 }
 
 void MainApp::updateColorSpaceMode() {
     SciVisApp::updateColorSpaceMode();
-    volumeData->setUseLinearRGB(useLinearRGB);
-    if (useDockSpaceMode) {
-        for (DataViewPtr& dataView : dataViews) {
-            dataView->useLinearRGB = useLinearRGB;
-            dataView->viewportWidth = 0;
-            dataView->viewportHeight = 0;
-        }
-    }
-    for (auto& volumeRenderer : volumeRenderers) {
-        volumeRenderer->setUseLinearRGB(useLinearRGB);
-    }
-}
-
-void MainApp::beginFrameMarker() {
-#ifdef SUPPORT_RENDERDOC_DEBUGGER
-    renderDocDebugger.startFrameCapture();
-#endif
-}
-
-void MainApp::endFrameMarker() {
-#ifdef SUPPORT_RENDERDOC_DEBUGGER
-    renderDocDebugger.endFrameCapture();
-#endif
+    transferFunctionWindow.setUseLinearRGB(useLinearRGB);
 }
 
 void MainApp::render() {
-    // Debug Code.
-    /*static bool isFirstFrame = true;
-    if (isFirstFrame) {
-        selectedDataSetIndex = 0;
-        customDataSetFileName = "/home/christoph/datasets/Toy/chord/linear_4x4.nc";
-        dataSetType = DataSetType::VOLUME;
-        loadVolumeDataSet({ customDataSetFileName });
-        isFirstFrame = false;
-    }
-
-    static int frameNum = 0;
-    frameNum++;
-    if (frameNum == 10) {
-        quit();
-    }*/
-
-    if (usePerformanceMeasurementMode) {
-        performanceMeasurer->beginRenderFunction();
-    }
-
-    if (scheduledRecreateSceneFramebuffer) {
-        device->waitIdle();
-        sgl::vk::Swapchain* swapchain = sgl::AppSettings::get()->getSwapchain();
-        createSceneFramebuffer();
-        if (swapchain && sgl::AppSettings::get()->getUseGUI()) {
-            sgl::ImGuiWrapper::get()->setVkRenderTarget(compositedTextureVk->getImageView());
-            sgl::ImGuiWrapper::get()->onResolutionChanged();
-        }
-        if (videoWriter) {
-            videoWriter->onSwapchainRecreated();
-        }
-        scheduledRecreateSceneFramebuffer = false;
-    }
-
     SciVisApp::preRender();
-    if (useDockSpaceMode) {
-        for (DataViewPtr& dataView : dataViews) {
-            dataView->saveScreenshotDataIfAvailable();
-        }
-    }
+    prepareVisualizationPipeline();
 
     if (!useDockSpaceMode) {
-        prepareVisualizationPipeline();
-
-        componentOtherThanRendererNeedsReRender = reRender;
-        if (volumeData != nullptr) {
-            bool volumeDataNeedsReRender = volumeData->needsReRender();
-            reRender = reRender || volumeDataNeedsReRender;
-            componentOtherThanRendererNeedsReRender = componentOtherThanRendererNeedsReRender || volumeDataNeedsReRender;
+        for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+            reRender = reRender || meshRenderer->needsReRender();
         }
-    }
 
-    if (!useDockSpaceMode) {
-        for (auto& volumeRenderer : volumeRenderers) {
-            reRender = reRender || volumeRenderer->needsReRender();
-            //componentOtherThanRendererNeedsReRender |= volumeRenderer->needsInternalReRender();
-        }
-        if (componentOtherThanRendererNeedsReRender) {
-            // If the re-rendering was triggered from an outside source, frame accumulation cannot be used!
-            for (auto& volumeRenderer : volumeRenderers) {
-                volumeRenderer->notifyReRenderTriggeredExternally();
-            }
+        sgl::Window *window = sgl::AppSettings::get()->getMainWindow();
+        int width = window->getWidth();
+        int height = window->getHeight();
+        glViewport(0, 0, width, height);
+
+        // Set appropriate background alpha value.
+        if (screenshot && screenshotTransparentBackground) {
+            reRender = true;
+            clearColor.setA(0);
+            glDisable(GL_BLEND);
         }
 
         if (reRender || continuousRendering) {
-            if (usePerformanceMeasurementMode) {
+            if (renderingMode != RENDERING_MODE_CLEAR_VIEW_FACES_UNIFIED && usePerformanceMeasurementMode) {
                 performanceMeasurer->startMeasure(recordingTimeLast);
             }
 
             SciVisApp::prepareReRender();
 
-            // TODO
-            if (screenshotTransparentBackground) {
-                clearColor.setA(0);
-            }
-            rendererVk->insertImageMemoryBarriers(
-                    { sceneTextureVk->getImage(), sceneDepthTextureVk->getImage() },
-                    VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    VK_ACCESS_NONE_KHR, VK_ACCESS_TRANSFER_WRITE_BIT);
-            sceneTextureVk->getImageView()->clearColor(
-                    clearColor.getFloatColorRGBA(), rendererVk->getVkCommandBuffer());
-            sceneDepthTextureVk->getImageView()->clearDepthStencil(
-                    1.0f, 0, rendererVk->getVkCommandBuffer());
-            if (screenshotTransparentBackground) {
-                clearColor.setA(255);
+            if (inputData.get() != nullptr) {
+                for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+                    meshRenderer->render();
+                }
             }
 
-            if (volumeData) {
-                volumeData->renderViewCalculator(0);
-            }
-            for (auto& volumeRenderer : volumeRenderers) {
-                volumeRenderer->renderView(0);
-            }
-
-            if (usePerformanceMeasurementMode) {
+            if (renderingMode != RENDERING_MODE_CLEAR_VIEW_FACES_UNIFIED && usePerformanceMeasurementMode) {
                 performanceMeasurer->endMeasure();
             }
 
@@ -734,996 +539,427 @@ void MainApp::render() {
     }
 
     SciVisApp::postRender();
-
-    if (useDockSpaceMode && !dataViews.empty() && !uiOnScreenshot && recording && !isFirstRecordingFrame) {
-        auto dataView = dataViews.at(0);
-        if (dataView->viewportWidth > 0 && dataView->viewportHeight > 0) {
-            rendererVk->transitionImageLayout(
-                    dataView->compositedTextureVk->getImage(),
-                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-            videoWriter->pushFramebufferImage(dataView->compositedTextureVk->getImage());
-            rendererVk->transitionImageLayout(
-                    dataView->compositedTextureVk->getImage(),
-                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        }
-    }
 }
 
 void MainApp::renderGui() {
     focusedWindowIndex = -1;
     mouseHoverWindowIndex = -1;
 
-    if (useReplicabilityStampMode) {
-        const auto NUM_STEPS = int(sgl::AppSettings::get()->getSwapchain()->getNumImages());
-        if (replicabilityFrameNumber < NUM_STEPS) {
-            replicabilityFrameNumber++;
-        } else if (replicabilityFrameNumber == NUM_STEPS) {
-            useReplicabilityStampMode = false;
-            replicabilityFrameNumber++;
-            loadReplicabilityStampState();
-        }
-    }
-
-    if (sgl::Keyboard->keyPressed(SDLK_o) && (sgl::Keyboard->getModifier() & (KMOD_LCTRL | KMOD_RCTRL)) != 0) {
-        openFileDialog();
-    }
-
-    if (IGFD_DisplayDialog(
-            fileDialogInstance,
-            "ChooseDataSetFile", ImGuiWindowFlags_NoCollapse,
-            sgl::ImGuiWrapper::get()->getScaleDependentSize(1000, 580),
-            ImVec2(FLT_MAX, FLT_MAX))) {
-        if (IGFD_IsOk(fileDialogInstance)) {
-            std::string filePathName = IGFD_GetFilePathName(fileDialogInstance);
-            std::string filePath = IGFD_GetCurrentPath(fileDialogInstance);
-            std::string filter = IGFD_GetCurrentFilter(fileDialogInstance);
-            std::string userDatas;
-            if (IGFD_GetUserDatas(fileDialogInstance)) {
-                userDatas = std::string((const char*)IGFD_GetUserDatas(fileDialogInstance));
-            }
-            auto selection = IGFD_GetSelection(fileDialogInstance);
-
-            const char* currentPath = IGFD_GetCurrentPath(fileDialogInstance);
-            std::string filename = currentPath;
-            if (!filename.empty() && filename.back() != '/' && filename.back() != '\\') {
-                filename += "/";
-            }
-            if (selection.count != 0) {
-                filename += selection.table[0].fileName;
-            }
-            IGFD_Selection_DestroyContent(&selection);
-            if (currentPath) {
-                free((void*)currentPath);
-                currentPath = nullptr;
-            }
-
-            fileDialogDirectory = sgl::FileUtils::get()->getPathToFile(filename);
-
-            std::string filenameLower = boost::to_lower_copy(filename);
-
-            if (boost::ends_with(filenameLower, ".vtk")
-                    || boost::ends_with(filenameLower, ".vti")
-                    || boost::ends_with(filenameLower, ".vts")
-                    || boost::ends_with(filenameLower, ".nc")
-                    || boost::ends_with(filenameLower, ".zarr")
-                    || boost::ends_with(filenameLower, ".am")
-                    || boost::ends_with(filenameLower, ".bin")
-                    || boost::ends_with(filenameLower, ".field")
-                    || boost::ends_with(filenameLower, ".cvol")
-                    || boost::ends_with(filenameLower, ".nii")
-#ifdef USE_ECCODES
-                    || boost::ends_with(filenameLower, ".grib")
-                    || boost::ends_with(filenameLower, ".grb")
-#endif
-                    || boost::ends_with(filenameLower, ".dat")
-                    || boost::ends_with(filenameLower, ".raw")
-                    || boost::ends_with(filenameLower, ".ctl")) {
-                selectedDataSetIndex = 0;
-                customDataSetFileName = filename;
-                dataSetType = DataSetType::VOLUME;
-                loadVolumeDataSet(getSelectedDataSetFilenames());
-            } else {
-                sgl::Logfile::get()->writeError(
-                        "The selected file name has an unknown extension \""
-                        + sgl::FileUtils::get()->getFileExtension(filenameLower) + "\".");
-            }
-        }
-        IGFD_CloseDialog(fileDialogInstance);
-    }
-
-    if (IGFD_DisplayDialog(
-            fileDialogInstance,
-            "ChooseExportFieldFile", ImGuiWindowFlags_NoCollapse,
-            sgl::ImGuiWrapper::get()->getScaleDependentSize(1000, 580),
-            ImVec2(FLT_MAX, FLT_MAX))) {
-        if (IGFD_IsOk(fileDialogInstance)) {
-            std::string filePathName = IGFD_GetFilePathName(fileDialogInstance);
-            std::string filePath = IGFD_GetCurrentPath(fileDialogInstance);
-            std::string filter = IGFD_GetCurrentFilter(fileDialogInstance);
-            std::string userDatas;
-            if (IGFD_GetUserDatas(fileDialogInstance)) {
-                userDatas = std::string((const char*)IGFD_GetUserDatas(fileDialogInstance));
-            }
-            auto selection = IGFD_GetSelection(fileDialogInstance);
-
-            const char* currentPath = IGFD_GetCurrentPath(fileDialogInstance);
-            std::string filename = currentPath;
-            if (!filename.empty() && filename.back() != '/' && filename.back() != '\\') {
-                filename += "/";
-            }
-            std::string currentFileName;
-            if (filter == ".*") {
-                currentFileName = IGFD_GetCurrentFileNameRaw(fileDialogInstance);
-            } else {
-                currentFileName = IGFD_GetCurrentFileName(fileDialogInstance);
-            }
-            if (selection.count != 0 && selection.table[0].fileName == currentFileName) {
-                filename += selection.table[0].fileName;
-            } else {
-                filename += currentFileName;
-            }
-            IGFD_Selection_DestroyContent(&selection);
-            if (currentPath) {
-                free((void*)currentPath);
-                currentPath = nullptr;
-            }
-
-            exportFieldFileDialogDirectory = sgl::FileUtils::get()->getPathToFile(filename);
-
-            std::string filenameLower = boost::to_lower_copy(filename);
-            if (boost::ends_with(filenameLower, ".nc") || boost::ends_with(filenameLower, ".cvol")) {
-                volumeData->saveFieldToFile(filename, FieldType::SCALAR, selectedFieldIndexExport);
-            } else {
-                sgl::Logfile::get()->writeError(
-                        "The selected file name has an unsupported extension \""
-                        + sgl::FileUtils::get()->getFileExtension(filenameLower) + "\".");
-            }
-        }
-        IGFD_CloseDialog(fileDialogInstance);
-    }
-
-    if (IGFD_DisplayDialog(
-            fileDialogInstance,
-            "ChooseStateFile", ImGuiWindowFlags_NoCollapse,
-            sgl::ImGuiWrapper::get()->getScaleDependentSize(1000, 580),
-            ImVec2(FLT_MAX, FLT_MAX))) {
-        if (IGFD_IsOk(fileDialogInstance)) {
-            std::string filePathName = IGFD_GetFilePathName(fileDialogInstance);
-            std::string filePath = IGFD_GetCurrentPath(fileDialogInstance);
-            std::string filter = IGFD_GetCurrentFilter(fileDialogInstance);
-            std::string userDatas;
-            if (IGFD_GetUserDatas(fileDialogInstance)) {
-                userDatas = std::string((const char*)IGFD_GetUserDatas(fileDialogInstance));
-            }
-            auto selection = IGFD_GetSelection(fileDialogInstance);
-
-            const char* currentPath = IGFD_GetCurrentPath(fileDialogInstance);
-            std::string filename = currentPath;
-            if (!filename.empty() && filename.back() != '/' && filename.back() != '\\') {
-                filename += "/";
-            }
-            std::string currentFileName;
-            if (filter == ".*") {
-                currentFileName = IGFD_GetCurrentFileNameRaw(fileDialogInstance);
-            } else {
-                currentFileName = IGFD_GetCurrentFileName(fileDialogInstance);
-            }
-            if (selection.count != 0 && selection.table[0].fileName == currentFileName) {
-                filename += selection.table[0].fileName;
-            } else {
-                filename += currentFileName;
-            }
-            IGFD_Selection_DestroyContent(&selection);
-            if (currentPath) {
-                free((void*)currentPath);
-                currentPath = nullptr;
-            }
-
-            stateFileDirectory = sgl::FileUtils::get()->getPathToFile(filename);
-            if (stateModeSave) {
-                saveStateToFile(filename);
-            } else {
-                loadStateFromFile(filename);
-            }
-        }
-        IGFD_CloseDialog(fileDialogInstance);
-    }
-
     if (useDockSpaceMode) {
-        if (isFirstFrame && dataViews.size() == 1) {
-            if (volumeRenderers.empty()) {
-                initializeFirstDataView();
-            }
-            isFirstFrame = false;
-        }
-
-        static bool isProgramStartup = true;
         ImGuiID dockSpaceId = ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
-        if (isProgramStartup) {
-            ImGuiDockNode* centralNode = ImGui::DockBuilderGetNode(dockSpaceId);
-            if (centralNode->IsEmpty()) {
-                auto* window = sgl::AppSettings::get()->getMainWindow();
-                //const ImVec2 dockSpaceSize = ImGui::GetMainViewport()->Size;//ImGui::GetContentRegionAvail();
-                const ImVec2 dockSpaceSize(float(window->getWidth()), float(window->getHeight()));
-                ImGui::DockBuilderSetNodeSize(dockSpaceId, dockSpaceSize);
+        ImGuiDockNode* centralNode = ImGui::DockBuilderGetNode(dockSpaceId);
+        static bool isProgramStartup = true;
+        if (isProgramStartup && centralNode->IsEmpty()) {
+            const float tabWidth = 0.3f;
+            ImGuiID dockLeftId, dockRightId, dockMainRightId, dockMainId;
+            ImGui::DockBuilderSplitNode(
+                    dockSpaceId, ImGuiDir_Left, tabWidth,
+                    &dockLeftId, &dockMainRightId);
+            ImGui::DockBuilderSplitNode(
+                    dockMainRightId, ImGuiDir_Right, tabWidth / (1.0f - tabWidth),
+                    &dockRightId, &dockMainId);
+            ImGui::DockBuilderDockWindow("Renderer Window", dockMainId);
 
-                ImGuiID dockLeftId, dockMainId;
-                ImGui::DockBuilderSplitNode(
-                        dockSpaceId, ImGuiDir_Left, 0.29f, &dockLeftId, &dockMainId);
-                ImGui::DockBuilderSetNodeSize(dockLeftId, ImVec2(dockSpaceSize.x * 0.29f, dockSpaceSize.y));
-                ImGui::DockBuilderDockWindow("Data View###data_view_0", dockMainId);
+            ImGuiID dockLeftUpId, dockLeftDownId;
+            ImGui::DockBuilderSplitNode(
+                    dockLeftId, ImGuiDir_Up, 0.6f,
+                    &dockLeftUpId, &dockLeftDownId);
+            ImGui::DockBuilderDockWindow("Settings", dockLeftUpId);
+            ImGui::DockBuilderDockWindow("Transfer Function", dockLeftDownId);
 
-                ImGuiID dockLeftUpId, dockLeftDownId;
-                ImGui::DockBuilderSplitNode(
-                        dockLeftId, ImGuiDir_Up, 0.45f, &dockLeftUpId, &dockLeftDownId);
-                ImGui::DockBuilderDockWindow("Property Editor", dockLeftUpId);
-
-                ImGuiID dockLeftDownUpId, dockLeftDownDownId;
-                ImGui::DockBuilderSplitNode(
-                        dockLeftDownId, ImGuiDir_Up, 0.28f,
-                        &dockLeftDownUpId, &dockLeftDownDownId);
-                ImGui::DockBuilderDockWindow("Transfer Function", dockLeftDownDownId);
-                ImGui::DockBuilderDockWindow("Multi-Var Transfer Function", dockLeftDownDownId);
-                ImGui::DockBuilderDockWindow("Camera Checkpoints", dockLeftDownUpId);
-                ImGui::DockBuilderDockWindow("Replay Widget", dockLeftDownUpId);
-
-                ImGui::DockBuilderFinish(dockSpaceId);
+            ImGuiID dockRightUpId, dockRightDown1Id;
+            ImGui::DockBuilderSplitNode(
+                    dockRightId, ImGuiDir_Up, 0.6f,
+                    &dockRightUpId, &dockRightDown1Id);
+            for (const std::string& rendererName : rendererWindowNames) {
+                ImGui::DockBuilderDockWindow(rendererName.c_str(), dockRightUpId);
             }
-            isProgramStartup = false;
+
+            const float sizeReplay = 0.4f;
+            ImGuiID dockReplayCheckpointId, dockRightDown2Id;
+            ImGui::DockBuilderSplitNode(
+                    dockRightDown1Id, ImGuiDir_Up, sizeReplay,
+                    &dockReplayCheckpointId, &dockRightDown2Id);
+            ImGui::DockBuilderDockWindow("Replay Widget", dockReplayCheckpointId);
+            ImGui::DockBuilderDockWindow("Camera Checkpoints", dockReplayCheckpointId);
+
+            ImGuiID dockPlaneFilterId, dockRightDown3Id;
+            ImGui::DockBuilderSplitNode(
+                    dockRightDown2Id, ImGuiDir_Up, 1.0f/3.0f,
+                    &dockPlaneFilterId, &dockRightDown3Id);
+            ImGuiID dockPeelingFilterId, dockQualityFilterId;
+            ImGui::DockBuilderSplitNode(
+                    dockRightDown3Id, ImGuiDir_Up, 1.0f/2.0f,
+                    &dockPeelingFilterId, &dockQualityFilterId);
+            ImGui::DockBuilderDockWindow("Plane Filter", dockPlaneFilterId);
+            ImGui::DockBuilderDockWindow("Peeling Filter", dockPeelingFilterId);
+            ImGui::DockBuilderDockWindow("Quality Filter", dockQualityFilterId);
+
+            ImGui::DockBuilderFinish(dockSpaceId);
         }
+        isProgramStartup = false;
 
-        renderGuiMenuBar();
+        //renderGuiMenuBar();
 
-        if (showPropertyEditor) {
-            renderGuiPropertyEditorWindow();
-        }
-
-        prepareVisualizationPipeline();
-
-        componentOtherThanRendererNeedsReRender = reRender;
-        if (volumeData != nullptr) {
-            bool volumeDataNeedsReRender = volumeData->needsReRender();
-            reRender = reRender || volumeDataNeedsReRender;
-            componentOtherThanRendererNeedsReRender = componentOtherThanRendererNeedsReRender || volumeDataNeedsReRender;
-        }
-
-        bool rendererNeedsReRender = false;
-        bool componentOtherThanRendererNeedsReRenderLocal = componentOtherThanRendererNeedsReRender;
-        for (auto& volumeRenderer : volumeRenderers) {
-            rendererNeedsReRender |= volumeRenderer->needsReRender();
-            //componentOtherThanRendererNeedsReRenderLocal |= volumeRenderer->needsInternalReRender();
-        }
-        if (componentOtherThanRendererNeedsReRenderLocal) {
-            // If the re-rendering was triggered from an outside source, frame accumulation cannot be used!
-            for (auto& volumeRenderer : volumeRenderers) {
-                volumeRenderer->notifyReRenderTriggeredExternally();
-            }
-        }
-
-        int first3dViewIdx = 0;
-        for (int i = 0; i < int(dataViews.size()); i++) {
-            for (auto& renderer : volumeRenderers) {
-                if (renderer->isVisibleInView(i) && !renderer->getIsOverlayRenderer()) {
-                    first3dViewIdx = i;
-                    break;
+        if (showRendererWindow) {
+            bool isViewOpen = true;
+            sgl::ImGuiWrapper::get()->setNextWindowStandardSize(800, 600);
+            if (ImGui::Begin("Renderer Window", &isViewOpen)) {
+                if (ImGui::IsWindowFocused()) {
+                    focusedWindowIndex = 0;
                 }
-            }
-        }
+                sgl::ImGuiWrapper::get()->setWindowViewport(0, ImGui::GetWindowViewport());
+                sgl::ImGuiWrapper::get()->setWindowViewport(0, ImGui::GetWindowViewport());
+                sgl::ImGuiWrapper::get()->setWindowPosAndSize(0, ImGui::GetWindowPos(), ImGui::GetWindowSize());
 
-        for (int i = 0; i < int(dataViews.size()); i++) {
-            auto viewIdx = uint32_t(i);
-            DataViewPtr& dataView = dataViews.at(i);
-            if (dataView->showWindow) {
-                std::string windowName = dataView->getWindowNameImGui(dataViews, i);
-                bool isViewOpen = true;
-                sgl::ImGuiWrapper::get()->setNextWindowStandardSize(800, 600);
-                ImGui::SetNextTabbarMenu([this] {
-                    if (ImGui::BeginPopup("#NewTab")) {
-                        addNewDataView();
-                        ImGui::EndPopup();
-                    }
-
-                    return "#NewTab";
-                });
-                if (ImGui::Begin(windowName.c_str(), &isViewOpen)) {
-                    if (ImGui::IsWindowFocused()) {
-                        focusedWindowIndex = i;
-                    }
-                    sgl::ImGuiWrapper::get()->setWindowViewport(i, ImGui::GetWindowViewport());
-                    sgl::ImGuiWrapper::get()->setWindowViewport(i, ImGui::GetWindowViewport());
-                    sgl::ImGuiWrapper::get()->setWindowPosAndSize(i, ImGui::GetWindowPos(), ImGui::GetWindowSize());
-
-                    ImVec2 cursorPos = ImGui::GetCursorScreenPos();
-                    dataView->viewportPositionX = int32_t(cursorPos.x);
-                    dataView->viewportPositionY = int32_t(cursorPos.y);
-                    ImVec2 sizeContent = ImGui::GetContentRegionAvail();
-                    if (useFixedSizeViewport) {
-                        sizeContent = ImVec2(float(fixedViewportSize.x), float(fixedViewportSize.y));
-                    }
-                    if (int(sizeContent.x) != int(dataView->viewportWidth)
-                            || int(sizeContent.y) != int(dataView->viewportHeight)) {
-                        rendererVk->getDevice()->waitIdle();
-                        dataView->resize(int(sizeContent.x), int(sizeContent.y));
-                        if (dataView->viewportWidth > 0 && dataView->viewportHeight > 0) {
-                            for (auto& volumeRenderer : volumeRenderers) {
-                                volumeRenderer->recreateSwapchainView(
-                                        viewIdx, dataView->viewportWidthVirtual, dataView->viewportHeightVirtual);
-                            }
-                            if (volumeData) {
-                                volumeData->recreateSwapchainView(
-                                        viewIdx, dataView->viewportWidthVirtual, dataView->viewportHeightVirtual);
-                            }
+                ImVec2 sizeContent = ImGui::GetContentRegionAvail();
+                if (useFixedSizeViewport) {
+                    sizeContent = ImVec2(float(fixedViewportSize.x), float(fixedViewportSize.y));
+                }
+                if (int(sizeContent.x) != int(dataView->viewportWidth)
+                        || int(sizeContent.y) != int(dataView->viewportHeight)) {
+                    dataView->resize(int(sizeContent.x), int(sizeContent.y));
+                    if (dataView->viewportWidth > 0 && dataView->viewportHeight > 0) {
+                        for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+                            meshRenderer->onResolutionChanged();
                         }
-                        dataView->reRender = true;
                     }
+                    reRender = true;
+                }
 
-                    bool reRenderLocal = reRender || dataView->reRender || rendererNeedsReRender;
-                    dataView->reRender = false;
-                    for (auto& volumeRenderer : volumeRenderers) {
-                        reRenderLocal |= volumeRenderer->needsReRenderView(viewIdx);
-                    }
+                for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+                    reRender = reRender || meshRenderer->needsReRender();
+                }
 
-                    if (dataView->viewportWidth > 0 && dataView->viewportHeight > 0
-                            && (reRenderLocal || continuousRendering)) {
+                if (reRender || continuousRendering) {
+                    if (dataView->viewportWidth > 0 && dataView->viewportHeight > 0) {
+                        // Set appropriate background alpha value.
+                        if (screenshot && screenshotTransparentBackground) {
+                            reRender = true;
+                            clearColor.setA(0);
+                            glDisable(GL_BLEND);
+                        }
+
                         dataView->beginRender();
-
-                        if (usePerformanceMeasurementMode) {
-                            performanceMeasurer->startMeasure(recordingTimeLast);
-                        }
-
-                        if (volumeData) {
-                            volumeData->renderViewCalculator(viewIdx);
-                            for (auto& volumeRenderer : volumeRenderers) {
-                                volumeRenderer->renderViewPre(viewIdx);
-                            }
-                            int rendererIdx = 0;
-                            for (auto& volumeRenderer : volumeRenderers) {
-                                volumeRenderer->renderView(viewIdx);
-                                if (rendererIdx != int(volumeRenderers.size() - 1) && volumeRenderer->getIsOpaqueRenderer()
-                                        && !volumeRenderers.at(rendererIdx + 1)->getIsOpaqueRenderer()) {
-                                    volumeData->renderViewCalculatorPostOpaque(viewIdx);
-                                    for (auto& volumeRendererPostOpaque : volumeRenderers) {
-                                        volumeRendererPostOpaque->renderViewPostOpaque(viewIdx);
-                                    }
-                                }
-                                rendererIdx++;
+                        if (inputData.get() != nullptr) {
+                            for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+                                meshRenderer->render();
                             }
                         }
-
-                        if (usePerformanceMeasurementMode) {
-                            performanceMeasurer->endMeasure();
-                        }
-
-                        reRenderLocal = false;
-
                         dataView->endRender();
                     }
-
-                    if (dataView->viewportWidth > 0 && dataView->viewportHeight > 0) {
-                        if (!uiOnScreenshot && screenshot) {
-                            printNow = true;
-                            std::string screenshotFilename =
-                                    saveDirectoryScreenshots + saveFilenameScreenshots
-                                    + "_" + sgl::toString(screenshotNumber);
-                            if (dataViews.size() > 1) {
-                                screenshotFilename += "_view" + sgl::toString(i);
-                            }
-                            screenshotFilename += ".png";
-
-                            dataView->screenshotReadbackHelper->setScreenshotTransparentBackground(
-                                    screenshotTransparentBackground);
-                            dataView->saveScreenshot(screenshotFilename);
-                            screenshot = false;
-
-                            printNow = false;
-                            screenshot = true;
-                        }
-
-                        if (isViewOpen) {
-                            ImTextureID textureId = dataView->getImGuiTextureId();
-                            ImGui::Image(
-                                    textureId, sizeContent,
-                                    ImVec2(0, 0), ImVec2(1, 1));
-                            if (ImGui::IsItemHovered()) {
-                                mouseHoverWindowIndex = i;
-                            }
-                        }
-
-                        if (i == first3dViewIdx && showFpsOverlay) {
-                            renderGuiFpsOverlay();
-                        }
-                        if (i == first3dViewIdx && showCoordinateAxesOverlay) {
-                            renderGuiCoordinateAxesOverlay(dataView->camera);
-                        }
-
-                        for (auto& volumeRenderer : volumeRenderers) {
-                            volumeRenderer->renderGuiOverlay(viewIdx);
-                        }
-                        if (volumeData) {
-                            volumeData->renderGuiOverlay(viewIdx);
-                        }
-                    }
+                    reRender = false;
                 }
-                ImGui::End();
 
-                if (!isViewOpen) {
-                    viewManager->removeView(i);
-                    dataViews.erase(dataViews.begin() + i);
-                    for (auto& volumeRenderer : volumeRenderers) {
-                        volumeRenderer->removeView(viewIdx);
+                if (dataView->viewportWidth > 0 && dataView->viewportHeight > 0) {
+                    if (!uiOnScreenshot && screenshot) {
+                        printNow = true;
+                        sgl::Renderer->bindFBO(dataView->getSceneFramebuffer());
+                        customScreenshotWidth = int(dataView->viewportWidth);
+                        customScreenshotHeight = int(dataView->viewportHeight);
+                        std::string screenshotFilename =
+                                saveDirectoryScreenshots + saveFilenameScreenshots
+                                + "_" + sgl::toString(screenshotNumber);
+                        screenshotFilename += ".png";
+                        saveScreenshot(screenshotFilename);
+                        customScreenshotWidth = -1;
+                        customScreenshotHeight = -1;
+                        sgl::Renderer->unbindFBO();
+                        printNow = false;
+                        screenshot = true;
                     }
-                    if (volumeData) {
-                        volumeData->removeView(viewIdx);
+
+                    if (!uiOnScreenshot && recording && !isFirstRecordingFrame) {
+                        videoWriter->pushFramebuffer(dataView->getSceneFramebuffer());
                     }
-                    i--;
+
+                    if (isViewOpen) {
+                        ImGui::Image(
+                                (void*)(intptr_t)static_cast<sgl::TextureGL*>(
+                                        dataView->getSceneTextureResolved().get())->getTexture(),
+                                sizeContent, ImVec2(0, 1), ImVec2(1, 0));
+                        if (ImGui::IsItemHovered()) {
+                            mouseHoverWindowIndex = 0;
+                        }
+                    }
+
+                    if (useDockSpaceMode && shallRenderColorLegendWidgets && inputData) {
+                        colorLegendWidget.setAttributeMinValue(transferFunctionWindow.getSelectedRangeMin());
+                        colorLegendWidget.setAttributeMaxValue(transferFunctionWindow.getSelectedRangeMax());
+                        colorLegendWidget.renderGui();
+                    }
+
+                    if (showFpsOverlay) {
+                        renderGuiFpsOverlay();
+                    }
+                    if (showCoordinateAxesOverlay) {
+                        renderGuiCoordinateAxesOverlay(dataView->camera);
+                    }
                 }
             }
-        }
-
-        for (auto& volumeRenderer : volumeRenderers) {
-            volumeRenderer->renderGuiWindowSecondary();
+            ImGui::End();
         }
 
         if (!uiOnScreenshot && screenshot) {
             screenshot = false;
             screenshotNumber++;
         }
+        sgl::Window *window = sgl::AppSettings::get()->getMainWindow();
+        int width = window->getWidth();
+        int height = window->getHeight();
+        glViewport(0, 0, width, height);
         reRender = false;
-    } else {
-        if (showPropertyEditor) {
-            renderGuiPropertyEditorWindow();
-        }
+    }
 
-        for (auto& volumeRenderer : volumeRenderers) {
-            volumeRenderer->renderGuiOverlay(0);
+    if (showSettingsWindow) {
+        sgl::ImGuiWrapper::get()->setNextWindowStandardPosSize(3085, 39, 744, 1348);
+        if (ImGui::Begin("Settings", &showSettingsWindow)) {
+            SciVisApp::renderGuiFpsCounter();
+
+            // Selection of displayed model
+            renderFileSelectionSettingsGui();
+
+            ImGui::Separator();
+
+            if (ImGui::CollapsingHeader("Scene Settings", nullptr, ImGuiTreeNodeFlags_DefaultOpen)) {
+                renderSceneSettingsGui();
+            }
         }
-        if (volumeData) {
-            volumeData->renderGuiOverlay(0);
+        ImGui::End();
+    }
+
+    if (transferFunctionWindow.renderGui()) {
+        reRender = true;
+        if (transferFunctionWindow.getTransferFunctionMapRebuilt()) {
+            colorLegendWidget.setTransferFunctionColorMap(
+                    transferFunctionWindow.getTransferFunctionMap_sRGB());
+            if (inputData) {
+                inputData->onTransferFunctionMapRebuilt();
+            }
+            for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+                meshRenderer->onTransferFunctionMapRebuilt();
+            }
         }
+    }
+
+    if (!useDockSpaceMode && shallRenderColorLegendWidgets && inputData) {
+        colorLegendWidget.setAttributeMinValue(transferFunctionWindow.getSelectedRangeMin());
+        colorLegendWidget.setAttributeMaxValue(transferFunctionWindow.getSelectedRangeMax());
+        colorLegendWidget.renderGui();
     }
 
     if (checkpointWindow.renderGui()) {
         fovDegree = camera->getFOVy() / sgl::PI * 180.0f;
         reRender = true;
-        hasMoved();
-        onCameraReset();
     }
 
-    if (volumeData) {
-        volumeData->renderGuiWindowSecondary();
+#ifdef USE_PYTHON
+    ReplayWidget::ReplayWidgetUpdateType replayWidgetUpdateType = replayWidget.renderGui();
+    if (replayWidgetUpdateType == ReplayWidget::REPLAY_WIDGET_UPDATE_LOAD) {
+        recordingTime = 0.0f;
+        //realTimeReplayUpdates = true;
+        realTimeReplayUpdates = false;
+    }
+    if (replayWidgetUpdateType == ReplayWidget::REPLAY_WIDGET_UPDATE_START_RECORDING) {
+        sgl::Window *window = sgl::AppSettings::get()->getMainWindow();
+        if (useRecordingResolution && window->getWindowResolution() != recordingResolution) {
+            window->setWindowSize(recordingResolution.x, recordingResolution.y);
+        }
+
+        if (videoWriter) {
+            delete videoWriter;
+            videoWriter = nullptr;
+        }
+
+        recordingTime = 0.0f;
+        realTimeReplayUpdates = false;
+        recordingTimeStampStart = sgl::Timer->getTicksMicroseconds();
+
+        recording = true;
+        isFirstRecordingFrame = true;
+        videoWriter = new sgl::VideoWriter(
+                saveDirectoryVideos + saveFilenameVideos
+                + "_" + sgl::toString(videoNumber++) + ".mp4", FRAME_RATE_VIDEOS);
+    }
+    if (replayWidgetUpdateType == ReplayWidget::REPLAY_WIDGET_UPDATE_STOP_RECORDING) {
+        recording = false;
+        if (videoWriter) {
+            delete videoWriter;
+            videoWriter = nullptr;
+        }
+    }
+    if (replayWidget.getUseCameraFlight()
+            && replayWidgetUpdateType != ReplayWidget::REPLAY_WIDGET_UPDATE_STOP_RECORDING) {
+        useCameraFlight = true;
+        startedCameraFlightPerUI = true;
+        realTimeCameraFlight = false;
+        cameraPath.resetTime();
+    }
+    if (replayWidget.getUseCameraFlight()
+            && replayWidgetUpdateType == ReplayWidget::REPLAY_WIDGET_UPDATE_STOP_RECORDING) {
+        useCameraFlight = false;
+        cameraPath.resetTime();
+    }
+    if (replayWidgetUpdateType != ReplayWidget::REPLAY_WIDGET_UPDATE_NONE) {
+        reRender = true;
+    }
+#endif
+
+    for (HexahedralMeshFilter* meshFilter : meshFilters) {
+        meshFilter->renderGui();
+    }
+    for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+        meshRenderer->renderGui();
     }
 }
 
-void MainApp::loadAvailableDataSetInformation() {
-    dataSetNames.clear();
-    dataSetNames.emplace_back("Local file...");
-    selectedDataSetIndex = 0;
+void MainApp::loadAvailableDataSetSources() {
+    meshDataSetSources.clear();
+    meshDataSetSources.push_back("Local file...");
+    selectedFileSourceIndex = 0;
 
-    const std::string volumeDataSetsDirectory = sgl::AppSettings::get()->getDataDirectory() + "VolumeDataSets/";
-    if (sgl::FileUtils::get()->exists(volumeDataSetsDirectory + "datasets.json")) {
-        dataSetInformationRoot = loadDataSetList(volumeDataSetsDirectory + "datasets.json");
+    if (!hexaLabDataSetsDownloaded) {
+        return;
+    }
+    meshSourceDescriptions = parseSourceDescriptions();
 
-        std::stack<std::pair<DataSetInformationPtr, size_t>> dataSetInformationStack;
-        dataSetInformationStack.push(std::make_pair(dataSetInformationRoot, 0));
-        while (!dataSetInformationStack.empty()) {
-            std::pair<DataSetInformationPtr, size_t> dataSetIdxPair = dataSetInformationStack.top();
-            DataSetInformationPtr dataSetInformationParent = dataSetIdxPair.first;
-            size_t idx = dataSetIdxPair.second;
-            dataSetInformationStack.pop();
-            while (idx < dataSetInformationParent->children.size()) {
-                DataSetInformationPtr dataSetInformationChild =
-                        dataSetInformationParent->children.at(idx);
-                idx++;
-                if (dataSetInformationChild->type == DataSetType::NODE) {
-                    dataSetInformationStack.push(std::make_pair(dataSetInformationRoot, idx));
-                    dataSetInformationStack.push(std::make_pair(dataSetInformationChild, 0));
-                    break;
-                } else {
-                    dataSetInformationChild->sequentialIndex = int(dataSetNames.size());
-                    dataSetInformationList.push_back(dataSetInformationChild);
-                    dataSetNames.push_back(dataSetInformationChild->name);
-                }
+    selectedFileSourceIndex = 1;
+    for (MeshSourceDescription& sourceDescription  : meshSourceDescriptions) {
+        meshDataSetSources.push_back(sourceDescription.label);
+    }
+    loadSelectedMeshDataSetNames();
+}
+
+void MainApp::loadSelectedMeshDataSetNames() {
+    selectedMeshIndex = 0;
+    selectedMeshDataSetNames.clear();
+    selectedMeshDataSetNames.push_back("None");
+    if (selectedFileSourceIndex != 0) {
+        MeshSourceDescription& sourceDescription = meshSourceDescriptions.at(selectedFileSourceIndex - 1);
+        for (std::string& dataSetName : sourceDescription.data) {
+            selectedMeshDataSetNames.push_back(dataSetName);
+        }
+    }
+}
+
+std::string MainApp::getSelectedMeshFilename() {
+    if (selectedFileSourceIndex == 0) {
+        return customMeshFileName;
+    }
+    if (selectedMeshIndex == 0) {
+        return ""; // None
+    }
+
+    MeshSourceDescription& sourceDescription = meshSourceDescriptions.at(selectedFileSourceIndex - 1);
+    const std::string meshDirectory = sgl::AppSettings::get()->getDataDirectory() + "Meshes/";
+    return meshDirectory + sourceDescription.path + "/" + sourceDescription.data.at(selectedMeshIndex - 1);
+}
+
+bool MainApp::getFileSourceContainsDeformationMeshes() {
+    return boost::starts_with(meshDataSetSources[selectedFileSourceIndex], "00")
+            && meshDataSetSources[selectedFileSourceIndex].find("Deformation") != std::string::npos;
+}
+
+void MainApp::renderFileSelectionSettingsGui() {
+    if (ImGui::Combo(
+            "Source", &selectedFileSourceIndex, meshDataSetSources.data(),
+            meshDataSetSources.size())) {
+        loadSelectedMeshDataSetNames();
+    }
+
+    if (selectedFileSourceIndex == 0) {
+        ImGui::InputText("##meshfilenamelabel", &customMeshFileName);
+        ImGui::SameLine();
+        if (ImGui::Button("Load File")) {
+            loadHexahedralMesh(getSelectedMeshFilename());
+        }
+    } else {
+        if (ImGui::Combo(
+                "Mesh", &selectedMeshIndex, selectedMeshDataSetNames.data(),
+                selectedMeshDataSetNames.size())) {
+            loadHexahedralMesh(getSelectedMeshFilename());
+        }
+    }
+
+    // Assume deformed meshes only in source at index 2 for now (don't clutter the UI for other sources).
+    if (getFileSourceContainsDeformationMeshes()) {
+        if (ImGui::SliderFloat("deformationFactor", &deformationFactor, 0.0f, 1.0f)) {
+            if (selectedFileSourceIndex == currentlyLoadedFileSourceIndex
+                    && selectedMeshIndex == currentlySelectedMeshIndex) {
+                // Reload
+                onDeformationFactorChanged();
             }
         }
     }
-}
 
-std::vector<std::string> MainApp::getSelectedDataSetFilenames() {
-    std::vector<std::string> filenames;
-    if (selectedDataSetIndex == 0) {
-        filenames.push_back(customDataSetFileName);
-    } else {
-        dataSetType = dataSetInformationList.at(selectedDataSetIndex - NUM_MANUAL_LOADERS)->type;
-        for (const std::string& filename : dataSetInformationList.at(
-                selectedDataSetIndex - NUM_MANUAL_LOADERS)->filenames) {
-            filenames.push_back(filename);
+    if (!hexaLabDataSetsDownloaded || selectedFileSourceIndex > 0) {
+        ImGui::Text(
+                "By clicking the button below you confirm that you have\nthe right to download the data sets from "
+                "hexalab.com.");
+        if (ImGui::Button("Download HexaLab Datasets")) {
+            downloadHexaLabDataSets([this]() {
+                this->hexaLabDataSetsDownloaded = true;
+                this->loadAvailableDataSetSources();
+            }, loaderThread);
         }
     }
-    return filenames;
 }
 
-void MainApp::renderGuiGeneralSettingsPropertyEditor() {
-    if (propertyEditor.addColorEdit3("Clear Color", (float*)&clearColorSelection, 0)) {
+void MainApp::renderSceneSettingsGui() {
+    if (ImGui::ColorEdit3("Clear Color", (float*)&clearColorSelection, 0)) {
         clearColor = sgl::colorFromFloat(
                 clearColorSelection.x, clearColorSelection.y, clearColorSelection.z, clearColorSelection.w);
+        transferFunctionWindow.setClearColor(clearColor);
+        colorLegendWidget.setClearColor(clearColor);
         coordinateAxesOverlayWidget.setClearColor(clearColor);
-        if (volumeData) {
-            volumeData->setClearColor(clearColor);
-        }
-        for (DataViewPtr& dataView : dataViews) {
-            dataView->setClearColor(clearColor);
-        }
-        for (auto& volumeRenderer : volumeRenderers) {
-            volumeRenderer->setClearColor(clearColor);
-        }
+        dataView->setClearColor(clearColor);
         reRender = true;
     }
 
-    // TODO: Remove option?
-    /*newDockSpaceMode = useDockSpaceMode;
-    if (propertyEditor.addCheckbox("Use Docking Mode", &newDockSpaceMode)) {
+    SciVisApp::renderSceneSettingsGuiPre();
+    ImGui::Checkbox("Show Transfer Function Window", &transferFunctionWindow.getShowWindow());
+    ImGui::Checkbox("Render Color Legend", &shallRenderColorLegendWidgets);
+    newDockSpaceMode = useDockSpaceMode;
+    if (ImGui::Checkbox("Use Docking Mode", &newDockSpaceMode)) {
         scheduledDockSpaceModeChange = true;
-    }*/
-
-    if (useDockSpaceMode && propertyEditor.addSliderInt("Supersampling Factor", &supersamplingFactor, 1, 4)) {
-        for (DataViewPtr& dataView : dataViews) {
-            dataView->supersamplingFactor = supersamplingFactor;
-            dataView->viewportWidth = 0;
-            dataView->viewportHeight = 0;
-        }
     }
 
-    if (propertyEditor.addCheckbox("Fixed Size Viewport", &useFixedSizeViewport)) {
+    if (ImGui::Combo(
+            "Rendering Mode", (int*)&renderingMode, RENDERING_MODE_NAMES,
+            IM_ARRAYSIZE(RENDERING_MODE_NAMES))) {
+        setRenderers();
         reRender = true;
     }
-    if (useFixedSizeViewport) {
-        if (propertyEditor.addSliderInt2Edit("Viewport Size", &fixedViewportSizeEdit.x, 1, 8192)
-            == ImGui::EditMode::INPUT_FINISHED) {
-            fixedViewportSize = fixedViewportSizeEdit;
-            reRender = true;
-        }
-    }
-}
 
-void MainApp::addNewDataView() {
-    DataViewPtr dataView = std::make_shared<DataView>(&sceneData);
-    dataView->supersamplingFactor = supersamplingFactor;
-    dataView->useLinearRGB = useLinearRGB;
-    dataView->clearColor = clearColor;
-    dataViews.push_back(dataView);
-    viewManager->addView(dataView.get(), &dataView->sceneData);
-    auto viewIdx = uint32_t(dataViews.size() - 1);
-    for (auto& volumeRenderer : volumeRenderers) {
-        volumeRenderer->addView(viewIdx);
-    }
-    if (volumeData) {
-        volumeData->addView(viewIdx);
-    }
-}
-
-void MainApp::initializeFirstDataView() {
-    DataViewPtr dataView = dataViews.back();
-    addNewRenderer(RENDERING_MODE_DOMAIN_OUTLINE_RENDERER);
-    addNewRenderer(RENDERING_MODE_DIRECT_VOLUME_RENDERING);
-    // Debug Code.
-    //addNewRenderer(RENDERING_MODE_DIAGRAM_RENDERER);
-    prepareVisualizationPipeline();
-}
-
-void MainApp::openFileDialog() {
-    selectedDataSetIndex = 0;
-    if (fileDialogDirectory.empty() || !sgl::FileUtils::get()->directoryExists(fileDialogDirectory)) {
-        fileDialogDirectory = sgl::AppSettings::get()->getDataDirectory() + "VolumeDataSets/";
-        if (!sgl::FileUtils::get()->exists(fileDialogDirectory)) {
-            fileDialogDirectory = sgl::AppSettings::get()->getDataDirectory();
-        }
-    }
-    IGFD_OpenModal(
-            fileDialogInstance,
-            "ChooseDataSetFile", "Choose a File",
-            ".*,.vtk,.vti,.vts,.nc,.zarr,.am,.bin,.field,.cvol,.grib,.grb,.dat,.raw,.ctl",
-            fileDialogDirectory.c_str(),
-            "", 1, nullptr,
-            ImGuiFileDialogFlags_None);
-}
-
-void MainApp::openExportFieldFileDialog() {
-    if (exportFieldFileDialogDirectory.empty() || !sgl::FileUtils::get()->directoryExists(exportFieldFileDialogDirectory)) {
-        exportFieldFileDialogDirectory = sgl::AppSettings::get()->getDataDirectory() + "VolumeDataSets/";
-        if (!sgl::FileUtils::get()->exists(exportFieldFileDialogDirectory)) {
-            exportFieldFileDialogDirectory = sgl::AppSettings::get()->getDataDirectory();
-        }
-    }
-    IGFD_OpenModal(
-            fileDialogInstance,
-            "ChooseExportFieldFile", "Choose a File",
-            ".*,.nc,.cvol",
-            exportFieldFileDialogDirectory.c_str(),
-            "", 1, nullptr,
-            ImGuiFileDialogFlags_ConfirmOverwrite);
-}
-
-void MainApp::openSelectStateDialog() {
-    if (stateFileDirectory.empty() || !sgl::FileUtils::get()->directoryExists(exportFieldFileDialogDirectory)) {
-        stateFileDirectory = sgl::AppSettings::get()->getDataDirectory() + "States/";
-        if (!sgl::FileUtils::get()->exists(stateFileDirectory)) {
-            sgl::FileUtils::get()->ensureDirectoryExists(stateFileDirectory);
-        }
-    }
-    IGFD_OpenModal(
-            fileDialogInstance, "ChooseStateFile", "Choose a File", ".json", stateFileDirectory.c_str(), "", 1, nullptr,
-            stateModeSave ? ImGuiFileDialogFlags_ConfirmOverwrite : ImGuiFileDialogFlags_None);
-}
-
-void MainApp::renderGuiMenuBar() {
-    bool openExportFieldDialog = false;
-    bool openFieldSimilarityDialog = false;
-    bool openFieldSimilarityResultDialog = false;
-    bool openOptimizeTFDialog = false;
-    if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("Open Dataset...", "CTRL+O")) {
-                openFileDialog();
-            }
-
-            if (ImGui::BeginMenu("Datasets")) {
-                if (dataSetInformationRoot) {
-                    std::stack<std::pair<DataSetInformationPtr, size_t>> dataSetInformationStack;
-                    dataSetInformationStack.push(std::make_pair(dataSetInformationRoot, 0));
-                    while (!dataSetInformationStack.empty()) {
-                        std::pair<DataSetInformationPtr, size_t> dataSetIdxPair = dataSetInformationStack.top();
-                        DataSetInformationPtr dataSetInformationParent = dataSetIdxPair.first;
-                        size_t idx = dataSetIdxPair.second;
-                        dataSetInformationStack.pop();
-                        while (idx < dataSetInformationParent->children.size()) {
-                            DataSetInformationPtr dataSetInformationChild =
-                                    dataSetInformationParent->children.at(idx);
-                            if (dataSetInformationChild->type == DataSetType::NODE) {
-                                if (ImGui::BeginMenu(dataSetInformationChild->name.c_str())) {
-                                    dataSetInformationStack.push(std::make_pair(dataSetInformationRoot, idx + 1));
-                                    dataSetInformationStack.push(std::make_pair(dataSetInformationChild, 0));
-                                    break;
-                                }
-                            } else {
-                                if (ImGui::MenuItem(dataSetInformationChild->name.c_str())) {
-                                    selectedDataSetIndex = int(dataSetInformationChild->sequentialIndex);
-                                    loadVolumeDataSet(getSelectedDataSetFilenames());
-                                }
-                            }
-                            idx++;
-                        }
-
-                        if (idx == dataSetInformationParent->children.size() && !dataSetInformationStack.empty()) {
-                            ImGui::EndMenu();
-                        }
-                    }
-                }
-
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::MenuItem("Quit", "CTRL+Q")) {
-                quit();
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Window")) {
-            if (ImGui::BeginMenu("New Renderer...")) {
-                for (int i = 0; i < IM_ARRAYSIZE(RENDERING_MODE_NAMES); i++) {
-                    if (ImGui::MenuItem(RENDERING_MODE_NAMES[i])) {
-                        addNewRenderer(RenderingMode(i));
-                    }
-                }
-                ImGui::EndMenu();
-            }
-            if (ImGui::MenuItem("New View...")) {
-                addNewDataView();
-                //if (dataViews.size() == 1) {
-                //    initializeFirstDataView();
-                //}
-            }
-            if (volumeData && ImGui::BeginMenu("New Calculator...")) {
-                volumeData->renderGuiNewCalculators();
-                ImGui::EndMenu();
-            }
-            ImGui::Separator();
-            for (int i = 0; i < int(dataViews.size()); i++) {
-                DataViewPtr& dataView = dataViews.at(i);
-                std::string windowName = dataView->getWindowNameImGui(dataViews, i);
-                if (ImGui::MenuItem(windowName.c_str(), nullptr, dataView->showWindow)) {
-                    dataView->showWindow = !dataView->showWindow;
-                }
-            }
-            if (ImGui::MenuItem("FPS Overlay", nullptr, showFpsOverlay)) {
-                showFpsOverlay = !showFpsOverlay;
-            }
-            if (ImGui::MenuItem("Coordinate Axes Overlay", nullptr, showCoordinateAxesOverlay)) {
-                showCoordinateAxesOverlay = !showCoordinateAxesOverlay;
-            }
-            if (ImGui::MenuItem("Property Editor", nullptr, showPropertyEditor)) {
-                showPropertyEditor = !showPropertyEditor;
-            }
-            if (ImGui::MenuItem("Checkpoint Window", nullptr, checkpointWindow.getShowWindow())) {
-                checkpointWindow.setShowWindow(!checkpointWindow.getShowWindow());
-            }
-            if (volumeData) {
-                auto& tfWindow = volumeData->getMultiVarTransferFunctionWindow();
-                if (ImGui::MenuItem("Transfer Function Window", nullptr, tfWindow.getShowWindow())) {
-                    tfWindow.setShowWindow(!tfWindow.getShowWindow());
-                }
-            }
-            //if (ImGui::MenuItem("Replay Widget", nullptr, replayWidget.getShowWindow())) {
-            //    replayWidget.setShowWindow(!replayWidget.getShowWindow());
-            //}
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Tools")) {
-            if (volumeData && ImGui::MenuItem("Export Field...")) {
-                openExportFieldDialog = true;
-            }
-            if (volumeData && ImGui::MenuItem("Compute Field Similarity...")) {
-                openFieldSimilarityDialog = true;
-            }
-            if (volumeData && ImGui::MenuItem("Optimize Transfer Function...")) {
-                openOptimizeTFDialog = true;
-            }
-
-            if (ImGui::MenuItem("Load State...")) {
-                stateModeSave = false;
-                openSelectStateDialog();
-            }
-            if (ImGui::MenuItem("Save State...")) {
-                stateModeSave = true;
-                openSelectStateDialog();
-            }
-
-            if (ImGui::MenuItem("Print Camera State")) {
-                std::cout << "Position: (" << camera->getPosition().x << ", " << camera->getPosition().y
-                          << ", " << camera->getPosition().z << ")" << std::endl;
-                std::cout << "Look At: (" << camera->getLookAtLocation().x << ", " << camera->getLookAtLocation().y
-                          << ", " << camera->getLookAtLocation().z << ")" << std::endl;
-                std::cout << "Yaw: " << camera->getYaw() << std::endl;
-                std::cout << "Pitch: " << camera->getPitch() << std::endl;
-                std::cout << "FoVy: " << (camera->getFOVy() / sgl::PI * 180.0f) << std::endl;
-            }
-            ImGui::EndMenu();
-        }
-
-        /*bool isRendererComputationRunning = false;
-        for (DataViewPtr& dataView : dataViews) {
-            isRendererComputationRunning =
-                    isRendererComputationRunning
-                    || (dataView->lineRenderer && dataView->lineRenderer->getIsComputationRunning());
-            if (isRendererComputationRunning) {
-                break;
-            }
-        }
-
-        if (lineDataRequester.getIsProcessingRequest() || isRendererComputationRunning) {
-            ImGui::SetCursorPosX(ImGui::GetWindowContentRegionWidth() - ImGui::GetTextLineHeight());
-            ImGui::ProgressSpinner(
-                    "##progress-spinner", -1.0f, -1.0f, 4.0f,
-                    ImVec4(0.1f, 0.5f, 1.0f, 1.0f));
-        }*/
-
-        ImGui::EndMainMenuBar();
-    }
-
-    if (openExportFieldDialog) {
-        ImGui::OpenPopup("Export Field");
-    }
-    if (ImGui::BeginPopupModal("Export Field", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        auto fieldNames = volumeData->getFieldNames(FieldType::SCALAR);
-        selectedFieldIndexExport = std::min(selectedFieldIndexExport, int(fieldNames.size()) - 1);
-        ImGui::Combo(
-                "Field Name", &selectedFieldIndexExport,
-                fieldNames.data(), int(fieldNames.size()));
-        if (ImGui::Button("OK", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-            openExportFieldFileDialog();
-        }
-        ImGui::SetItemDefaultFocus();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-
-    if (openFieldSimilarityDialog) {
-        ImGui::OpenPopup("Compute Field Similarity");
-    }
-    if (ImGui::BeginPopupModal("Compute Field Similarity", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        auto fieldNames = volumeData->getFieldNames(FieldType::SCALAR);
-        similarityFieldIdx0 = std::min(similarityFieldIdx0, int(fieldNames.size()) - 1);
-        similarityFieldIdx1 = std::min(similarityFieldIdx1, int(fieldNames.size()) - 1);
-        ImGui::Combo(
-                "Field #1", &similarityFieldIdx0,
-                fieldNames.data(), int(fieldNames.size()));
-        ImGui::Combo(
-                "Field #2", &similarityFieldIdx1,
-                fieldNames.data(), int(fieldNames.size()));
-        ImGui::Combo(
-                "Correlation Measure", (int*)&correlationMeasureFieldSimilarity,
-                CORRELATION_MEASURE_TYPE_NAMES, IM_ARRAYSIZE(CORRELATION_MEASURE_TYPE_NAMES));
-        ImGui::Combo("Accuracy", (int*)&useFieldAccuracyDouble, FIELD_ACCURACY_NAMES, 2);
-        if (ImGui::Button("OK", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-            openFieldSimilarityResultDialog = true;
-        }
-        ImGui::SetItemDefaultFocus();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-    if (openFieldSimilarityResultDialog) {
-        ImGui::OpenPopup("Field Similarity Result");
-        if (useFieldAccuracyDouble) {
-            similarityMetricNumber = computeFieldSimilarity<double>(
-                    volumeData.get(), similarityFieldIdx0, similarityFieldIdx1, correlationMeasureFieldSimilarity,
-                    maxCorrelationValue);
-        } else {
-            similarityMetricNumber = computeFieldSimilarity<float>(
-                    volumeData.get(), similarityFieldIdx0, similarityFieldIdx1, correlationMeasureFieldSimilarity,
-                    maxCorrelationValue);
-        }
-    }
-    if (ImGui::BeginPopupModal("Field Similarity Result", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        auto fieldNames = volumeData->getFieldNames(FieldType::SCALAR);
-        std::string resultText0 =
-                std::string("Similarity Measure: ")
-                + CORRELATION_MEASURE_TYPE_NAMES[int(correlationMeasureFieldSimilarity)];
-        std::string resultText1 =
-                "Fields: " + sgl::toString(fieldNames.at(similarityFieldIdx0)) + ", "
-                + sgl::toString(fieldNames.at(similarityFieldIdx1));
-        std::string resultText2 = "Value: " + sgl::toString(similarityMetricNumber);
-        if (correlationMeasureFieldSimilarity == CorrelationMeasureType::MUTUAL_INFORMATION_KRASKOV) {
-            resultText2 += " (max: " + sgl::toString(maxCorrelationValue) + ")";
-        }
-        ImGui::TextUnformatted(resultText0.c_str());
-        ImGui::TextUnformatted(resultText1.c_str());
-        ImGui::TextUnformatted(resultText2.c_str());
-        if (ImGui::Button("Close", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SetItemDefaultFocus();
-        ImGui::EndPopup();
-    }
-
-    if (openOptimizeTFDialog) {
-        tfOptimization->openDialog();
-    }
-    tfOptimization->renderGuiDialog();
-    if (tfOptimization->getNeedsReRender()) {
+    // Switch importance criterion
+    if (ImGui::Combo(
+            "Quality Measure", (int*)&selectedQualityMeasure, QUALITY_MEASURE_NAMES,
+            IM_ARRAYSIZE(QUALITY_MEASURE_NAMES))) {
+        changeQualityMeasureType();
         reRender = true;
     }
-}
 
-void MainApp::renderGuiPropertyEditorBegin() {
-    if (!useDockSpaceMode) {
-        renderGuiFpsCounter();
-
-        if (ImGui::Combo(
-                "Data Set", &selectedDataSetIndex, dataSetNames.data(),
-                int(dataSetNames.size()))) {
-            if (selectedDataSetIndex >= NUM_MANUAL_LOADERS) {
-                loadVolumeDataSet(getSelectedDataSetFilenames());
-            }
-        }
-
-        /*if (lineDataRequester.getIsProcessingRequest() || lineRenderer->getIsComputationRunning()) {
-            ImGui::SameLine();
-            ImGui::ProgressSpinner(
-                    "##progress-spinner", -1.0f, -1.0f, 4.0f,
-                    ImVec4(0.1f, 0.5f, 1.0f, 1.0f));
-        }*/
-
-        if (selectedDataSetIndex == 0) {
-            ImGui::InputText("##datasetfilenamelabel", &customDataSetFileName);
-            ImGui::SameLine();
-            if (ImGui::Button("Load File")) {
-                loadVolumeDataSet(getSelectedDataSetFilenames());
-            }
-        }
-
-        ImGui::Separator();
-    }
-}
-
-void MainApp::renderGuiPropertyEditorCustomNodes() {
-    if (volumeData) {
-        volumeData->renderGui(propertyEditor);
-    }
-
-    if (useDockSpaceMode && dataViews.size() > 1) {
-        for (int i = 0; i < int(dataViews.size()); i++) {
-            DataViewPtr& dataView = dataViews.at(i);
-            bool beginNode = propertyEditor.beginNode(dataView->getWindowNameImGui(dataViews, i));
-            if (beginNode) {
-                if (propertyEditor.addInputAction("View Name", &dataView->getViewName())) {
-                    dataView->reRender = true;
-                    for (auto& volumeRenderer : volumeRenderers) {
-                        volumeRenderer->notifyReRenderTriggeredExternally();
-                    }
-                }
-                if (propertyEditor.addCheckbox("Sync with Global Camera", &dataView->syncWithParentCamera)) {
-                    dataView->reRender = true;
-                    for (auto& volumeRenderer : volumeRenderers) {
-                        volumeRenderer->notifyReRenderTriggeredExternally();
-                    }
-                }
-                propertyEditor.endNode();
-            }
-        }
-    }
-    for (int i = 0; i < int(volumeRenderers.size()); i++) {
-        auto& volumeRenderer = volumeRenderers.at(i);
-        bool removeRenderer = false;
-        std::string windowName =
-                volumeRenderer->getWindowName() + "###renderer_" + std::to_string(volumeRenderer->getCreationId());
-        bool beginNode = propertyEditor.beginNode(windowName);
-        ImGui::SameLine();
-        float indentWidth = ImGui::GetContentRegionAvail().x;
-        ImGui::Indent(indentWidth);
-        std::string buttonName = "X###x_renderer" + std::to_string(i);
-        if (ImGui::Button(buttonName.c_str())) {
-            removeRenderer = true;
-        }
-        ImGui::Unindent(indentWidth);
-        if (beginNode) {
-            std::string previewValue = volumeRenderer->getWindowName();
-            if (propertyEditor.addBeginCombo("Rendering Mode", previewValue)) {
-                for (int j = 0; j < IM_ARRAYSIZE(RENDERING_MODE_NAMES); j++) {
-                    if (ImGui::Selectable(
-                            RENDERING_MODE_NAMES[int(j)], false,
-                            ImGuiSelectableFlags_::ImGuiSelectableFlags_DontClosePopups)) {
-                        ImGui::CloseCurrentPopup();
-                        setRenderer(RenderingMode(j), volumeRenderer);
-                        prepareVisualizationPipeline();
-                        reRender = true;
-                    }
-                }
-                propertyEditor.addEndCombo();
-            }
-
-            volumeRenderer->renderGui(propertyEditor);
-            propertyEditor.endNode();
-        }
-        if (removeRenderer) {
-            reRender = true;
-            volumeRenderers.erase(volumeRenderers.begin() + i);
-            i--;
-        }
-    }
-
-    if (volumeData) {
-        volumeData->renderGuiCalculators(propertyEditor);
-    }
+    SciVisApp::renderSceneSettingsGuiPost();
 }
 
 void MainApp::update(float dt) {
     sgl::SciVisApp::update(dt);
 
-    for (int i = 0; i < int(nonBlockingMsgBoxHandles.size()); i++) {
-        auto& handle = nonBlockingMsgBoxHandles.at(i);
-        if (handle->ready(0)) {
-            nonBlockingMsgBoxHandles.erase(nonBlockingMsgBoxHandles.begin() + i);
-            i--;
-        }
-    }
-
     if (scheduledDockSpaceModeChange) {
         if (useDockSpaceMode) {
-            dataViews.clear();
+            sceneData.framebuffer = &dataView->sceneFramebuffer;
+            sceneData.sceneTexture = &dataView->sceneTexture;
+            sceneData.sceneDepthRBO = &dataView->sceneDepthRBO;
         } else {
-            addNewDataView();
+            sceneData.framebuffer = &sceneFramebuffer;
+            sceneData.sceneTexture = &sceneTexture;
+            sceneData.sceneDepthRBO = &sceneDepthRBO;
         }
 
         useDockSpaceMode = newDockSpaceMode;
         scheduledDockSpaceModeChange = false;
+        resolutionChanged(sgl::EventPtr());
+        reRender = true;
     }
 
     if (usePerformanceMeasurementMode && !performanceMeasurer->update(recordingTime)) {
@@ -1731,137 +967,70 @@ void MainApp::update(float dt) {
         quit();
     }
 
-#ifdef SUPPORT_RENDERDOC_DEBUGGER
-    renderDocDebugger.update();
-#endif
+    updateCameraFlight(inputData.get() != nullptr, usesNewState);
 
-    updateCameraFlight(volumeData.get() != nullptr, usesNewState);
+    transferFunctionWindow.update(dt);
 
-    viewManager->setMouseHoverWindowIndex(mouseHoverWindowIndex);
+#ifdef USE_PYTHON
+    bool stopRecording = false;
+    bool stopCameraFlight = false;
+    if (replayWidget.update(recordingTime, stopRecording, stopCameraFlight)) {
+        if (!useCameraFlight) {
+            camera->overwriteViewMatrix(replayWidget.getViewMatrix());
+            if (camera->getFOVy() != replayWidget.getCameraFovy()) {
+                camera->setFOVy(replayWidget.getCameraFovy());
+            }
+        }
+        SettingsMap currentRendererSettings = replayWidget.getCurrentRendererSettings();
+        for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+            meshRenderer->setNewSettings(currentRendererSettings);
+        }
+        reRender = true;
 
-    if (volumeData) {
-        volumeData->update(dt);
+        if (!useCameraFlight) {
+            if (realTimeReplayUpdates) {
+                uint64_t currentTimeStamp = sgl::Timer->getTicksMicroseconds();
+                uint64_t timeElapsedMicroSec = currentTimeStamp - recordingTimeStampStart;
+                recordingTime = timeElapsedMicroSec * 1e-6;
+            } else {
+                recordingTime += FRAME_TIME_CAMERA_PATH;
+            }
+        }
     }
+    if (stopRecording) {
+        recording = false;
+        if (videoWriter) {
+            delete videoWriter;
+            videoWriter = nullptr;
+        }
+        if (useCameraFlight) {
+            useCameraFlight = false;
+            cameraPath.resetTime();
+        }
+    }
+    if (stopCameraFlight) {
+        useCameraFlight = false;
+        cameraPath.resetTime();
+    }
+#endif
 
     ImGuiIO &io = ImGui::GetIO();
     if (!io.WantCaptureKeyboard || recording || focusedWindowIndex != -1) {
-        if (useDockSpaceMode) {
-            for (int i = 0; i < int(dataViews.size()); i++) {
-                DataViewPtr& dataView = dataViews.at(i);
-                if (i != focusedWindowIndex) {
-                    continue;
-                }
+        moveCameraKeyboard(dt);
+    }
 
-                sgl::CameraPtr parentCamera = this->camera;
-                bool reRenderOld = reRender;
-                if (!dataView->syncWithParentCamera) {
-                    this->camera = dataView->camera;
-                    hasMovedIndex = i;
-                }
-                this->reRender = false;
-                moveCameraKeyboard(dt);
-                if (this->reRender && dataView->syncWithParentCamera) {
-                    for (DataViewPtr& dataViewLocal : dataViews) {
-                        if (dataViewLocal->syncWithParentCamera) {
-                            dataViewLocal->reRender = dataView->reRender || this->reRender;
-                        }
-                    }
-                }
-                if (!dataView->syncWithParentCamera) {
-                    dataView->reRender = dataView->reRender || this->reRender;
-                    this->camera = parentCamera;
-                    hasMovedIndex = -1;
-                }
-                this->reRender = reRenderOld;
-            }
-        } else {
-            moveCameraKeyboard(dt);
+    if (!io.WantCaptureKeyboard || recording) {
+        if (sgl::Keyboard->isKeyDown(SDLK_u)) {
+            transferFunctionWindow.setShowWindow(showSettingsWindow);
         }
     }
 
-    // Update in inverse order due to back-to-front composited rendering.
-    bool hasGrabbedMouse = io.WantCaptureMouse && mouseHoverWindowIndex < 0;
-    for (auto it = volumeRenderers.rbegin(); it != volumeRenderers.rend(); it++) {
-        auto& volumeRenderer = *it;
-        volumeRenderer->update(dt, hasGrabbedMouse);
-        hasGrabbedMouse = hasGrabbedMouse || volumeRenderer->getHasGrabbedMouse();
-    }
     if (!io.WantCaptureMouse || mouseHoverWindowIndex != -1) {
-        if (useDockSpaceMode) {
-            for (int i = 0; i < int(dataViews.size()); i++) {
-                DataViewPtr& dataView = dataViews.at(i);
-                if (i != mouseHoverWindowIndex) {
-                    continue;
-                }
-
-                sgl::CameraPtr parentCamera = this->camera;
-                bool reRenderOld = reRender;
-                if (!dataView->syncWithParentCamera) {
-                    this->camera = dataView->camera;
-                    hasMovedIndex = i;
-                }
-                this->reRender = false;
-                if (!hasGrabbedMouse) {
-                    moveCameraMouse(dt);
-                }
-                if (this->reRender && dataView->syncWithParentCamera) {
-                    for (DataViewPtr& dataViewLocal : dataViews) {
-                        if (dataViewLocal->syncWithParentCamera) {
-                            dataViewLocal->reRender = dataView->reRender || this->reRender;
-                        }
-                    }
-                }
-                if (!dataView->syncWithParentCamera) {
-                    dataView->reRender = dataView->reRender || this->reRender;
-                    this->camera = parentCamera;
-                    hasMovedIndex = -1;
-                }
-                this->reRender = reRenderOld;
-            }
-        } else {
-            if (!hasGrabbedMouse) {
-                moveCameraMouse(dt);
-            }
-        }
+        moveCameraMouse(dt);
     }
-}
 
-void MainApp::hasMoved() {
-    if (useDockSpaceMode) {
-        if (hasMovedIndex < 0) {
-            uint32_t viewIdx = 0;
-            for (DataViewPtr& dataView : dataViews) {
-                if (dataView->syncWithParentCamera) {
-                    dataView->syncCamera();
-                }
-                for (auto& volumeRenderer : volumeRenderers) {
-                    volumeRenderer->onHasMoved(viewIdx);
-                }
-                viewIdx++;
-            }
-        } else {
-            for (auto& volumeRenderer : volumeRenderers) {
-                volumeRenderer->onHasMoved(uint32_t(hasMovedIndex));
-            }
-        }
-    } else {
-        for (auto& volumeRenderer : volumeRenderers) {
-            volumeRenderer->onHasMoved(0);
-        }
-    }
-}
-
-void MainApp::onCameraReset() {
-    if (useDockSpaceMode) {
-        for (DataViewPtr& dataView : dataViews) {
-            dataView->camera->setNearClipDistance(camera->getNearClipDistance());
-            dataView->camera->setFarClipDistance(camera->getFarClipDistance());
-            dataView->camera->setYaw(camera->getYaw());
-            dataView->camera->setPitch(camera->getPitch());
-            dataView->camera->setFOVy(camera->getFOVy());
-            dataView->camera->setPosition(camera->getPosition());
-            dataView->camera->resetLookAtLocation();
-        }
+    for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+        meshRenderer->update(dt);
     }
 }
 
@@ -1869,112 +1038,313 @@ void MainApp::onCameraReset() {
 
 // --- Visualization pipeline ---
 
-void MainApp::loadVolumeDataSet(const std::vector<std::string>& fileNames) {
-    if (fileNames.empty() || fileNames.front().empty()) {
-        volumeData = {};
-        return;
+sgl::AABB3 MainApp::computeAABB3(const std::vector<glm::vec3>& vertices) {
+    sgl::AABB3 aabb;
+    float minX = FLT_MAX, minY = FLT_MAX, minZ = FLT_MAX, maxX = -FLT_MAX, maxY = -FLT_MAX, maxZ = -FLT_MAX;
+#if _OPENMP >= 201107
+    #pragma omp parallel for reduction(min: minX) reduction(min: minY) reduction(min: minZ) reduction(max: maxX) \
+    reduction(max: maxY) reduction(max: maxZ) shared(vertices) default(none)
+#endif
+    for (size_t i = 0; i < vertices.size(); i++) {
+        const glm::vec3& pt = vertices.at(i);
+        minX = std::min(minX, pt.x);
+        minY = std::min(minY, pt.y);
+        minZ = std::min(minZ, pt.z);
+        maxX = std::max(maxX, pt.x);
+        maxY = std::max(maxY, pt.y);
+        maxZ = std::max(maxZ, pt.z);
     }
-    currentlyLoadedDataSetIndex = selectedDataSetIndex;
+    aabb.min = glm::vec3(minX, minY, minZ);
+    aabb.max = glm::vec3(maxX, maxY, maxZ);
+    return aabb;
+}
 
-    DataSetInformation selectedDataSetInformation;
-    if (selectedDataSetIndex >= NUM_MANUAL_LOADERS && !dataSetInformationList.empty()) {
-        selectedDataSetInformation = *dataSetInformationList.at(selectedDataSetIndex - NUM_MANUAL_LOADERS);
-    } else {
-        selectedDataSetInformation.type = dataSetType;
-        selectedDataSetInformation.filenames = fileNames;
+void MainApp::normalizeVertexPositions(std::vector<glm::vec3>& vertices) {
+    sgl::AABB3 aabb = computeAABB3(vertices);
+    glm::vec3 translation = -aabb.getCenter();
+    glm::vec3 scale3D = 0.5f / aabb.getDimensions();
+    float scale = std::min(scale3D.x, std::min(scale3D.y, scale3D.z));
+
+#if _OPENMP >= 200805
+    #pragma omp parallel for shared(vertices, translation, scale) default(none)
+#endif
+    for (size_t i = 0; i < vertices.size(); i++) {
+        vertices.at(i) = (vertices.at(i) + translation) * scale;
     }
 
-    glm::mat4 transformationMatrix = sgl::matrixIdentity();
-    glm::mat4* transformationMatrixPtr = nullptr;
-    if (selectedDataSetInformation.hasCustomTransform) {
-        transformationMatrix *= selectedDataSetInformation.transformMatrix;
-        transformationMatrixPtr = &transformationMatrix;
-    }
     if (rotateModelBy90DegreeTurns != 0) {
-        transformationMatrix *= glm::rotate(float(rotateModelBy90DegreeTurns) * sgl::HALF_PI, modelRotationAxis);
-        transformationMatrixPtr = &transformationMatrix;
+        glm::mat4 rotationMatrix = glm::rotate(rotateModelBy90DegreeTurns * sgl::HALF_PI, modelRotationAxis);
+
+#if _OPENMP >= 200805
+        #pragma omp parallel for shared(vertices, rotationMatrix) default(none)
+#endif
+        for (size_t i = 0; i < vertices.size(); i++) {
+            glm::vec4 rotatedVertex = rotationMatrix * glm::vec4(
+                    vertices.at(i).x, vertices.at(i).y, vertices.at(i).z, 1.0f);
+            vertices.at(i) = glm::vec3(rotatedVertex.x, rotatedVertex.y, rotatedVertex.z);
+        }
     }
-    if (selectedDataSetInformation.heightScale != 1.0f) {
-        transformationMatrix *= glm::scale(glm::vec3(1.0f, selectedDataSetInformation.heightScale, 1.0f));
-        transformationMatrixPtr = &transformationMatrix;
+}
+
+void MainApp::applyVertexDeformations(
+        std::vector<glm::vec3>& vertices, const std::vector<glm::vec3>& deformations, const float deformationFactor) {
+    float maxDeformation = -FLT_MAX;
+#if _OPENMP >= 201107
+    #pragma omp parallel for reduction(max: maxDeformation) shared(vertices, deformations) default(none)
+#endif
+    for (size_t i = 0; i < deformations.size(); i++) {
+        maxDeformation = std::max(maxDeformation, glm::length(deformations.at(i)));
     }
 
-    VolumeDataPtr newVolumeData;
-    if (dataSetType == DataSetType::VOLUME) {
-        newVolumeData = std::make_shared<VolumeData>(rendererVk);
-    } else {
-        sgl::Logfile::get()->writeError("Error in MainApp::loadVolumeDataSet: Invalid data set type.");
+    sgl::AABB3 aabb = computeAABB3(vertices);
+    const float deformationScalingFactor = glm::length(aabb.getDimensions()) * deformationFactor / maxDeformation;
+#if _OPENMP >= 200805
+    #pragma omp parallel for shared(vertices, deformations, deformationScalingFactor) default(none)
+#endif
+    for (size_t i = 0; i < vertices.size(); i++) {
+        vertices.at(i) = vertices.at(i) + deformationScalingFactor * deformations.at(i);
+    }
+}
+
+void MainApp::loadHexahedralMesh(const std::string &fileName) {
+    if (fileName.empty()) {
+        inputData = HexMeshPtr();
         return;
     }
-    newVolumeData->setFileDialogInstance(fileDialogInstance);
-    newVolumeData->setViewManager(viewManager);
+    currentlyLoadedFileSourceIndex = selectedFileSourceIndex;
+    currentlySelectedMeshIndex = selectedMeshIndex;
 
-    bool dataLoaded = newVolumeData->setInputFiles(fileNames, selectedDataSetInformation, transformationMatrixPtr);
-    sgl::ColorLegendWidget::resetStandardSize();
+    size_t extensionPos = fileName.find_last_of('.');
+    if (extensionPos == std::string::npos) {
+        sgl::Logfile::get()->writeError("Error: Mesh file name has no extension.");
+        return;
+    }
+    std::string extension = fileName.substr(extensionPos + 1);
+    auto it = meshLoaderMap.find(extension);
+    if (it == meshLoaderMap.end()) {
+        sgl::Logfile::get()->writeError("Error: Unknown extension: ." + extension);
+        return;
+    }
 
-    if (dataLoaded) {
-        volumeData = newVolumeData;
-        //lineData->onMainThreadDataInit();
-        volumeData->recomputeHistogram();
-        volumeData->setClearColor(clearColor);
-        volumeData->setUseLinearRGB(useLinearRGB);
-        for (size_t viewIdx = 0; viewIdx < dataViews.size(); viewIdx++) {
-            volumeData->addView(uint32_t(viewIdx));
-            auto& viewSceneData = dataViews.at(viewIdx)->sceneData;
-            if (*viewSceneData.sceneTexture) {
-                volumeData->recreateSwapchainView(
-                        uint32_t(viewIdx), *viewSceneData.viewportWidthVirtual, *viewSceneData.viewportHeightVirtual);
+    auto loadingStartTime = std::chrono::system_clock::now();
+
+    hexMeshVertices.clear();
+    hexMeshCellIndices.clear();
+    hexMeshDeformations.clear();
+    hexMeshAttributeList.clear();
+    bool isPerVertexData = true;
+    bool loadingSuccessful = it->second->loadHexahedralMeshFromFile(
+            fileName, hexMeshVertices, hexMeshCellIndices, hexMeshDeformations,
+            hexMeshAttributeList, isPerVertexData);
+    if (loadingSuccessful) {
+        sgl::ColorLegendWidget::resetStandardSize();
+        newMeshLoaded = true;
+        printLoadingTime = true;
+        loadingTimeSeconds = 0.0;
+        checkpointWindow.onLoadDataSet(fileName);
+        loadedMeshFilename = fileName;
+
+        // A copy of the mesh data is stored for allowing the user to alter the deformation factor also after loading.
+        std::vector<glm::vec3> vertices;
+        vertices = hexMeshVertices;
+
+        // Assume deformed meshes only in source at index 2 for now (don't clutter the UI for other sources).
+        if (deformationFactor != 0.0f && (getFileSourceContainsDeformationMeshes() || usePerformanceMeasurementMode)
+                && hexMeshDeformations.size() == vertices.size()) {
+            applyVertexDeformations(vertices, hexMeshDeformations, deformationFactor);
+        }
+
+        normalizeVertexPositions(vertices);
+        modelBoundingBox = computeAABB3(vertices);
+
+        // Delete old data to get more free RAM.
+        inputData = HexMeshPtr();
+        for (HexahedralMeshFilter* meshFilter : meshFilters) {
+            meshFilter->removeOldMesh();
+        }
+        for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+            meshRenderer->removeOldMesh();
+        }
+
+        inputData = HexMeshPtr(new HexMesh(transferFunctionWindow, *rayMeshIntersection));
+        bool loadMeshRepresentation =
+                renderingMode != RENDERING_MODE_PSEUDO_VOLUME && renderingMode != RENDERING_MODE_DEPTH_COMPLEXITY;
+        inputData->setHexMeshData(vertices, hexMeshCellIndices, loadMeshRepresentation);
+        inputData->setQualityMeasure(selectedQualityMeasure);
+        MeshSourceDescription& sourceDescription = meshSourceDescriptions.at(selectedFileSourceIndex - 1);
+        std::vector<std::string> dataAdditionalFiles;
+        if (selectedMeshIndex != 0) {
+            dataAdditionalFiles = sourceDescription.dataAdditionalFiles.at(selectedMeshIndex - 1);
+        }
+        if (!hexMeshAttributeList.empty()) {
+            if (isPerVertexData) {
+                if (extension == "degStress") {
+                    inputData->addManualVertexAttribute(hexMeshAttributeList, "Degeneracy Metric");
+                } else {
+                    inputData->addManualVertexAttribute(hexMeshAttributeList, "Anisotropy");
+                }
+            } else {
+                inputData->addManualCellAttribute(hexMeshAttributeList, "Convergence");
+                //std::vector<float> unconvergence(hexMeshAttributeList.size());
+                //for (size_t i = 0; i < hexMeshAttributeList.size(); i++) {
+                //    unconvergence.at(i) = 4.0f * hexMeshAttributeList.at(i) * (1.0f - hexMeshAttributeList.at(i));
+                //}
+                //inputData->addManualCellAttribute(unconvergence, "Unconvergence");
             }
         }
-        newDataLoaded = true;
-        reRender = true;
-        boundingBox = volumeData->getBoundingBoxRendering();
-        selectedFieldIndexExport = 0;
-        similarityFieldIdx0 = 0;
-        similarityFieldIdx1 = 0;
+        if (!dataAdditionalFiles.empty()) {
+            for (std::string& additionalDataName : dataAdditionalFiles) {
+                if (boost::ends_with(additionalDataName, ".dat")) {
+                    const std::string meshDirectory = sgl::AppSettings::get()->getDataDirectory() + "Meshes/";
+                    std::string additionalDataFilename =
+                            meshDirectory + sourceDescription.path + "/" + additionalDataName;
+                    std::vector<std::vector<float>> datData = loadDatData(additionalDataFilename);
 
-        std::string meshDescriptorName = fileNames.front();
-        if (fileNames.size() > 1) {
-            meshDescriptorName += std::string() + "_" + std::to_string(fileNames.size());
+                    std::string dataType = "Unknown";
+                    std::string filenameLowerCase = boost::to_lower_copy(additionalDataName);
+                    if (filenameLowerCase.find("stress") != std::string::npos) {
+                        dataType = "";
+                        if (filenameLowerCase.find("cartesian") != std::string::npos) {
+                            dataType = "Cartesian ";
+                        } else if (filenameLowerCase.find("principal") != std::string::npos) {
+                            dataType = "Principal ";
+                        } else if (filenameLowerCase.find("mises") != std::string::npos) {
+                            dataType = "von Mises ";
+                        }
+                        dataType += "Stress";
+
+                        // Compute absolute data.
+                        for (std::vector<float>& attrList : datData) {
+#if _OPENMP >= 200805
+                            #pragma omp parallel for shared(attrList) default(none)
+#endif
+                            for (size_t i = 0; i < attrList.size(); i++) {
+                                attrList.at(i) = std::abs(attrList.at(i));
+                            }
+                        }
+                    }
+                    if (filenameLowerCase.find("vertex") != std::string::npos
+                            && filenameLowerCase.find("displacement") != std::string::npos) {
+                        dataType = "Vertex Displacement";
+                    }
+
+                    int i = 0;
+                    for (std::vector<float>& attributeList : datData) {
+                        inputData->addManualVertexAttribute(attributeList, dataType + " (" + std::to_string(i) + ")");
+                        i++;
+                    }
+                }
+            }
         }
-        checkpointWindow.onLoadDataSet(meshDescriptorName);
+
+        for (HexahedralMeshFilter* meshFilter : meshFilters) {
+            meshFilter->onMeshLoaded(inputData);
+        }
 
         if (true) { // useCameraFlight
             std::string cameraPathFilename =
-                    saveDirectoryCameraPaths + sgl::FileUtils::get()->getPathAsList(meshDescriptorName).back()
-                    + ".binpath";
+                    saveDirectoryCameraPaths + sgl::FileUtils::get()->getPathAsList(fileName).back() + ".binpath";
             if (sgl::FileUtils::get()->exists(cameraPathFilename)) {
                 cameraPath.fromBinaryFile(cameraPathFilename);
             } else {
-                cameraPath.fromCirclePath(
-                        boundingBox, meshDescriptorName,
-                        usePerformanceMeasurementMode
+                cameraPath.fromCirclePath(modelBoundingBox, fileName, usePerformanceMeasurementMode
                         ? CAMERA_PATH_TIME_PERFORMANCE_MEASUREMENT : CAMERA_PATH_TIME_RECORDING,
                         usePerformanceMeasurementMode);
                 //cameraPath.saveToBinaryFile(cameraPathFilename);
             }
         }
     }
+    auto loadingFinishedTime = std::chrono::system_clock::now();
+    auto elapsedTimeLoad = std::chrono::duration_cast<std::chrono::milliseconds>(
+            loadingFinishedTime - loadingStartTime);
+    loadingTimeSeconds += elapsedTimeLoad.count() * 1e-3;
+
+    reRender = true;
 }
 
 void MainApp::reloadDataSet() {
-    loadVolumeDataSet(getSelectedDataSetFilenames());
+    loadHexahedralMesh(getSelectedMeshFilename());
+}
+
+void MainApp::onDeformationFactorChanged() {
+    //loadHexahedralMesh(getSelectedMeshFilename());
+    std::vector<glm::vec3> vertices = hexMeshVertices;
+    if (deformationFactor != 0.0f && hexMeshDeformations.size() == vertices.size()) {
+        applyVertexDeformations(vertices, hexMeshDeformations, deformationFactor);
+    }
+    normalizeVertexPositions(vertices);
+    modelBoundingBox = computeAABB3(vertices);
+    inputData->updateVertexPositions(vertices);
 }
 
 void MainApp::prepareVisualizationPipeline() {
-    if (volumeData && volumeData->isDirty()) {
-        tfOptimization->setVolumeData(volumeData.get(), newDataLoaded);
+    std::chrono::time_point<std::chrono::system_clock> prepareVisPipelineTimeStart;
+    if (printLoadingTime) {
+        prepareVisPipelineTimeStart = std::chrono::system_clock::now();
     }
-    if (volumeData && !volumeRenderers.empty()) {
-        bool isPreviousNodeDirty = volumeData->isDirty();
-        for (auto& volumeRenderer : volumeRenderers) {
-            if (volumeRenderer->isDirty() || isPreviousNodeDirty) {
-                rendererVk->getDevice()->waitIdle();
-                volumeRenderer->setVolumeData(volumeData, newDataLoaded);
-                volumeRenderer->resetDirty();
+
+    if (inputData != nullptr) {
+        bool isPreviousNodeDirty = inputData->isDirty();
+        HexMeshPtr filteredMesh;
+        if (inputData->isBaseComplexMeshLoaded()) {
+            filteredMesh = getFilteredMesh(isPreviousNodeDirty);
+        } else {
+            filteredMesh = inputData;
+        }
+        // Generate the visualization mapping for all renderers that have the dirty flag set (or if the filtered data
+        // changed).
+        for (HexahedralMeshRenderer* meshRenderer : meshRenderers) {
+            if (meshRenderer->isDirty() || isPreviousNodeDirty) {
+                meshRenderer->uploadVisualizationMapping(filteredMesh, newMeshLoaded);
             }
         }
-        volumeData->resetDirty();
     }
-    newDataLoaded = false;
+
+    if (printLoadingTime) {
+        printLoadingTime = false;
+        auto prepareVisPipelineTimeEnd = std::chrono::system_clock::now();
+        auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(
+                prepareVisPipelineTimeEnd - prepareVisPipelineTimeStart);
+        loadingTimeSeconds += elapsedTime.count() * 1e-3;
+        sgl::Logfile::get()->writeInfo(
+                std::string() + "Total loading time until first frame: " + std::to_string(loadingTimeSeconds) + "s");
+    }
+
+    newMeshLoaded = false;
+}
+
+HexMeshPtr MainApp::getFilteredMesh(bool& isDirty) {
+    HexMeshPtr filteredMesh = inputData;
+
+    // Test if we need to re-run the filters.
+    for (HexahedralMeshFilter* meshFilter : meshFilters) {
+        if (!meshFilter->isEnabled()) {
+            continue;
+        }
+        if (meshFilter->isDirty()) {
+            isDirty = true;
+            reRender = true;
+        }
+    }
+
+    if (isDirty) {
+        filteredMesh->unmark();
+        // Pass the output of each filter to the next filter.
+        for (HexahedralMeshFilter* meshFilter : meshFilters) {
+            if (!meshFilter->isEnabled()) {
+                continue;
+            }
+            meshFilter->filterMesh(filteredMesh);
+            filteredMesh = meshFilter->getOutput();
+        }
+    }
+
+    return filteredMesh;
+}
+
+void MainApp::changeQualityMeasureType() {
+    if (inputData) {
+        inputData->setQualityMeasure(selectedQualityMeasure);
+    }
+    colorLegendWidget.setAttributeDisplayName(QUALITY_MEASURE_NAMES[int(selectedQualityMeasure)]);
 }

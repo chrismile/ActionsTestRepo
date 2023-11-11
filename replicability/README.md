@@ -1,9 +1,7 @@
-# Correrender
+# HexVolumeRenderer
 
-This file contains information for the TVCG Replicability Stamp. For more details on the Replicability Stamp,
-please refer to http://www.replicabilitystamp.org/.
-
-[![](https://www.replicabilitystamp.org/logo/Reproducibility-small.png)](http://www.replicabilitystamp.org#https-github-com-chrismile-correrender)
+This file contains information for the TVCG Replicability Stamp.
+For more details on the Replicability Stamp, please refer to http://www.replicabilitystamp.org/.
 
 We give permission to the Replicability Stamp committee and reviewers of the Graphics Replicability Stamp Initiative
 (GRSI) to review the code and advertise the review publicly after the stamp is approved.
@@ -11,39 +9,79 @@ We give permission to the Replicability Stamp committee and reviewers of the Gra
 
 ## Submission
 
-Adaptive Sampling of 3D Spatial Correlations for Focus+Context Visualization. \
-Christoph Neuhauser, Josef Stumpfegger, Rüdiger Westermann. \
-To appear in IEEE Transactions on Visualization and Computer Graphics 2023 (TVCG 2023). \
-DOI: 10.1109/TVCG.2023.3326855
+Interactive Focus+Context Rendering for Hexahedral Mesh Inspection. \
+Christoph Neuhauser, Junpeng Wang, Rüdiger Westermann. \
+IEEE Transactions on Visualization and Computer Graphics 2021 (TVCG 2021). \
+DOI: 10.1109/TVCG.2021.3074607
 
 
-## Build Process
-
-While the build process is supported both on Linux and Windows, we currently only provide a script for Linux to not
-only build the application, but also reproduce a figure from the paper.
-
-Please execute the script `./build-linux.sh --replicability` in the repository folder on the command line.
-It will compile and install all requirements, download the synthetic test data set, build and execute the program
-reproducing Figure 9 from the paper.
-This process may take some time depending on your internet connection speed. Please note that superuser rights need to
-be given to parts of the script, as it will install some dependencies using the apt (Ubuntu) or Pacman (Arch Linux)
-package managers.
-
-
-## Supported Operating Systems & Hardware
+## Supported Operating Systems
 
 The build process was tested on...
-- Ubuntu 20.04 and Ubuntu 22.04 with GCC
-- Arch Linux (note: older versions of GCC may be required if building with CUDA support)
-- Windows 10 & Windows 11 using MSVC 2022 and MSYS2
+- Ubuntu 20.04 and Ubuntu 22.04
+- Arch Linux (on 2021-05-04)
+- Windows 10 and 11 using MSYS2
 
-The program has been tested on the following hardware configurations:
-- Ubuntu 22.04 with an NVIDIA RTX 3090
-- Windows 10 with an AMD Radeon RX 6900 XT
+
+## Hardware
+
+So far, the program was only tested using GPUs from NVIDIA. If you encounter any bugs on other hardware, please open an
+issue report (https://github.com/chrismile/HexVolumeRenderer/issues) for this project.
+
+
+## Build Process on Ubuntu
+
+Please execute the script `./build.sh --replicability` in the project root directory on the command line.
+It will compile and install all requirements, download the data sets, build the program and execute the program
+reproducing Figure 19 (right) from the paper.
+This process may take some time depending on your internet connection speed. Please note that super user rights need
+to be given to parts of the program, as it will install some dependencies using the Ubuntu package manager.
+
+
+## Build Process on Windows 10
+
+Please download and install MSYS2 from https://www.msys2.org/.
+Then, follow the instruction on the MSYS2 webpage to make sure that MSYS2 is up-to-date.
+Please make sure to execute `pacman -Syu` until all packages are up-to-date. This should be done no matter whether you
+installed MSYS2 freshly for this program or it was already installed on your system. This program uses a new version of
+Intel's Embree ray tracing library, and it might not compile if your MSYS2 package sources are not up-to-date.
+
+In the next step, open the MSYS2 MinGW 64-bit shell using the Windows start menu and execute the script
+`./build.sh --replicability` in the project root directory. It will compile and install all requirements, download the
+used data sets, build the program and execute the program reproducing Figure 19 (right) from the paper.
+This process may take some time depending on your internet connection speed.
+
+
+## Tested Versions of Dependencies
+
+We have tested compilation with the following versions of the dependencies.
+- sgl: https://github.com/chrismile/sgl/tree/tvcg-hexmesh
+- libpng: 1.6.x
+- SDL2: 2.0.x
+- SDL2_image: 2.0.x
+- CURL: 7.x
+- jsoncpp: 1.9.x
+- Eigen: 3.3.x
+- glm: 0.9.x
+- tinyxml2: 7.x
+- GLEW: 2.x
+- Boost: > 1.68
 
 
 ## Troubleshooting
 
-If an error occurs during the build process or when running the program, please open an [issue report](https://github.com/chrismile/Correrender/issues)
-or contact us by e-mail. After the bug was fixed, please pull the new code and delete the directory `third_party`
-before again calling `./build-linux.sh --replicability`.
+If an error occurs during the build process, please open an [issue report](https://github.com/chrismile/Correrender/issues).
+When [reporting a bug](https://github.com/chrismile/Correrender/issues) in the program itself, please also attach the
+logfile generated by the application. Below, the location of the logfile on different operating systems can be found.
+
+- Linux: `~/.config/hexvolumerenderer/Logfile.html`
+- Windows: `%AppData%/HexVolumeRenderer/Logfile.html` (i.e., `C:/Users/<USER>/AppData/Roaming/Correrender/Logfile.html`)
+- macOS: `~/Library/Preferences/HexVolumeRenderer/Logfile.html`
+
+After the bug was fixed, please pull the new code and delete the directories `third_party` and `.build_release` before
+again calling `build.sh`.
+
+When compiling the program on Windows, please make sure that MSYS2 is up-to-date.
+
+When calling `build.sh`, the program will download 1.4 GiB of hex-mesh data.
+Please make sure that enough hard-drive space is available for the mesh files.

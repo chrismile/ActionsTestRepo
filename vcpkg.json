@@ -1,13 +1,11 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
-    "name": "correrender",
+    "name": "hexvolumerenderer",
     "version": "0.1.0",
     "dependencies": [
         "boost-core",
         "boost-algorithm",
         "boost-filesystem",
-        "boost-math",
-        "boost-parameter",
         {
             "name": "boost-interprocess",
             "platform": "windows"
@@ -23,32 +21,23 @@
             "platform": "!linux"
         },
         "sdl2-image",
-        {
-            "name": "glfw3",
-            "platform": "!linux"
-        },
         "tinyxml2",
         {
             "name": "libarchive",
             "default-features": true,
             "features": [ "bzip2", "lz4", "lzma", "zstd" ]
         },
-        "vulkan-headers",
-        "shaderc",
-        "opencl",
         "glew",
         "glm",
         "tbb",
         "eigen3",
         "jsoncpp",
-        "nlohmann-json",
         "python3",
-        "netcdf-c",
-        "blosc",
-        "eigen3",
-        "nlopt",
         "curl",
-        "tiff"
+        {
+            "name": "embree3",
+            "platform": "!linux"
+        }
     ],
     "features": {
         "tbb": {
