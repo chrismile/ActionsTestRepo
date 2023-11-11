@@ -2293,7 +2293,7 @@ void HEBChart::drawColorLegends() {
         numFieldsSize++;
     }
 
-    auto [minMi, maxMi] = getMinMaxCorrelationValue();
+    float [minMi, maxMi] = getMinMaxCorrelationValue();
     for (int i = 0; i < numFieldsSize; i++) {
         int ix = numFieldsSize - i;
         HEBChartFieldData* fieldData = nullptr;

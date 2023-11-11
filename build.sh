@@ -42,6 +42,7 @@ if [[ "$(uname -s)" =~ ^Darwin.* ]]; then
 else
     use_macos=false
 fi
+os_arch="$(uname -m)"
 
 run_program=true
 debug=false
@@ -506,7 +507,6 @@ fi
 use_vulkan=false
 vulkan_sdk_env_set=true
 use_vulkan=true
-os_arch="$(uname -m)"
 
 search_for_vulkan_sdk=false
 if [ $use_msys = false ] && [ -z "${VULKAN_SDK+1}" ]; then
@@ -1083,11 +1083,7 @@ if $use_msys; then
         fi
     done
 elif [ $use_macos = true ] && [ $use_vcpkg = true ]; then
-    [ -d $destination_dir ]             || mkdir $destination_dir
-    [ -d $destination_dir/python3 ]     || mkdir $destination_dir/python3
-    [ -d $destination_dir/python3/lib ] || mkdir $destination_dir/python3/lib
-    rsync -a "vcpkg_installed/$(ls vcpkg_installed | grep -Ewv 'vcpkg')/lib/$Python3_VERSION" $destination_dir/python3/lib
-    #rsync -a "$(eval echo "vcpkg_installed/$(ls vcpkg_installed | grep -Ewv 'vcpkg')/lib/python*")" $destination_dir/python3/lib
+    [ -d $destination_dir ] || mkdir $destination_dir
     rsync -a "$build_dir/LineVis.app/Contents/MacOS/LineVis" $destination_dir
 elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
     brew_prefix="$(brew --prefix)"
@@ -1178,6 +1174,7 @@ elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
             codesign --force -s - "$filename" &> /dev/null
         fi
     done
+${copy_dependencies_macos_post}
 else
     mkdir -p $destination_dir/bin
 
@@ -1287,9 +1284,9 @@ if $use_msys; then
     fi
 elif $use_macos; then
     if [ -z "${DYLD_LIBRARY_PATH+x}" ]; then
-        export DYLD_LIBRARY_PATH="${PROJECTPATH}/third_party/sgl/install/lib"
-    elif contains "${DYLD_LIBRARY_PATH}" "${PROJECTPATH}/third_party/sgl/install/lib"; then
-        export DYLD_LIBRARY_PATH="DYLD_LIBRARY_PATH:${PROJECTPATH}/third_party/sgl/install/lib"
+        export DYLD_LIBRARY_PATH="${projectpath}/third_party/sgl/install/lib"
+    elif contains "${DYLD_LIBRARY_PATH}" "${projectpath}/third_party/sgl/install/lib"; then
+        export DYLD_LIBRARY_PATH="DYLD_LIBRARY_PATH:${projectpath}/third_party/sgl/install/lib"
     fi
 else
   if [[ -z "${LD_LIBRARY_PATH+x}" ]]; then
