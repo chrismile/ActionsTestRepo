@@ -14,7 +14,7 @@
         },
         {
             "name": "dbus",
-            "features": [],
+            "default-features": false,
             "platform": "linux"
         },
         {
