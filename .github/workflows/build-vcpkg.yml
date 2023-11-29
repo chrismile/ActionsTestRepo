@@ -83,7 +83,7 @@ jobs:
               fi
             fi
             # Also install the dependencies for building GLEW here.
-            sudo apt install libxmu-dev libxi-dev libgl-dev libglu1-mesa-dev autopoint
+            sudo apt install libxmu-dev libxi-dev libgl-dev libglu1-mesa-dev autopoint libtool
           elif [ "$RUNNER_OS" == "Windows" ]; then
             # Chocolatey is broken as of 2023-07-07
             #choco install vulkan-sdk
@@ -108,9 +108,9 @@ jobs:
           fi
 
       - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v10
+        uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: '4cac260c4b7331538d31886f57739fea0bffa27e'
+          vcpkgGitCommitId: '848c8178ce27e271cfba4f3b6195d958ca470769'
           vcpkgDirectory: ${{env.VCPKG_ROOT}}
           doNotCacheOnWorkflowFailure: true
 
