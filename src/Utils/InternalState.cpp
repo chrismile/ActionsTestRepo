@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2020, Christoph Neuhauser
+ * Copyright (c) 2022, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,163 +26,88 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "Mesh/HexMesh/Renderers/ClearViewRenderer.hpp"
 #include "InternalState.hpp"
 
-void getTestModesDepthComplexity(std::vector<InternalState> &states, InternalState state) {
-    state.renderingMode = RENDERING_MODE_DEPTH_COMPLEXITY;
-    state.name = "Depth Complexity";
+#include "Volume/VolumeData.hpp"
+#include "InternalState.hpp"
+
+void getTestModesDvr(std::vector<InternalState>& states, InternalState state) {
+    state.renderingMode = RENDERING_MODE_DIRECT_VOLUME_RENDERING;
+    state.name = "Direct Volume Rendering";
     states.push_back(state);
 }
 
-void getTestModesClearViewUnified(std::vector<InternalState> &states, InternalState state) {
-    state.renderingMode = RENDERING_MODE_CLEAR_VIEW_FACES_UNIFIED;
-    state.name = "ClearView";
-    state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{
-            { "perVertexAttributes", "true" },
-            { "lineWidthBoostFactor", "2.0" },
-            { "focusRadiusBoostFactor", "1.0" },
-    })};
-    states.push_back(state);
-    //state.name = "ClearView Some Other Mode";
-    //state.rendererSettings = { SettingsMap(std::map<std::string, std::string>{
-    //        { "perVertexAttributes", "false" },
-    //})};
-    //states.push_back(state);
-}
-
-void getTestModesClearViewUnifiedSorting(std::vector<InternalState> &states, InternalState state) {
-    state.renderingMode = RENDERING_MODE_CLEAR_VIEW_FACES_UNIFIED;
-    std::map<std::string, std::string> settings = {
-            { "perVertexAttributes", "true" },
-            { "lineWidthBoostFactor", "2.0" },
-            { "focusRadiusBoostFactor", "1.0" }
-    };
-
-    for (int i = 0; i < NUM_SORTING_MODES; i++) {
-        state.name = std::string() + "ClearView (" + SORTING_MODE_NAMES[i] + ")";
-        settings["sortingAlgorithmMode"] = std::to_string(i);
-        state.rendererSettings = { SettingsMap(settings) };
-        states.push_back(state);
-    }
-}
-
-void getTestModesPaperForMesh(std::vector<InternalState> &states, InternalState state) {
-    getTestModesDepthComplexity(states, state);
-    getTestModesClearViewUnified(states, state);
-}
-
-void getTestModesSortingForMesh(std::vector<InternalState> &states, InternalState state) {
-    getTestModesDepthComplexity(states, state);
-    getTestModesClearViewUnifiedSorting(states, state);
-}
-
-std::vector<InternalState> getTestModesPaper()
-{
+std::vector<InternalState> getTestModesPaper() {
+    sgl::vk::Device* device = sgl::AppSettings::get()->getPrimaryDevice();
     std::vector<InternalState> states;
     std::vector<glm::ivec2> windowResolutions = {
-            glm::ivec2(1280, 720), glm::ivec2(1920, 1080), glm::ivec2(2560, 1440) };
-    //std::vector<glm::ivec2> windowResolutions = { glm::ivec2(2560, 1440) };
-    //std::vector<glm::ivec2> windowResolutions = { glm::ivec2(2186, 1358) };
-    std::vector<MeshDescriptor> meshDescriptors = {
-            MeshDescriptor(
-                    "2016 - All-Hex Meshing Using Closed-Form Induced Polycube",
-                    "grayloc-hex", "vtk"),
-            MeshDescriptor(
-                    "2011 - All-Hex Mesh Generation via Volumetric PolyCube Deformation",
-                    "anc101_a1", "mesh"),
-            MeshDescriptor(
-                    "2014 - l1-Based Construction of Polycube Maps from Complex Shapes",
-                    "cognit/hex", "vtk"),
-            MeshDescriptor(
-                    "2018 - Fuzzy clustering based pseudo-swept volume decomposition for hexahedral meshing",
-                    "Example_3", "mesh"),
-            MeshDescriptor(
-                    "0001 - Deformation",
-                    "cubic128", "vtk")
+            //glm::ivec2(1920, 1080),
+            glm::ivec2(3840, 2160)
+    };
+    bool isIntegratedGpu =
+            device->getDeviceDriverId() == VK_DRIVER_ID_MOLTENVK
+            || ((device->getDeviceDriverId() == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS
+                 || device->getDeviceDriverId() == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA)
+                && device->getDeviceType() == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
+    if (isIntegratedGpu) {
+        windowResolutions = { glm::ivec2(1920, 1080) };
+    } else {
+        windowResolutions = { glm::ivec2(3840, 2160) };
+    }
+    std::vector<DataSetDescriptor> dataSetDescriptors = {
+            //DataSetDescriptor("Rings"),
+            DataSetDescriptor("Aneurysm"),
+            //DataSetDescriptor("Convection Rolls"),
+            //DataSetDescriptor("Femur (Vis2021)"),
+            //DataSetDescriptor("Bearing"),
+            //DataSetDescriptor("Convection Rolls"),
+            //DataSetDescriptor("Tangaroa (t=200)"),
     };
     std::vector<std::string> transferFunctionNames = {
-            "Standard_PerVertex.xml",
-            "Standard_PerVertex.xml",
-            "Standard_PerVertex.xml",
-            "Standard_PerVertex.xml",
-            "Standard_PerVertex.xml"
+            //"Standard.xml"
     };
     InternalState state;
 
-    /*for (size_t i = 0; i < windowResolutions.size(); i++) {
-        state.windowResolution = windowResolutions.at(i);
-        for (size_t j = 0; j < meshDescriptors.size(); j++) {
-            state.meshDescriptor = meshDescriptors.at(j);
-            if (transferFunctionNames.size() > 0) {
-                state.transferFunctionName = transferFunctionNames.at(j);
-            }
-            getTestModesPaperForMesh(states, state);
-        }
-    }*/
-    for (size_t i = 0; i < meshDescriptors.size(); i++) {
-        state.meshDescriptor = meshDescriptors.at(i);
+    for (size_t i = 0; i < dataSetDescriptors.size(); i++) {
+        state.dataSetDescriptor = dataSetDescriptors.at(i);
         for (size_t j = 0; j < windowResolutions.size(); j++) {
             state.windowResolution = windowResolutions.at(j);
-            if (transferFunctionNames.size() > 0) {
+            if (!transferFunctionNames.empty()) {
                 state.transferFunctionName = transferFunctionNames.at(i);
             }
-            getTestModesPaperForMesh(states, state);
+            getTestModesDvr(states, state);
         }
     }
 
+    bool runStatesTwoTimesForErrorMeasure = true;
+    if (runStatesTwoTimesForErrorMeasure) {
+        std::vector<InternalState> oldStates = states;
+        states.clear();
+        for (size_t i = 0; i < oldStates.size(); i++) {
+            InternalState state = oldStates.at(i);
+            states.push_back(state);
+            state.name += "(2)";
+            states.push_back(state);
+        }
+    }
+
+    for (InternalState& state : states) {
+        state.nameRaw = state.name;
+    }
+
     // Append model name to state name if more than one model is loaded
-    if (meshDescriptors.size() >= 1 || windowResolutions.size() > 1) {
-        for (InternalState &state : states) {
+    if (dataSetDescriptors.size() > 1 || windowResolutions.size() > 1) {
+        for (InternalState& state : states) {
             state.name =
-                    sgl::toString(state.windowResolution.x) + "x" + sgl::toString(state.windowResolution.y)
-                    + " " + state.meshDescriptor.meshName + " " + state.name;
+                    sgl::toString(state.windowResolution.x)
+                    + "x" + sgl::toString(state.windowResolution.y)
+                    + " " + state.dataSetDescriptor.name + " " + state.name;
         }
     }
 
     return states;
 }
 
-std::vector<InternalState> getTestModesSorting()
-{
-    std::vector<InternalState> states;
-    //std::vector<glm::ivec2> windowResolutions = {
-    //        glm::ivec2(1280, 720), glm::ivec2(1920, 1080), glm::ivec2(2560, 1440) };
-    std::vector<glm::ivec2> windowResolutions = { glm::ivec2(2560, 1440) };
-    std::vector<MeshDescriptor> meshDescriptors = {
-            MeshDescriptor(
-                    "2011 - All-Hex Mesh Generation via Volumetric PolyCube Deformation",
-                    "anc101_a1", "mesh"),
-            MeshDescriptor(
-                    "2020 - LoopyCuts - Practical Feature-Preserving Block Decomposition for Strongly Hex-Dominant Meshing",
-                    "cube_carved", "mesh"),
-    };
-    std::vector<std::string> transferFunctionNames = {
-            "Standard_PerVertex.xml",
-            "Standard_PerVertex.xml",
-            "Standard_PerVertex.xml"
-    };
-    InternalState state;
-
-    for (size_t i = 0; i < meshDescriptors.size(); i++) {
-        state.meshDescriptor = meshDescriptors.at(i);
-        for (size_t j = 0; j < windowResolutions.size(); j++) {
-            state.windowResolution = windowResolutions.at(j);
-            if (transferFunctionNames.size() > 0) {
-                state.transferFunctionName = transferFunctionNames.at(i);
-            }
-            getTestModesSortingForMesh(states, state);
-        }
-    }
-
-    // Append model name to state name if more than one model is loaded
-    if (meshDescriptors.size() >= 1 || windowResolutions.size() > 1) {
-        for (InternalState &state : states) {
-            state.name =
-                    sgl::toString(state.windowResolution.x) + "x" + sgl::toString(state.windowResolution.y)
-                    + " " + state.meshDescriptor.meshName + " " + state.name;
-        }
-    }
-
-    return states;
+std::vector<InternalState> getTestModes() {
+    return getTestModesPaper();
 }

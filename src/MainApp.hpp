@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2020, Christoph Neuhauser
+ * Copyright (c) 2022, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,84 +26,108 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef MAINAPP_HPP
-#define MAINAPP_HPP
+#ifndef CORRERENDER_MAINAPP_HPP
+#define CORRERENDER_MAINAPP_HPP
 
 #include <string>
 #include <vector>
 #include <map>
 
 #include <Utils/SciVis/SciVisApp.hpp>
-#include <Utils/SciVis/CameraPath.hpp>
-#include <Graphics/Shader/Shader.hpp>
-#include <Graphics/Video/VideoWriter.hpp>
-#include <ImGui/Widgets/TransferFunctionWindow.hpp>
-#include <ImGui/Widgets/ColorLegendWidget.hpp>
-#include <ImGui/Widgets/CheckpointWindow.hpp>
 
-#include "Mesh/HexMesh/QualityMeasure/QualityMeasure.hpp"
-#include "Mesh/HexMesh/Loaders/HexaLabDatasets.hpp"
-#include "Mesh/HexMesh/Loaders/HexahedralMeshLoader.hpp"
-#include "Mesh/Filters/HexahedralMeshFilter.hpp"
-#include "Mesh/HexMesh/Renderers/SceneData.hpp"
-#include "Mesh/HexMesh/Renderers/HexahedralMeshRenderer.hpp"
-#include "Utils/AutomaticPerformanceMeasurer.hpp"
+#ifdef SUPPORT_CUDA_INTEROP
+#include <Graphics/Vulkan/Utils/InteropCuda.hpp>
+#endif
+
+#ifdef SUPPORT_RENDERDOC_DEBUGGER
+#include "Utils/RenderDocDebugger.hpp"
+#endif
+
+#include "Utils/InternalState.hpp"
+#include "Loaders/DataSetList.hpp"
+#include "Calculators/CorrelationDefines.hpp"
+#include "Renderers/SceneData.hpp"
 
 #ifdef USE_PYTHON
-#include "Widgets/ReplayWidget.hpp"
+//#include "Widgets/ReplayWidget.hpp"
 #endif
 
-#ifdef USE_STEAMWORKS
-#include "Utils/Steamworks.hpp"
-#endif
+namespace sgl { namespace dialog {
+class MsgBoxHandle;
+typedef std::shared_ptr<MsgBoxHandle> MsgBoxHandlePtr;
+}}
 
+namespace IGFD {
+class FileDialog;
+}
+typedef IGFD::FileDialog ImGuiFileDialog;
+
+namespace Json {
+class Value;
+}
+
+class Renderer;
+typedef std::shared_ptr<Renderer> RendererPtr;
+class VolumeData;
+typedef std::shared_ptr<VolumeData> VolumeDataPtr;
 class DataView;
 typedef std::shared_ptr<DataView> DataViewPtr;
+class ViewManager;
+class TFOptimization;
 
 class MainApp : public sgl::SciVisApp {
 public:
     MainApp();
-    ~MainApp();
-
-    /// Replicability stamp mode.
-    void loadReplicabilityStampState();
+    ~MainApp() override;
+    void render() override;
+    void update(float dt) override;
+    void resolutionChanged(sgl::EventPtr event) override;
 
     /// For changing performance measurement modes.
     void setNewState(const InternalState& newState);
 
-    void render();
-    void update(float dt);
-    void resolutionChanged(sgl::EventPtr event);
+    /// Replicability stamp mode.
+    void setUseReplicabilityStampMode();
+
+protected:
+    void renderGuiGeneralSettingsPropertyEditor() override;
+    void beginFrameMarker() override;
+    void endFrameMarker() override;
 
 private:
     /// Renders the GUI of the scene settings and all filters and renderers.
-    void renderGui();
-    /// Renders the GUI for selecting an input file.
-    void renderFileSelectionSettingsGui();
-    /// Render the scene settings GUI, e.g. for setting the background clear color.
-    void renderSceneSettingsGui();
+    void renderGui() override;
     /// Update the color space (linear RGB vs. sRGB).
-    void updateColorSpaceMode();
+    void updateColorSpaceMode() override;
+    /// Called when the camera moved.
+    void hasMoved() override;
+    /// Callback when the camera was reset.
+    void onCameraReset() override;
 
-#ifdef USE_STEAMWORKS
-    Steamworks steamworks;
-#endif
+    void scheduleRecreateSceneFramebuffer();
+    bool scheduledRecreateSceneFramebuffer = false;
+    bool componentOtherThanRendererNeedsReRender = false;
 
     // Dock space mode.
-    //void renderGuiMenuBar();
-    //void renderGuiPropertyEditorBegin() override;
-    //void renderGuiPropertyEditorCustomNodes() override;
+    void renderGuiMenuBar();
+    void renderGuiPropertyEditorBegin() override;
+    void renderGuiPropertyEditorCustomNodes() override;
+    void addNewDataView();
+    void initializeFirstDataView();
     bool scheduledDockSpaceModeChange = false;
     bool newDockSpaceMode = false;
     int focusedWindowIndex = -1;
     int mouseHoverWindowIndex = -1;
-    bool showRendererWindow = true;
-    DataViewPtr dataView;
-    sgl::CameraPtr cameraHandle;
-    std::vector<std::string> rendererWindowNames;
+    std::vector<DataViewPtr> dataViews;
+    int hasMovedIndex = -1;
+    bool isFirstFrame = true;
 
     /// Scene data (e.g., camera, main framebuffer, ...).
-    RayMeshIntersection* rayMeshIntersection;
+    int32_t viewportPositionX = 0;
+    int32_t viewportPositionY = 0;
+    uint32_t viewportWidth = 0;
+    uint32_t viewportHeight = 0;
+    int supersamplingFactor = 1;
     SceneData sceneData;
 
     // This setting lets all data views use the same viewport resolution.
@@ -111,100 +135,90 @@ private:
     glm::ivec2 fixedViewportSizeEdit{ 2186, 1358 };
     glm::ivec2 fixedViewportSize{ 2186, 1358 };
 
-    /// Scene data used in user interface.
-    RenderingMode renderingMode = RENDERING_MODE_SURFACE;
-
     // Data set GUI information.
-    void loadAvailableDataSetSources();
-    void loadSelectedMeshDataSetNames();
-    std::string getSelectedMeshFilename();
-    /// Returns true if the selected file source supports deformation meshes (for now a hardcoded feature).
-    bool getFileSourceContainsDeformationMeshes();
-    bool hexaLabDataSetsDownloaded = false;
-    std::vector<MeshSourceDescription> meshSourceDescriptions;
-    std::vector<std::string> meshDataSetSources; //< Contains "Local file..." at beginning, thus starts actually at 1.
-    std::vector<std::string> selectedMeshDataSetNames; //< Contains "None" at beginning, thus starts actually at 1.
-    int selectedFileSourceIndex = 0; //< Contains "Local file..." at beginning, thus starts actually at 1.
-    int selectedMeshIndex = 0; //< Contains "None" at beginning, thus starts actually at 1.
-    int currentlyLoadedFileSourceIndex = -1;
-    int currentlySelectedMeshIndex = -1;
-    std::string loadedMeshFilename;
-    std::string customMeshFileName;
-    float deformationFactor = 0.0f;
-
-    // Coloring & filtering dependent on importance criteria.
-    QualityMeasure selectedQualityMeasure;
-    sgl::TransferFunctionWindow transferFunctionWindow;
-
-    // Color legend widgets for different attributes.
-    bool shallRenderColorLegendWidgets = true;
-    sgl::ColorLegendWidget colorLegendWidget;
-
-    // For downloading files in the background.
-    LoaderThread loaderThread;
+    void loadAvailableDataSetInformation();
+    std::vector<std::string> getSelectedDataSetFilenames();
+    void openFileDialog();
+    DataSetInformationPtr dataSetInformationRoot;
+    std::vector<DataSetInformationPtr> dataSetInformationList; //< List of all leaves.
+    std::vector<std::string> dataSetNames; //< Contains "Local file..." at beginning, thus starts actually at 1.
+    int selectedDataSetIndex = 0; //< Contains "Local file..." at beginning, thus starts actually at 1.
+    int currentlyLoadedDataSetIndex = -1;
+    std::string customDataSetFileName;
+    ImGuiFileDialog* fileDialogInstance = nullptr;
+    std::string fileDialogDirectory;
+    std::vector<sgl::dialog::MsgBoxHandlePtr> nonBlockingMsgBoxHandles;
+    // For volume export dialog.
+    void openExportFieldFileDialog();
+    int selectedFieldIndexExport = 0;
+    std::string exportFieldFileDialogDirectory;
+    // For loading and saving the application state.
+    void openSelectStateDialog();
+    void saveStateToFile(const std::string& stateFilePath);
+    void loadStateFromFile(const std::string& stateFilePath);
+    void loadStateFromJsonObject(Json::Value root);
+    void loadReplicabilityStampState();
+    bool useReplicabilityStampMode = false;
+    int replicabilityFrameNumber = 0;
+    bool stateModeSave = false;
+    std::string stateFileDirectory;
+    // For field similarity computation.
+    CorrelationMeasureType correlationMeasureFieldSimilarity = CorrelationMeasureType::PEARSON;
+    int useFieldAccuracyDouble = 1;
+    int similarityFieldIdx0 = 0, similarityFieldIdx1 = 0;
+    float similarityMetricNumber = 0.0f;
+    float maxCorrelationValue = 0.0f;
+    TFOptimization* tfOptimization = nullptr;
 
     // For making performance measurements.
-    bool testSortingPerformance = true;
-    AutomaticPerformanceMeasurer *performanceMeasurer = nullptr;
+    AutomaticPerformanceMeasurer* performanceMeasurer = nullptr;
     InternalState lastState;
     bool firstState = true;
     bool usesNewState = true;
 
 #ifdef USE_PYTHON
-    ReplayWidget replayWidget;
+    /*ReplayWidget replayWidget;
+    bool replayWidgetRunning = false;
     bool realTimeReplayUpdates = false;
+    bool updateTransferFunctionRange = false;
+    glm::vec2 transferFunctionRange{};*/
+#endif
+
+#ifdef SUPPORT_CUDA_INTEROP
+    CUcontext cuContext = {};
+    CUdevice cuDevice = 0;
+#endif
+    bool cudaInteropInitialized = false;
+    bool nvrtcInitialized = false;
+    bool openclInteropInitialized = false;
+
+#ifdef SUPPORT_RENDERDOC_DEBUGGER
+    RenderDocDebugger renderDocDebugger;
 #endif
 
 
     /// --- Visualization pipeline ---
 
-    /// Loads a hexahedral mesh from a file.
-    void loadHexahedralMesh(const std::string &fileName);
+    /// Loads volume data from a file.
+    void loadVolumeDataSet(const std::vector<std::string>& fileName);
     /// Reload the currently loaded data set.
-    virtual void reloadDataSet() override;
-    /// Updates the internal representation of a deformable mesh.
-    void onDeformationFactorChanged();
+    void reloadDataSet() override;
     /// Prepares the visualization pipeline for rendering.
     void prepareVisualizationPipeline();
-    /// Returns the filtered mesh that is passed to the renderers.
-    HexMeshPtr getFilteredMesh(bool& isDirty);
-    /// Change the importance criterion used for coloring.
-    void changeQualityMeasureType();
-    /// Sets the used renderers
-    void setRenderers();
-
-    /// Helpers.
-    sgl::AABB3 computeAABB3(const std::vector<glm::vec3>& vertices);
-    void normalizeVertexPositions(std::vector<glm::vec3>& vertices);
-    void applyVertexDeformations(
-            std::vector<glm::vec3>& vertices,
-            const std::vector<glm::vec3>& deformations,
-            const float deformationFactor);
-    sgl::AABB3 modelBoundingBox;
-
-    /// The data loaded from the input file (or a wrapped nullptr).
-    HexMeshPtr inputData;
-    bool newMeshLoaded = true;
-
-    // Timer for measuring how long data loading & mesh processing takes.
-    bool printLoadingTime = false;
-    double loadingTimeSeconds = 0.0;
-
-    /// A copy of the mesh data is stored for allowing the user to alter the deformation factor also after loading.
-    std::vector<glm::vec3> hexMeshVertices;
-    std::vector<uint32_t> hexMeshCellIndices;
-    std::vector<glm::vec3> hexMeshDeformations;
-    std::vector<float> hexMeshAttributeList;
+    /// Sets the used renderers.
+    void addNewRenderer(RenderingMode renderingMode);
+    void setRenderer(RenderingMode newRenderingMode, RendererPtr& newVolumeRenderer);
+    void onUnsupportedRendererSelected(const std::string& warningText, RendererPtr& newVolumeRenderer);
 
     /// A list of filters that are applied sequentially on the data.
-    std::vector<HexahedralMeshFilter*> meshFilters;
-    /// A list of rendering methods that use the output of the concatenation of all mesh filters for rendering.
-    std::vector<HexahedralMeshRenderer*> meshRenderers;
-
-    // Visualization pipeline node types.
-    std::map<std::string, HexahedralMeshLoader*> meshLoaderMap;
-    //std::map<std::string, HexahedralMeshFilter*> meshFilterMap;
-    //std::map<std::string, HexahedralMeshRenderer*> meshRendererMap;
+    ViewManager* viewManager = nullptr;
+    std::vector<RendererPtr> volumeRenderers;
+    size_t rendererCreationCounter = 0;
+    VolumeDataPtr volumeData;
+    DataSetType dataSetType = DataSetType::NONE;
+    bool newDataLoaded = true;
+    sgl::AABB3 boundingBox;
+    const int NUM_MANUAL_LOADERS = 1;
 };
 
-#endif // MAINAPP_HPP
+#endif //CORRERENDER_MAINAPP_HPP

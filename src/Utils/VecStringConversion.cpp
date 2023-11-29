@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2020, Christoph Neuhauser
+ * Copyright (c) 2020-2021, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,6 +26,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
 #include <Utils/Convert.hpp>
 #include "VecStringConversion.hpp"
@@ -57,8 +58,12 @@ glm::vec2 stringToVec2(const std::string& s) {
     if (!buffer.empty()) {
         components.push_back(sgl::fromString<float>(buffer));
     }
-    assert(components.size() == 2);
-    return glm::vec2(components.at(0), components.at(1));
+    assert(components.size() == 1 || components.size() == 2);
+    if (components.size() == 1) {
+        return glm::vec2(components.at(0));
+    } else {
+        return glm::vec2(components.at(0), components.at(1));
+    }
 }
 glm::vec3 stringToVec3(const std::string& s) {
     std::vector<float> components;
@@ -74,8 +79,12 @@ glm::vec3 stringToVec3(const std::string& s) {
     if (!buffer.empty()) {
         components.push_back(sgl::fromString<float>(buffer));
     }
-    assert(components.size() == 3);
-    return glm::vec3(components.at(0), components.at(1), components.at(2));
+    assert(components.size() == 1 || components.size() == 3);
+    if (components.size() == 1) {
+        return glm::vec3(components.at(0));
+    } else {
+        return glm::vec3(components.at(0), components.at(1), components.at(2));
+    }
 }
 glm::vec4 stringToVec4(const std::string& s) {
     std::vector<float> components;
@@ -91,8 +100,10 @@ glm::vec4 stringToVec4(const std::string& s) {
     if (!buffer.empty()) {
         components.push_back(sgl::fromString<float>(buffer));
     }
-    assert(components.size() == 3 || components.size() == 4);
-    if (components.size() == 3) {
+    assert(components.size() == 1 || components.size() == 3 || components.size() == 4);
+    if (components.size() == 1) {
+        return glm::vec4(components.at(0));
+    } else if (components.size() == 3) {
         return glm::vec4(components.at(0), components.at(1), components.at(2), 1.0f);
     } else {
         return glm::vec4(components.at(0), components.at(1), components.at(2), components.at(3));

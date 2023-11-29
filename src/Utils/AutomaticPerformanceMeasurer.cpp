@@ -27,60 +27,103 @@
  */
 
 #include <algorithm>
-
-#include <GL/glew.h>
+#include <utility>
 
 #include <Utils/File/Logfile.hpp>
 #include <Utils/AppSettings.hpp>
 #include <Utils/File/FileUtils.hpp>
-#include <Graphics/Renderer.hpp>
-#include <Graphics/Window.hpp>
-#include <Graphics/Texture/Bitmap.hpp>
-#include <Graphics/OpenGL/SystemGL.hpp>
+#include <Graphics/Vulkan/Render/Renderer.hpp>
 
 #include "AutomaticPerformanceMeasurer.hpp"
 
-AutomaticPerformanceMeasurer::AutomaticPerformanceMeasurer(std::vector<InternalState> _states,
-                                   const std::string& _csvFilename, const std::string& _depthComplexityFilename,
-                                   std::function<void(const InternalState&)> _newStateCallback)
-        : states(_states), currentStateIndex(0), newStateCallback(_newStateCallback), file(_csvFilename),
-          depthComplexityFile(_depthComplexityFilename), perfFile("performance_list.csv"),
-          clearViewFile("ClearViewUnified.csv") {
+AutomaticPerformanceMeasurer::AutomaticPerformanceMeasurer(
+        sgl::vk::Renderer* renderer, std::vector<InternalState> _states,
+        const std::string& _csvFilename, const std::string& _depthComplexityFilename,
+        std::function<void(const InternalState&)> _newStateCallback)
+        : renderer(renderer), states(std::move(_states)), currentStateIndex(0),
+          newStateCallback(std::move(_newStateCallback)),
+          file(_csvFilename), perfFile("performance_list.csv"),
+          depthComplexityFilename(_depthComplexityFilename){
     sgl::FileUtils::get()->ensureDirectoryExists("images/");
 
     // Write header
     //file.writeRow({"Name", "Average Time (ms)", "Memory (GiB)", "Buffer Size (GiB)", "Time Stamp (s), Frame Time (ns)"});
     file.writeRow({
-        "Name", "Average Time (ms)", "Memory (GiB)", "Buffer Size (GiB)", "Average FPS",
-        "5% Percentile FPS", "95% Percentile FPS", "PPLL Entries", "PPLL Size (GiB)"});
-    depthComplexityFile.writeRow(
-            {"Current State", "Frame Number", "Min Depth Complexity", "Max Depth Complexity",
-             "Avg Depth Complexity Used", "Avg Depth Complexity All", "Total Number of Fragments",
-             "Fragment Buffer Memory (GiB)"});
+        "State Name", "Data Set Name", "Device Name", "Resolution",
+        "Average Time (ms)", "Base Data Size (GiB)", "Buffer Size (GiB)", "OIT Buffer Size (GiB)",
+        "Average FPS", "5% Percentile FPS", "95% Percentile FPS", "StdDev FPS", "PPLL Entries", "PPLL Size (GiB)"});
     perfFile.writeRow({"Name", "Time per frame (ms)"});
-    clearViewFile.writeRow({"Mode Name", "Time PPLL Clear (ms)", "Time F+C Gather (ms)", "Time PPLL Resolve (ms)"});
-
-    // Set initial state
-    setNextState(true);
 }
 
-AutomaticPerformanceMeasurer::~AutomaticPerformanceMeasurer() {
+void AutomaticPerformanceMeasurer::openPpllFileIfNecessary() {
+    if (!ppllFile.getIsOpen()) {
+        ppllFile.open("PPLLUnified.csv");
+        ppllFile.writeRow({"Mode Name", "Time PPLL Clear (ms)", "Time F+C Gather (ms)", "Time PPLL Resolve (ms)"});
+    }
+}
+
+void AutomaticPerformanceMeasurer::openDepthComplexityFileIfNecessary() {
+    if (!depthComplexityFile.getIsOpen()) {
+        depthComplexityFile.open("PPLLUnified.csv");
+        depthComplexityFile.writeRow(
+                {"State Name", "Data Set Name", "Device Name", "Resolution",
+                 "Frame Number", "Min Depth Complexity", "Max Depth Complexity",
+                 "Avg Depth Complexity Used", "Avg Depth Complexity All", "Total Number of Fragments",
+                 "Fragment Buffer Memory (GiB)"});
+    }
+}
+
+void AutomaticPerformanceMeasurer::openDeferredRenderingFileIfNecessary() {
+    if (!deferredRenderingFile.getIsOpen()) {
+        deferredRenderingFile.open("DeferredRendering.csv");
+        deferredRenderingFile.writeRow(
+                {"Mode Name", "Time Sum (ms)", "DeferredRaster0 (ms)", "DeferredRaster1 (ms)",
+                 "DeferredVisibility0 (ms)", "DeferredVisibility1 (ms)", "DeferredHZB0 (ms)", "DeferredHZB1 (ms)"});
+    }
+}
+
+/*
+ * Use cleanup function, as doing the cleanup in the destructor triggers the following warning when using MSVC.
+ * "Warning: src\Utils\AutomaticPerformanceMeasurer.cpp(68): warning C4722:
+ * 'AutomaticPerformanceMeasurer::~AutomaticPerformanceMeasurer': destructor never returns, potential memory leak"
+ */
+void AutomaticPerformanceMeasurer::cleanup() {
+    isCleanup = true;
+
+    VkCommandBuffer commandBuffer = renderer->getDevice()->beginSingleTimeCommands();
+    timerVk->finishGPU(commandBuffer);
+    if (ppllTimer) {
+        ppllTimer->finishGPU(commandBuffer);
+    }
+    if (deferredRenderingTimer) {
+        deferredRenderingTimer->finishGPU(commandBuffer);
+    }
+    renderer->getDevice()->endSingleTimeCommands(commandBuffer);
+
     writeCurrentModeData();
     file.close();
-    depthComplexityFile.close();
     perfFile.close();
-    clearViewFile.close();
+    if (depthComplexityFile.getIsOpen()) {
+        depthComplexityFile.close();
+    }
+    if (ppllFile.getIsOpen()) {
+        ppllFile.close();
+    }
+    if (deferredRenderingFile.getIsOpen()) {
+        deferredRenderingFile.close();
+    }
 }
 
+AutomaticPerformanceMeasurer::~AutomaticPerformanceMeasurer() = default;
 
 bool AutomaticPerformanceMeasurer::update(float currentTime) {
     nextModeCounter = currentTime;
     if (nextModeCounter >= TIME_PERFORMANCE_MEASUREMENT + 0.5f) {
         nextModeCounter = 0.0f;
-        if (currentStateIndex == states.size()-1) {
+        if (currentStateIndex == states.size() - 1) {
             return false; // Terminate program
         }
-        setNextState();
+        shallSetNextState = true;
     }
     return true;
 }
@@ -90,71 +133,125 @@ void AutomaticPerformanceMeasurer::writeCurrentModeData() {
     double timeMS = 0.0;
     std::vector<uint64_t> frameTimesNS;
 
-    if (!clearViewTimer) {
-        timerGL.stopMeasuring();
-        timeMS = timerGL.getTimeMS(currentState.name);
-        auto& performanceProfile = timerGL.getCurrentFrameTimeList();
-        for (auto &perfPair : performanceProfile) {
-            frameTimesNS.push_back(perfPair.second);
+    if (!ppllTimer) {
+        if (!isCleanup) {
+            renderer->getDevice()->waitIdle();
+            VkCommandBuffer commandBuffer = renderer->getDevice()->beginSingleTimeCommands();
+            timerVk->finishGPU(commandBuffer);
+            renderer->getDevice()->endSingleTimeCommands(commandBuffer);
+            //timerVk->finishGPU();
         }
+        timeMS = timerVk->getTimeMS(currentState.name);
+        frameTimesNS = timerVk->getFrameTimeList(currentState.name);
     } else {
-        clearViewTimer->stopMeasuring();
-        double timePPLLClear = clearViewTimer->getTimeMS("PPLLClear");
-        double timeFCGather = clearViewTimer->getTimeMS("FCGather");
-        double timePPLLResolve = clearViewTimer->getTimeMS("PPLLResolve");
-        clearViewFile.writeCell(currentState.name);
-        clearViewFile.writeCell(std::to_string(timePPLLClear));
-        clearViewFile.writeCell(std::to_string(timeFCGather));
-        clearViewFile.writeCell(std::to_string(timePPLLResolve));
-        clearViewFile.newRow();
+        openPpllFileIfNecessary();
+        if (!isCleanup) {
+            renderer->getDevice()->waitIdle();
+            VkCommandBuffer commandBuffer = renderer->getDevice()->beginSingleTimeCommands();
+            ppllTimer->finishGPU(commandBuffer);
+            renderer->getDevice()->endSingleTimeCommands(commandBuffer);
+            ppllTimer->finishGPU();
+        }
+        double timePPLLClear = ppllTimer->getTimeMS("PPLLClear");
+        double timeFCGather = ppllTimer->getTimeMS("FCGather");
+        double timePPLLResolve = ppllTimer->getTimeMS("PPLLResolve");
+        ppllFile.writeCell(currentState.name);
+        ppllFile.writeCell(std::to_string(timePPLLClear));
+        ppllFile.writeCell(std::to_string(timeFCGather));
+        ppllFile.writeCell(std::to_string(timePPLLResolve));
+        ppllFile.newRow();
 
-        // Push data for performance measurer.
-        std::map<float, uint64_t> frameTimeMap;
-        auto& performanceProfile = clearViewTimer->getCurrentFrameTimeList();
-        for (auto &perfPair : performanceProfile) {
-            frameTimeMap[perfPair.first] += perfPair.second;
-        }
-        for (auto &perfPair : frameTimeMap) {
-            frameTimesNS.push_back(perfPair.second);
-        }
+        frameTimesNS = ppllTimer->getFrameTimeList(currentState.name);
         timeMS = timePPLLClear + timeFCGather + timePPLLResolve;
     }
 
-    // Write row with performance metrics of this mode
-    file.writeCell(currentState.name);
-    perfFile.writeCell(currentState.name);
+    if (deferredRenderingTimer) {
+        openDeferredRenderingFileIfNecessary();
+        if (!isCleanup) {
+            VkCommandBuffer commandBuffer = renderer->getDevice()->beginSingleTimeCommands();
+            deferredRenderingTimer->finishGPU(commandBuffer);
+            renderer->getDevice()->endSingleTimeCommands(commandBuffer);
+            //deferredRenderingTimer->finishGPU();
+        }
+        double deferredRaster0 = deferredRenderingTimer->getOptionalTimeMS("DeferredRaster0");
+        double deferredRaster1 = deferredRenderingTimer->getOptionalTimeMS("DeferredRaster1");
+        double deferredVisibility0 = deferredRenderingTimer->getOptionalTimeMS("DeferredVisibility0");
+        double deferredVisibility1 = deferredRenderingTimer->getOptionalTimeMS("DeferredVisibility1");
+        double deferredHZB0 = deferredRenderingTimer->getOptionalTimeMS("DeferredHZB0");
+        double deferredHZB1 = deferredRenderingTimer->getOptionalTimeMS("DeferredHZB1");
+        double timeSum =
+                deferredRaster0 + deferredRaster1 + deferredVisibility0 + deferredVisibility1
+                + deferredHZB0 + deferredHZB1;
+        deferredRenderingFile.writeCell(currentState.name);
+        deferredRenderingFile.writeCell(std::to_string(timeSum));
+        deferredRenderingFile.writeCell(std::to_string(deferredRaster0));
+        deferredRenderingFile.writeCell(std::to_string(deferredRaster1));
+        deferredRenderingFile.writeCell(std::to_string(deferredVisibility0));
+        deferredRenderingFile.writeCell(std::to_string(deferredVisibility1));
+        deferredRenderingFile.writeCell(std::to_string(deferredHZB0));
+        deferredRenderingFile.writeCell(std::to_string(deferredHZB1));
+        deferredRenderingFile.newRow();
+    }
+
+    // Write row with performance metrics of this mode.
+    //         "State Name", "Data Set Name", "Device Name", "Resolution",
+    file.writeCell(currentState.nameRaw);
+    file.writeCell(currentState.dataSetDescriptor.name);
+    file.writeCell(sgl::AppSettings::get()->getPrimaryDevice()->getDeviceName());
+    file.writeCell(
+            sgl::toString(currentState.windowResolution.x) + "x"
+            + sgl::toString(currentState.windowResolution.y));
+    perfFile.writeCell(currentState.nameRaw);
+    perfFile.writeCell(currentState.dataSetDescriptor.name);
+    perfFile.writeCell(sgl::AppSettings::get()->getPrimaryDevice()->getDeviceName());
+    perfFile.writeCell(
+            sgl::toString(currentState.windowResolution.x) + "x"
+            + sgl::toString(currentState.windowResolution.y));
     file.writeCell(sgl::toString(timeMS));
 
     // Write current memory consumption in gigabytes
-    file.writeCell(sgl::toString(getUsedVideoMemorySizeGiB()));
-    file.writeCell(sgl::toString(currentAlgorithmsBufferSizeBytes / 1024.0 / 1024.0 / 1024.0));
+    double scaleFactorGiB = 1.0 / (1024.0 * 1024.0 * 1024.0);
+    file.writeCell(sgl::toString(double(currentDataSetBaseSizeBytes) * scaleFactorGiB));
+    file.writeCell(sgl::toString(double(currentDataSetBufferSizeBytes) * scaleFactorGiB));
+    file.writeCell(sgl::toString(double(currentAlgorithmsBufferSizeBytes) * scaleFactorGiB));
 
 
     std::vector<float> frameTimes;
     float averageFrametime = 0.0f;
     for (uint64_t frameTimeNS : frameTimesNS) {
-        float frameTimeMS = double(frameTimeNS) / double(1e6);
-        float frameTimeS = double(frameTimeNS) / double(1e9);
+        auto frameTimeMS = float(double(frameTimeNS) / double(1e6));
+        auto frameTimeS = float(double(frameTimeNS) / double(1e9));
         frameTimes.push_back(frameTimeS);
         averageFrametime += frameTimeS;
         perfFile.writeCell(sgl::toString(frameTimeMS));
     }
     std::sort(frameTimes.begin(), frameTimes.end());
-    averageFrametime /= frameTimes.size();
-
+    averageFrametime /= float(frameTimes.size());
     float averageFps = 1.0f / averageFrametime;
-    int percentile5Index = int(frameTimes.size() * 0.5);
-    int percentile95Index = int(frameTimes.size() * 0.95);
-    float percentile5Fps = 1.0f / frameTimes.at(percentile95Index);
-    float percentile95Fps = 1.0f / frameTimes.at(percentile5Index);
+
+    float fpsVariance = 0.0f;
+    for (uint64_t frameTimeNS : frameTimesNS) {
+        auto fps = float(double(1e9) / double(frameTimeNS));
+        float diff = fps - averageFps;
+        fpsVariance += diff * diff;
+    }
+    fpsVariance /= float(int(frameTimes.size()) - 1); //< Unbiased estimator uses N - 1.
+
+    int percentile5Index = int(double(frameTimes.size()) * 0.5);
+    int percentile95Index = int(double(frameTimes.size()) * 0.95);
+    float percentile5Fps = frameTimes.empty() ? 0.0f : 1.0f / frameTimes.at(percentile95Index);
+    float percentile95Fps = frameTimes.empty() ? 0.0f : 1.0f / frameTimes.at(percentile5Index);
     file.writeCell(sgl::toString(averageFps));
     file.writeCell(sgl::toString(percentile5Fps));
     file.writeCell(sgl::toString(percentile95Fps));
+    file.writeCell(sgl::toString(std::sqrt(fpsVariance)));
     file.writeCell(sgl::toString(maxPPLLNumFragments));
-    file.writeCell(sgl::toString((maxPPLLNumFragments * 12ull) / 1024.0 / 1024.0 / 1024.0));
+    file.writeCell(sgl::toString(double(maxPPLLNumFragments * 12ull) / 1024.0 / 1024.0 / 1024.0));
 
     file.newRow();
     perfFile.newRow();
+    file.flush();
+    perfFile.flush();
 }
 
 void AutomaticPerformanceMeasurer::setNextState(bool first) {
@@ -163,27 +260,51 @@ void AutomaticPerformanceMeasurer::setNextState(bool first) {
         currentStateIndex++;
     }
 
+    currentAlgorithmsBufferSizeBytes = 0;
+    currentDataSetBufferSizeBytes = 0;
+    currentDataSetBaseSizeBytes = 0;
+
+    timerVk = std::make_shared<sgl::vk::Timer>(renderer);
+    timerVk->setStoreFrameTimeList(true);
+
     depthComplexityFrameNumber = 0;
     currentAlgorithmsBufferSizeBytes = 0;
     currentState = states.at(currentStateIndex);
     sgl::Logfile::get()->writeInfo(std::string() + "New state: " + currentState.name);
-    if (currentState.renderingMode == RENDERING_MODE_DEPTH_COMPLEXITY) {
+    if (false) {
         newDepthComplexityMode = true;
     }
     newStateCallback(currentState);
 }
 
+void AutomaticPerformanceMeasurer::beginRenderFunction() {
+    if (!isInitialized) {
+        // Set initial state
+        setNextState(true);
+        isInitialized = true;
+        shallSetNextState = false;
+    } else if (shallSetNextState) {
+        setNextState();
+        shallSetNextState = false;
+    }
+}
+
 void AutomaticPerformanceMeasurer::startMeasure(float timeStamp) {
-    //if (currentState.oitAlgorithm == RENDER_MODE_RAYTRACING) {
+    if (false) {
         // CPU rendering algorithm, thus use a CPU timer and not a GPU timer.
-        //timerGL.startCPU(currentState.name, timeStamp);
-    //} else {
-    timerGL.startGPU(currentState.name, timeStamp);
-    //}
+        timerVk->startCPU(currentState.name);
+    } else {
+        timerVk->startGPU(currentState.name);
+    }
 }
 
 void AutomaticPerformanceMeasurer::endMeasure() {
-    timerGL.end();
+    if (false) {
+        // CPU rendering algorithm, thus use a CPU timer and not a GPU timer.
+        timerVk->endCPU(currentState.name);
+    } else {
+        timerVk->endGPU(currentState.name);
+    }
 }
 
 void AutomaticPerformanceMeasurer::pushDepthComplexityFrame(
@@ -192,8 +313,9 @@ void AutomaticPerformanceMeasurer::pushDepthComplexityFrame(
         newDepthComplexityMode = false;
         maxPPLLNumFragments = 0ull;
     }
-    maxPPLLNumFragments = std::max(maxPPLLNumFragments, totalNumFragments);
+    maxPPLLNumFragments = std::max(maxPPLLNumFragments, size_t(totalNumFragments));
 
+    openDepthComplexityFileIfNecessary();
     depthComplexityFile.writeCell(currentState.name);
     depthComplexityFile.writeCell(sgl::toString((int)depthComplexityFrameNumber));
     depthComplexityFile.writeCell(sgl::toString((int)minComplexity));
@@ -201,50 +323,24 @@ void AutomaticPerformanceMeasurer::pushDepthComplexityFrame(
     depthComplexityFile.writeCell(sgl::toString(avgUsed));
     depthComplexityFile.writeCell(sgl::toString(avgAll));
     depthComplexityFile.writeCell(sgl::toString((int)totalNumFragments));
-    depthComplexityFile.writeCell(sgl::toString((totalNumFragments * 12ull) / 1024.0 / 1024.0 / 1024.0));
+    depthComplexityFile.writeCell(sgl::toString(double(totalNumFragments * 12ull) / 1024.0 / 1024.0 / 1024.0));
     depthComplexityFile.newRow();
     depthComplexityFrameNumber++;
 }
 
-void AutomaticPerformanceMeasurer::setCurrentAlgorithmBufferSizeBytes(size_t numBytes) {
-    currentAlgorithmsBufferSizeBytes = numBytes;
+void AutomaticPerformanceMeasurer::setCurrentAlgorithmBufferSizeBytes(size_t sizeInBytes) {
+    currentAlgorithmsBufferSizeBytes = sizeInBytes;
 }
 
-/*#ifndef GL_QUERY_RESOURCE_TYPE_VIDMEM_ALLOC_NV
-#include <SDL2/SDL.h>
-#endif*/
+void AutomaticPerformanceMeasurer::setCurrentDataSetBufferSizeBytes(size_t sizeInBytes) {
+    currentDataSetBufferSizeBytes = sizeInBytes;
+}
 
-void AutomaticPerformanceMeasurer::setInitialFreeMemKilobytes(int initialFreeMemKilobytes) {
-    this->initialFreeMemKilobytes = initialFreeMemKilobytes;
+void AutomaticPerformanceMeasurer::setCurrentDataSetBaseSizeBytes(size_t sizeInBytes) {
+    currentDataSetBaseSizeBytes = sizeInBytes;
 }
 
 float AutomaticPerformanceMeasurer::getUsedVideoMemorySizeGiB() {
-    // https://www.khronos.org/registry/OpenGL/extensions/NVX/NVX_gpu_memory_info.txt
-    if (sgl::SystemGL::get()->isGLExtensionAvailable("GL_NVX_gpu_memory_info")) {
-        GLint freeMemKilobytes = 0;
-        glGetIntegerv(GL_GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX, &freeMemKilobytes);
-        float usedGiB = (initialFreeMemKilobytes - freeMemKilobytes) * 1000.0 / 1024.0 / 1024.0 / 1024.0;
-        return usedGiB;
-    }
-    // https://www.khronos.org/registry/OpenGL/extensions/NV/NV_query_resource.txt
-    /*if (sgl::SystemGL::get()->isGLExtensionAvailable("GL_NV_query_resource")) {
-        // Doesn't work for whatever reason :(
-        /*GLint buffer[4096];
-#ifndef GL_QUERY_RESOURCE_TYPE_VIDMEM_ALLOC_NV
-#define GL_QUERY_RESOURCE_TYPE_VIDMEM_ALLOC_NV 0x9540
-        typedef GLint (*PFNGLQUERYRESOURCENVPROC) (GLenum queryType, GLint tagId, GLuint bufSize, GLint *buffer);
-        PFNGLQUERYRESOURCENVPROC glQueryResourceNV
-                = (PFNGLQUERYRESOURCENVPROC)SDL_GL_GetProcAddress("glQueryResourceNV");
-        glQueryResourceNV(GL_QUERY_RESOURCE_TYPE_VIDMEM_ALLOC_NV, -1, 4096, buffer);
-#else
-        glQueryResourceNV(GL_QUERY_RESOURCE_TYPE_VIDMEM_ALLOC_NV, 0, 6, buffer);
-#endif
-        // Used video memory stored at int at index 5 (in kilobytes).
-        size_t usedKB = buffer[5];
-        float usedGiB = (usedKB * 1000) / 1024.0 / 1024.0 / 1024.0;
-        return usedGiB;
-    }*/
-
     // Fallback
     return 0.0f;
 }

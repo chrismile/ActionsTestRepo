@@ -56,7 +56,7 @@ docs/latex/*
 
 /Debug/
 /build/*
-/build-*
+/build-*/
 
 # CLion
 .idea/*
@@ -78,13 +78,22 @@ cmake-build-*/
 *.vtk
 *.mesh
 
-Data/Meshes/*
+Data/VolumeDataSets
+Data/VolumeDataSets/*
 Data/CameraPaths/*
 Data/Checkpoints/*
 Data/Screenshots/*
+Data/PyTorch/*
+Data/tiny-cuda-nn/*
+Data/QuickMLP/*
 Data/Videos/*
 Data/TransferFunctions/*
+Data/Texture/*
+Data/Maps/*
+Data/States/*
 Data/ReplayScripts/__pycache__/*
+Data/ReplayScripts/modules/__pycache__/*
+Data/__cudacache__/*
 
 Data/ControlPoints.txt
 imgui.ini
@@ -94,3 +103,8 @@ Shipping/*
 .build/*
 .build_*
 third_party/*
+dependencies/*
+vcpkg_installed/*
+
+# macOS
+.DS_Store

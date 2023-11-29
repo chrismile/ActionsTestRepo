@@ -1,3 +1,6 @@
 [submodule "submodules/IsosurfaceCpp"]
 	path = submodules/IsosurfaceCpp
 	url = https://github.com/chrismile/IsosurfaceCpp.git
+[submodule "submodules/--force"]
+	path = submodules/--force
+	url = https://github.com/chrismile/IsosurfaceCpp.git

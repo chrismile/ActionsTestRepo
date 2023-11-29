@@ -51,10 +51,18 @@ build_dir_debug=".build_debug"
 build_dir_release=".build_release"
 use_vcpkg=false
 link_dynamic=false
-if [ $use_msys = false ] && command -v pacman &> /dev/null; then
-    is_embree_installed=true
-else
-    is_embree_installed=false
+custom_glslang=false
+build_with_zarr_support=true
+build_with_cuda_support=true
+build_with_skia_support=false
+skia_link_dynamically=true
+build_with_vkvg_support=false
+build_with_osqp_support=true
+build_with_zink_support=false
+if $use_msys; then
+    build_with_cuda_support=false
+    # VKVG support is disabled due to: https://github.com/jpbruyere/vkvg/issues/140
+    build_with_vkvg_support=false
 fi
 # Replicability Stamp (https://www.replicabilitystamp.org/) mode for replicating a figure from the corresponding paper.
 replicability=false
@@ -74,6 +82,8 @@ do
         link_dynamic=false
     elif [ ${!i} = "--link-dynamic" ]; then
         link_dynamic=true
+    elif [ ${!i} = "--custom-glslang" ]; then
+        custom_glslang=true
     elif [ ${!i} = "--replicability" ]; then
         replicability=true
     fi
@@ -88,7 +98,7 @@ else
 fi
 destination_dir="Shipping"
 if $use_macos; then
-    binaries_dest_dir="$destination_dir/HexVolumeRenderer.app/Contents/MacOS"
+    binaries_dest_dir="$destination_dir/Correrender.app/Contents/MacOS"
     if ! command -v brew &> /dev/null; then
         if [ ! -d "/opt/homebrew/bin" ]; then
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -182,16 +192,28 @@ if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [
             || ! is_installed_pacman "mingw-w64-x86_64-libarchive" || ! is_installed_pacman "mingw-w64-x86_64-tinyxml2" \
             || ! is_installed_pacman "mingw-w64-x86_64-libpng" || ! is_installed_pacman "mingw-w64-x86_64-SDL2" \
             || ! is_installed_pacman "mingw-w64-x86_64-SDL2_image" || ! is_installed_pacman "mingw-w64-x86_64-glew" \
-            || ! is_installed_pacman "mingw-w64-x86_64-jsoncpp" || ! is_installed_pacman "mingw-w64-x86_64-eigen3" \
-            || ! is_installed_pacman "mingw-w64-x86_64-python" || ! is_installed_pacman "mingw-w64-x86_64-embree"; then
+            || ! is_installed_pacman "mingw-w64-x86_64-vulkan-headers" \
+            || ! is_installed_pacman "mingw-w64-x86_64-vulkan-loader" \
+            || ! is_installed_pacman "mingw-w64-x86_64-vulkan-validation-layers" \
+            || ! is_installed_pacman "mingw-w64-x86_64-shaderc" \
+            || ! is_installed_pacman "mingw-w64-x86_64-opencl-headers" \
+            || ! is_installed_pacman "mingw-w64-x86_64-opencl-icd" || ! is_installed_pacman "mingw-w64-x86_64-jsoncpp" \
+            || ! is_installed_pacman "mingw-w64-x86_64-nlohmann-json" || ! is_installed_pacman "mingw-w64-x86_64-blosc" \
+            || ! is_installed_pacman "mingw-w64-x86_64-netcdf" || ! is_installed_pacman "mingw-w64-x86_64-eccodes" \
+            || ! is_installed_pacman "mingw-w64-x86_64-eigen3" || ! is_installed_pacman "mingw-w64-x86_64-libtiff" \
+            || ! is_installed_pacman "mingw-w64-x86_64-nlopt"; then
         echo "------------------------"
         echo "installing dependencies "
         echo "------------------------"
         pacman --noconfirm -S --needed mingw64/mingw-w64-x86_64-boost mingw64/mingw-w64-x86_64-glm \
         mingw64/mingw-w64-x86_64-libarchive mingw64/mingw-w64-x86_64-tinyxml2 mingw64/mingw-w64-x86_64-libpng \
         mingw64/mingw-w64-x86_64-SDL2 mingw64/mingw-w64-x86_64-SDL2_image mingw64/mingw-w64-x86_64-glew \
-        mingw64/mingw-w64-x86_64-jsoncpp mingw64/mingw-w64-x86_64-eigen3 mingw64/mingw-w64-x86_64-python \
-        mingw64/mingw-w64-x86_64-embree
+        mingw64/mingw-w64-x86_64-vulkan-headers mingw64/mingw-w64-x86_64-vulkan-loader \
+        mingw64/mingw-w64-x86_64-vulkan-validation-layers mingw64/mingw-w64-x86_64-shaderc \
+        mingw64/mingw-w64-x86_64-opencl-headers mingw64/mingw-w64-x86_64-opencl-icd mingw64/mingw-w64-x86_64-jsoncpp \
+        mingw64/mingw-w64-x86_64-nlohmann-json mingw64/mingw-w64-x86_64-blosc mingw64/mingw-w64-x86_64-netcdf \
+        mingw64/mingw-w64-x86_64-eccodes mingw64/mingw-w64-x86_64-eigen3 mingw64/mingw-w64-x86_64-libtiff \
+        mingw64/mingw-w64-x86_64-nlopt
     fi
     if ! (is_installed_pacman "mingw-w64-x86_64-curl" || is_installed_pacman "mingw-w64-x86_64-curl-gnutls" \
             || is_installed_pacman "mingw-w64-x86_64-curl-winssl"); then
@@ -251,17 +273,32 @@ elif $use_macos && command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && 
         if ! is_installed_brew "glew"; then
             brew install glew
         fi
+        if ! is_installed_brew "opencl-headers"; then
+            brew install opencl-headers
+        fi
         if ! is_installed_brew "jsoncpp"; then
             brew install jsoncpp
+        fi
+        if ! is_installed_brew "nlohmann-json"; then
+            brew install nlohmann-json
+        fi
+        if ! is_installed_brew "c-blosc"; then
+            brew install c-blosc
+        fi
+        if ! is_installed_brew "netcdf"; then
+            brew install netcdf
         fi
         if ! is_installed_brew "eigen"; then
             brew install eigen
         fi
-        if ! is_installed_brew "python@3.12"; then
-            brew install python@3.12
+        if ! is_installed_brew "libtiff"; then
+            brew install libtiff
         fi
         if ! is_installed_brew "curl"; then
             brew install curl
+        fi
+        if ! is_installed_brew "nlopt"; then
+            brew install nlopt
         fi
     fi
 elif command -v apt &> /dev/null; then
@@ -291,13 +328,20 @@ elif command -v apt &> /dev/null; then
                 || ! is_installed_apt "libarchive-dev" || ! is_installed_apt "libtinyxml2-dev" \
                 || ! is_installed_apt "libpng-dev" || ! is_installed_apt "libsdl2-dev" \
                 || ! is_installed_apt "libsdl2-image-dev" || ! is_installed_apt "libglew-dev" \
-                || ! is_installed_apt "libjsoncpp-dev" || ! is_installed_apt "libeigen3-dev" \
-                || ! is_installed_apt "python3-dev"; then
+                || ! is_installed_apt "opencl-c-headers" || ! is_installed_apt "ocl-icd-opencl-dev" \
+                || ! is_installed_apt "libjsoncpp-dev" || ! is_installed_apt "nlohmann-json3-dev" \
+                || ! is_installed_apt "libblosc-dev" || ! is_installed_apt "liblz4-dev" \
+                || ! is_installed_apt "libnetcdf-dev" || ! is_installed_apt "libeccodes-dev" \
+                || ! is_installed_apt "libeccodes-tools" || ! is_installed_apt "libopenjp2-7-dev" \
+                || ! is_installed_apt "libeigen3-dev" || ! is_installed_apt "libtiff-dev" \
+                || ! is_installed_apt "libnlopt-cxx-dev"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo apt install -y libboost-filesystem-dev libglm-dev libarchive-dev libtinyxml2-dev libpng-dev libsdl2-dev \
-            libsdl2-image-dev libglew-dev libjsoncpp-dev libeigen3-dev python3-dev
+            libsdl2-image-dev libglew-dev opencl-c-headers ocl-icd-opencl-dev libjsoncpp-dev nlohmann-json3-dev \
+            libblosc-dev liblz4-dev libnetcdf-dev libeccodes-dev libeccodes-tools libopenjp2-7-dev libeigen3-dev \
+            libtiff-dev libnlopt-cxx-dev
         fi
         if ! (is_installed_apt "libcurl4-openssl-dev" || is_installed_apt "libcurl4-gnutls-dev" \
                 || is_installed_apt "libcurl4-nss-dev"); then
@@ -326,13 +370,24 @@ elif command -v pacman &> /dev/null; then
     else
         if ! is_installed_pacman "boost" || ! is_installed_pacman "glm" || ! is_installed_pacman "libarchive" \
                 || ! is_installed_pacman "tinyxml2" || ! is_installed_pacman "libpng" || ! is_installed_pacman "sdl2" \
-                || ! is_installed_pacman "sdl2_image" || ! is_installed_pacman "glew" || ! is_installed_pacman "jsoncpp" \
-                || ! is_installed_pacman "eigen" || ! is_installed_pacman "python3" || ! is_installed_pacman "curl" \
-                || ! is_installed_pacman "embree"; then
+                || ! is_installed_pacman "sdl2_image" || ! is_installed_pacman "glew" \
+                || ! is_installed_pacman "vulkan-devel" || ! is_installed_pacman "shaderc" \
+                || ! is_installed_pacman "opencl-headers" || ! is_installed_pacman "ocl-icd" \
+                || ! is_installed_pacman "jsoncpp" || ! is_installed_pacman "nlohmann-json" \
+                || ! is_installed_pacman "blosc" || ! is_installed_pacman "netcdf" || ! is_installed_pacman "eigen" \
+                || ! is_installed_pacman "libtiff" || ! is_installed_pacman "curl" \
+                || ! is_installed_pacman "nlopt"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo pacman -S boost glm libarchive tinyxml2 libpng sdl2 sdl2_image glew jsoncpp eigen python3 curl embree
+            sudo pacman -S boost glm libarchive tinyxml2 libpng sdl2 sdl2_image glew vulkan-devel shaderc opencl-headers \
+            ocl-icd jsoncpp nlohmann-json blosc netcdf eigen libtiff curl nlopt
+        fi
+        if ! command -v yay &> /dev/null && ! is_installed_yay "eccodes"; then
+            echo "------------------------"
+            echo "installing dependencies "
+            echo "------------------------"
+            yay -S eccodes
         fi
     fi
 elif command -v yum &> /dev/null; then
@@ -349,25 +404,32 @@ elif command -v yum &> /dev/null; then
     if $use_vcpkg; then
         if ! is_installed_rpm "perl" || ! is_installed_rpm "libstdc++-devel" || ! is_installed_rpm "libstdc++-static" \
                 || ! is_installed_rpm "glew-devel" || ! is_installed_rpm "libXext-devel" \
-                || ! is_installed_rpm "vulkan-devel" || ! is_installed_rpm "libshaderc-devel"; then
+                || ! is_installed_rpm "vulkan-headers" || ! is_installed_rpm "vulkan-loader" \
+                || ! is_installed_rpm "vulkan-tools" || ! is_installed_rpm "vulkan-validation-layers" \
+                || ! is_installed_rpm "libshaderc-devel"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo yum install -y perl libstdc++-devel libstdc++-static glew-devel libXext-devel vulkan-devel \
-            libshaderc-devel
+            sudo yum install -y perl libstdc++-devel libstdc++-static glew-devel libXext-devel vulkan-headers \
+            vulkan-loader vulkan-tools vulkan-validation-layers libshaderc-devel
         fi
     else
         if ! is_installed_rpm "boost-devel" || ! is_installed_rpm "glm-devel" || ! is_installed_rpm "libarchive-devel" \
                 || ! is_installed_rpm "tinyxml2-devel" || ! is_installed_rpm "libpng-devel" \
                 || ! is_installed_rpm "SDL2-devel" || ! is_installed_rpm "SDL2_image-devel" \
-                || ! is_installed_rpm "glew-devel" || ! is_installed_rpm "jsoncpp-devel" \
-                || ! is_installed_rpm "libeigen3-devel" || ! is_installed_rpm "python3-devel" \
-                || ! is_installed_rpm "libcurl-devel"; then
+                || ! is_installed_rpm "glew-devel" || ! is_installed_rpm "vulkan-headers" \
+                || ! is_installed_rpm "libshaderc-devel" || ! is_installed_rpm "opencl-headers" \
+                || ! is_installed_rpm "ocl-icd" || ! is_installed_rpm "jsoncpp-devel" || ! is_installed_rpm "json-devel" \
+                || ! is_installed_rpm "blosc-devel" || ! is_installed_rpm "netcdf-devel" \
+                || ! is_installed_rpm "eccodes-devel" || ! is_installed_rpm "eigen3-devel" \
+                || ! is_installed_rpm "libtiff-devel" || ! is_installed_rpm "libcurl-devel" \
+                || ! is_installed_rpm "NLopt-devel"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo yum install -y boost-devel glm-devel libarchive-devel tinyxml2-devel libpng-devel SDL2-devel \
-            SDL2_image-devel glew-devel jsoncpp-devel libeigen3-devel python3-devel libcurl-devel
+            SDL2_image-devel glew-devel vulkan-headers libshaderc-devel opencl-headers ocl-icd jsoncpp-devel json-devel \
+            blosc-devel netcdf-devel eccodes-devel eigen3-devel libtiff-devel libcurl-devel NLopt-devel
         fi
     fi
 else
@@ -391,10 +453,31 @@ if [ $use_macos = false ] && ! command -v pkg-config &> /dev/null; then
     exit 1
 fi
 
+if [ ! -d "submodules/IsosurfaceCpp/src" ]; then
+    echo "------------------------"
+    echo "initializing submodules "
+    echo "------------------------"
+    git submodule init
+    git submodule update
+fi
 
 [ -d "./third_party/" ] || mkdir "./third_party/"
 pushd third_party > /dev/null
 
+cmake_version=$(cmake --version | head -n 1 | awk '{print $NF}')
+cmake_version_major=$(echo $cmake_version | cut -d. -f1)
+cmake_version_minor=$(echo $cmake_version | cut -d. -f2)
+if [[ $cmake_version_major < 3 || ($cmake_version_major == 3 && $cmake_version_minor < 18) ]]; then
+    cmake_download_version="3.25.2"
+    if [ ! -d "cmake-${cmake_download_version}-linux-x86_64" ]; then
+        echo "------------------------"
+        echo "    downloading cmake   "
+        echo "------------------------"
+        curl --silent --show-error --fail -OL "https://github.com/Kitware/CMake/releases/download/v${cmake_download_version}/cmake-${cmake_download_version}-linux-x86_64.tar.gz"
+        tar -xf cmake-${cmake_download_version}-linux-x86_64.tar.gz -C .
+    fi
+    PATH="${projectpath}/third_party/cmake-${cmake_download_version}-linux-x86_64/bin:$PATH"
+fi
 
 params_sgl=()
 params=()
@@ -425,6 +508,134 @@ fi
 
 use_vulkan=false
 vulkan_sdk_env_set=true
+use_vulkan=true
+
+search_for_vulkan_sdk=false
+if [ $use_msys = false ] && [ -z "${VULKAN_SDK+1}" ]; then
+    search_for_vulkan_sdk=true
+fi
+
+if [ $search_for_vulkan_sdk = true ]; then
+    echo "------------------------"
+    echo "searching for Vulkan SDK"
+    echo "------------------------"
+
+    found_vulkan=false
+
+    if [ $use_macos = false ]; then
+        if [ -d "VulkanSDK" ]; then
+            VK_LAYER_PATH=""
+            source "VulkanSDK/$(ls VulkanSDK)/setup-env.sh"
+            pkgconfig_dir="$(realpath "VulkanSDK/$(ls VulkanSDK)/$os_arch/lib/pkgconfig")"
+            if [ -d "$pkgconfig_dir" ]; then
+                export PKG_CONFIG_PATH="$pkgconfig_dir"
+            fi
+            found_vulkan=true
+        fi
+
+        if ! $found_vulkan && (lsb_release -a 2> /dev/null | grep -q 'Ubuntu' || lsb_release -a 2> /dev/null | grep -q 'Mint'); then
+            if lsb_release -a 2> /dev/null | grep -q 'Ubuntu'; then
+                distro_code_name=$(lsb_release -cs)
+            else
+                distro_code_name=$(cat /etc/upstream-release/lsb-release | grep "DISTRIB_CODENAME=" | sed 's/^.*=//')
+            fi
+            if ! compgen -G "/etc/apt/sources.list.d/lunarg-vulkan-*" > /dev/null \
+                  && ! curl -s -I "https://packages.lunarg.com/vulkan/dists/${distro_code_name}/" | grep "2 404" > /dev/null; then
+                echo "Setting up Vulkan SDK for $(lsb_release -ds)..."
+                wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+                sudo curl --silent --show-error --fail \
+                https://packages.lunarg.com/vulkan/lunarg-vulkan-${distro_code_name}.list \
+                --output /etc/apt/sources.list.d/lunarg-vulkan-${distro_code_name}.list
+                sudo apt update
+                sudo apt install -y vulkan-sdk shaderc glslang-dev
+            fi
+        fi
+
+        if [ -d "/usr/include/vulkan" ] && [ -d "/usr/include/shaderc" ]; then
+            if ! grep -q VULKAN_SDK ~/.bashrc; then
+                echo 'export VULKAN_SDK="/usr"' >> ~/.bashrc
+            fi
+            export VULKAN_SDK="/usr"
+            found_vulkan=true
+        fi
+
+        if ! $found_vulkan; then
+            curl --silent --show-error --fail -O https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
+            mkdir -p VulkanSDK
+            tar -xf vulkan-sdk.tar.gz -C VulkanSDK
+            VK_LAYER_PATH=""
+            source "VulkanSDK/$(ls VulkanSDK)/setup-env.sh"
+
+            # Fix pkgconfig file.
+            shaderc_pkgconfig_file="VulkanSDK/$(ls VulkanSDK)/$os_arch/lib/pkgconfig/shaderc.pc"
+            if [ -f "$shaderc_pkgconfig_file" ]; then
+                prefix_path=$(realpath "VulkanSDK/$(ls VulkanSDK)/$os_arch")
+                sed -i '3s;.*;prefix=\"'$prefix_path'\";' "$shaderc_pkgconfig_file"
+                sed -i '5s;.*;libdir=${prefix}/lib;' "$shaderc_pkgconfig_file"
+                export PKG_CONFIG_PATH="$(realpath "VulkanSDK/$(ls VulkanSDK)/$os_arch/lib/pkgconfig")"
+            fi
+            found_vulkan=true
+        fi
+    else
+        if [ -d "$HOME/VulkanSDK" ] && [ ! -z "$(ls -A "$HOME/VulkanSDK")" ]; then
+            source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
+            found_vulkan=true
+        else
+            vulkansdk_filename=$(curl -sIkL https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg | sed -r '/filename=/!d;s/.*filename=(.*)$/\1/')
+            VULKAN_SDK_VERSION=$(echo $vulkansdk_filename | sed -r 's/^.*vulkansdk-macos-(.*)\.dmg.*$/\1/')
+            curl -O https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg
+            sudo hdiutil attach vulkan-sdk.dmg
+            # The directory was changed from '/Volumes/VulkanSDK' to, e.g., 'vulkansdk-macos-1.3.261.0'.
+            vulkan_dir=$(find /Volumes -maxdepth 1 -name '[Vv]ulkan*' -not -path "/Volumes/VMware*" || true)
+            sudo "${vulkan_dir}/InstallVulkan.app/Contents/MacOS/InstallVulkan" \
+            --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
+            pushd ~/VulkanSDK/$VULKAN_SDK_VERSION
+            sudo python3 ./install_vulkan.py || true
+            popd
+            sudo hdiutil unmount "${vulkan_dir}"
+            source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
+            found_vulkan=true
+        fi
+    fi
+
+    if ! $found_vulkan; then
+        if [ $use_macos = false ]; then
+            os_name="linux"
+        else
+            os_name="mac"
+        fi
+        echo "The environment variable VULKAN_SDK is not set but is required in the installation process."
+        echo "Please refer to https://vulkan.lunarg.com/sdk/home#${os_name} for instructions on how to install the Vulkan SDK."
+        exit 1
+    fi
+fi
+
+if $custom_glslang; then
+    if [ ! -d "./glslang" ]; then
+        echo "------------------------"
+        echo "  downloading glslang   "
+        echo "------------------------"
+        # Make sure we have no leftovers from a failed build attempt.
+        if [ -d "./glslang-src" ]; then
+            rm -rf "./glslang-src"
+        fi
+        git clone https://github.com/KhronosGroup/glslang.git glslang-src
+        pushd glslang-src >/dev/null
+        ./update_glslang_sources.py
+        mkdir build
+        pushd build >/dev/null
+        cmake ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/glslang" ..
+        make -j $(nproc)
+        make install
+        popd >/dev/null
+        popd >/dev/null
+    fi
+    params_sgl+=(-Dglslang_DIR="${projectpath}/third_party/glslang" -DUSE_SHADERC=Off)
+fi
+
+if [ $use_msys = false ] && [ -z "${VULKAN_SDK+1}" ]; then
+    vulkan_sdk_env_set=true
+fi
 
 if [ $use_vcpkg = true ] && [ ! -d "./vcpkg" ]; then
     echo "------------------------"
@@ -526,57 +737,240 @@ if [ ! -d "./sgl/install" ]; then
     popd >/dev/null
 fi
 
-embree_version="3.13.3"
-
-if [ $use_macos = false ] && [ $use_msys = false ]; then
-    if ! $is_embree_installed && [ $os_arch = "x86_64" ]; then
-        if [ ! -d "./embree-${embree_version}.x86_64.linux" ]; then
-            echo "------------------------"
-            echo "   downloading Embree   "
-            echo "------------------------"
-            wget "https://github.com/embree/embree/releases/download/v${embree_version}/embree-${embree_version}.x86_64.linux.tar.gz"
-            tar -xvzf "embree-${embree_version}.x86_64.linux.tar.gz"
+if $build_with_zarr_support; then
+    if [ ! -d "./xtl" ]; then
+        echo "------------------------"
+        echo "    downloading xtl     "
+        echo "------------------------"
+        # Make sure we have no leftovers from a failed build attempt.
+        if [ -d "./xtl-src" ]; then
+            rm -rf "./xtl-src"
         fi
-        params+=(-Dembree_DIR="${projectpath}/third_party/embree-${embree_version}.x86_64.linux/lib/cmake/embree-${embree_version}")
+        git clone https://github.com/xtensor-stack/xtl.git xtl-src
+        mkdir -p xtl-src/build
+        pushd xtl-src/build >/dev/null
+        cmake ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xtl" ..
+        make install
+        popd >/dev/null
     fi
-#elif [ $use_macos = true ]; then
-#    if [ ! -d "./embree/embree/lib/cmake" ]; then
-#        # Make sure we have no leftovers from a failed build attempt.
-#        if [ -d "./embree-repo" ]; then
-#            rm -rf "./embree-repo"
-#        fi
-#        if [ -d "./embree-build" ]; then
-#            rm -rf "./embree-build"
-#        fi
-#        if [ -d "./embree" ]; then
-#            rm -rf "./embree"
-#        fi
-#
-#        params_embree=()
-#        if [[ $(uname -m) == 'arm64' ]]; then
-#            params_embree+=(-DBUILD_TBB_FROM_SOURCE=On)
-#        fi
-#
-#        # Build Embree and its dependencies.
-#        git clone https://github.com/embree/embree.git embree-repo
-#        mkdir embree-build
-#        pushd "./embree-build" >/dev/null
-#        cmake ../embree-repo/scripts/superbuild -DCMAKE_INSTALL_PREFIX="$projectpath/third_party/embree" \
-#        -DBUILD_JOBS=$(sysctl -n hw.ncpu) ${params_embree[@]+"${params_embree[@]}"}
-#        cmake --build . --parallel $(sysctl -n hw.ncpu)
-#        cmake --build . --parallel $(sysctl -n hw.ncpu)
-#        popd >/dev/null
-#    fi
-#
-#    params+=(-Dembree_DIR="${projectpath}/third_party/embree/embree/lib/cmake/$(ls "${projectpath}/third_party/embree/embree/lib/cmake")")
-fi
-if [ $use_vcpkg = true ]; then
-    params+=(-DPYTHONHOME="./python3")
+    if [ ! -d "./xtensor" ]; then
+        echo "------------------------"
+        echo "  downloading xtensor   "
+        echo "------------------------"
+        # Make sure we have no leftovers from a failed build attempt.
+        if [ -d "./xtensor-src" ]; then
+            rm -rf "./xtensor-src"
+        fi
+        git clone https://github.com/xtensor-stack/xtensor.git xtensor-src
+        mkdir -p xtensor-src/build
+        pushd xtensor-src/build >/dev/null
+        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
+        -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xtensor" ..
+        make install
+        popd >/dev/null
+    fi
+    if [ ! -d "./xsimd" ]; then
+        echo "------------------------"
+        echo "   downloading xsimd    "
+        echo "------------------------"
+        # Make sure we have no leftovers from a failed build attempt.
+        if [ -d "./xsimd-src" ]; then
+            rm -rf "./xsimd-src"
+        fi
+        git clone https://github.com/xtensor-stack/xsimd.git xsimd-src
+        mkdir -p xsimd-src/build
+        pushd xsimd-src/build >/dev/null
+        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
+        -DENABLE_XTL_COMPLEX=ON \
+        -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xsimd" ..
+        make install
+        popd >/dev/null
+    fi
+
+    # Seems like xtensor can install its CMake config either to the share or lib folder.
+    if [ -d "${projectpath}/third_party/xtensor/share/cmake/xtensor" ]; then
+        xtensor_CMAKE_DIR="${projectpath}/third_party/xtensor/share/cmake/xtensor"
+    else
+        xtensor_CMAKE_DIR="${projectpath}/third_party/xtensor/lib/cmake/xtensor"
+    fi
+
+    if [ ! -d "./z5" ]; then
+        echo "------------------------"
+        echo "     downloading z5     "
+        echo "------------------------"
+        # Make sure we have no leftovers from a failed build attempt.
+        if [ -d "./z5-src" ]; then
+            rm -rf "./z5-src"
+        fi
+        git clone https://github.com/constantinpape/z5.git z5-src
+        if [ $use_macos = true ]; then
+            sed -i -e 's/SET(Boost_NO_SYSTEM_PATHS ON)/#SET(Boost_NO_SYSTEM_PATHS ON)/g' z5-src/CMakeLists.txt
+        else
+            sed -i '/^SET(Boost_NO_SYSTEM_PATHS ON)$/s/^/#/' z5-src/CMakeLists.txt
+        fi
+        if [ $use_vcpkg = true ]; then
+            cat > z5-src/vcpkg.json <<EOF
+{
+    "\$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+    "name": "z5",
+    "version": "0.1.0",
+    "dependencies": [ "boost-core", "boost-filesystem", "nlohmann-json", "blosc" ]
+}
+EOF
+        fi
+        mkdir -p z5-src/build
+        pushd z5-src/build >/dev/null
+        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
+        -Dxtensor_DIR="${xtensor_CMAKE_DIR}" \
+        -Dxsimd_DIR="${projectpath}/third_party/xsimd/lib/cmake/xsimd" \
+        -DBUILD_Z5PY=OFF -DWITH_ZLIB=ON -DWITH_LZ4=ON -DWITH_BLOSC=ON \
+        -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/z5" ${params_vcpkg[@]+"${params_vcpkg[@]}"} ..
+        make install
+        popd >/dev/null
+    fi
+    params+=(-Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
+    -Dxtensor_DIR="${xtensor_CMAKE_DIR}" \
+    -Dxsimd_DIR="${projectpath}/third_party/xsimd/lib/cmake/xsimd" \
+    -Dz5_DIR="${projectpath}/third_party/z5/lib/cmake/z5")
 fi
 
-if $use_msys; then
-    Python3_VERSION="$(find "$MSYSTEM_PREFIX/lib/" -maxdepth 1 -type d -name 'python*' -printf "%f" -quit)"
-    params+=(-DPython3_FIND_REGISTRY=NEVER -DPYTHONHOME="./python3" -DPYTHONPATH="./python3/lib/$Python3_VERSION")
+if $build_with_cuda_support; then
+    if [ ! -d "./tiny-cuda-nn" ]; then
+        echo "------------------------"
+        echo "downloading tiny-cuda-nn"
+        echo "------------------------"
+        git clone https://github.com/chrismile/tiny-cuda-nn.git tiny-cuda-nn --recurse-submodules
+        pushd tiny-cuda-nn >/dev/null
+        git checkout activations
+        popd >/dev/null
+    fi
+    if [ ! -d "./quick-mlp" ]; then
+        echo "------------------------"
+        echo "  downloading QuickMLP  "
+        echo "------------------------"
+        git clone https://github.com/chrismile/quick-mlp.git quick-mlp --recurse-submodules
+    fi
+fi
+
+if $build_with_skia_support; then
+    if $skia_link_dynamically; then
+        out_dir="out/Shared"
+    else
+        out_dir="out/Static"
+    fi
+    if [ ! -d "./skia/$out_dir" ]; then
+        echo "------------------------"
+        echo "    downloading Skia    "
+        echo "------------------------"
+        if [ ! -d "./skia" ]; then
+            git clone https://skia.googlesource.com/skia.git
+            pushd skia >/dev/null
+            python3 tools/git-sync-deps
+            bin/fetch-ninja
+        else
+            pushd skia >/dev/null
+        fi
+        if $skia_link_dynamically; then
+            bin/gn gen out/Shared --args='is_official_build=true is_component_build=true is_debug=false skia_use_vulkan=true skia_use_system_harfbuzz=false skia_use_fontconfig=false'
+            third_party/ninja/ninja -C out/Shared
+            params+=(-DSkia_DIR="${projectpath}/third_party/skia" -DSkia_BUILD_TYPE=Shared)
+        else
+            bin/gn gen out/Static --args='is_official_build=true is_debug=false skia_use_vulkan=true skia_use_system_harfbuzz=false skia_use_fontconfig=false'
+            third_party/ninja/ninja -C out/Static
+            params+=(-DSkia_DIR="${projectpath}/third_party/skia" -DSkia_BUILD_TYPE=Static)
+        fi
+        popd >/dev/null
+    fi
+fi
+
+if $build_with_vkvg_support; then
+    if [ ! -d "./vkvg" ]; then
+        echo "------------------------"
+        echo "    downloading VKVG    "
+        echo "------------------------"
+        if [ -d "./vkvg-src" ]; then
+            rm -rf "./vkvg-src"
+        fi
+        git clone --recursive https://github.com/chrismile/vkvg vkvg-src
+        mkdir -p vkvg-src/build
+        pushd vkvg-src/build >/dev/null
+        cmake .. ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/vkvg" \
+        -DVKVG_ENABLE_VK_SCALAR_BLOCK_LAYOUT=ON -DVKVG_ENABLE_VK_TIMELINE_SEMAPHORE=ON \
+        -DVKVG_USE_FONTCONFIG=OFF -DVKVG_USE_HARFBUZZ=OFF -DVKVG_BUILD_TESTS=OFF
+        make -j $(nproc)
+        make install
+        popd >/dev/null
+    fi
+    params+=(-Dvkvg_DIR="${projectpath}/third_party/vkvg")
+fi
+
+if $build_with_osqp_support; then
+    if [ ! -d "./osqp" ]; then
+        echo "------------------------"
+        echo "    downloading OSQP    "
+        echo "------------------------"
+        if [ -d "./osqp-src" ]; then
+            rm -rf "./osqp-src"
+        fi
+        git clone https://github.com/osqp/osqp osqp-src
+        mkdir -p osqp-src/build
+        pushd osqp-src/build >/dev/null
+        cmake .. ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/osqp"
+        make -j $(nproc)
+        make install
+        popd >/dev/null
+    fi
+    params+=(-Dosqp_DIR="${projectpath}/third_party/osqp/lib/cmake/osqp")
+fi
+
+if [ ! -d "${projectpath}/third_party/limbo" ]; then
+    echo "------------------------"
+    echo "    downloading limbo   "
+    echo "------------------------"
+    git clone --recursive https://github.com/chrismile/limbo.git "${projectpath}/third_party/limbo"
+    pushd limbo >/dev/null
+    git checkout fixes
+    popd >/dev/null
+fi
+
+if $build_with_zink_support; then
+    if [ ! -d "./mesa" ]; then
+        # Download libdrm and Mesa.
+        LIBDRM_VERSION=libdrm-2.4.115
+        MESA_VERSION=mesa-23.1.3
+        wget https://dri.freedesktop.org/libdrm/${LIBDRM_VERSION}.tar.xz
+        wget https://archive.mesa3d.org/${MESA_VERSION}.tar.xz
+        tar -xvf ${LIBDRM_VERSION}.tar.xz
+        tar -xvf ${MESA_VERSION}.tar.xz
+
+        # Install all dependencies.
+        pip3 install --user meson mako
+        # TODO: Add support for other operating systems.
+        sudo apt-get -y build-dep mesa
+        sudo apt install -y ninja libxcb-dri3-dev libxcb-present-dev libxshmfence-dev
+
+        pushd ${LIBDRM_VERSION} >/dev/null
+        meson builddir/ --prefix="${projectpath}/third_party/mesa"
+        ninja -C builddir/ install
+        popd >/dev/null
+
+        pushd ${MESA_VERSION} >/dev/null
+        PKG_CONFIG_PATH="${projectpath}/third_party/mesa/lib/x86_64-linux-gnu/pkgconfig" \
+        meson setup builddir/ -Dprefix="${projectpath}/third_party/mesa" \
+        -Dgallium-drivers=zink,swrast -Dvulkan-drivers= -Dbuildtype=release \
+        -Dgallium-va=disabled -Dglx=dri -Dplatforms=x11 -Degl=enabled -Dglvnd=true
+        meson install -C builddir/
+        popd >/dev/null
+    fi
+    if [[ -z "${LD_LIBRARY_PATH+x}" ]]; then
+        export LD_LIBRARY_PATH="${projectpath}/third_party/mesa/lib/x86_64-linux-gnu"
+    else
+        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/mesa/lib/x86_64-linux-gnu"
+    fi
+    export __GLX_VENDOR_LIBRARY_NAME=mesa
+    export MESA_LOADER_DRIVER_OVERRIDE=zink
+    export GALLIUM_DRIVER=zink
+    params+=(-DUSE_ZINK=ON)
 fi
 
 popd >/dev/null # back to project root
@@ -622,9 +1016,6 @@ cmake .. \
     -Dsgl_DIR="$projectpath/third_party/sgl/install/lib/cmake/sgl/" \
     ${params_gen[@]+"${params_gen[@]}"} ${params_link[@]+"${params_link[@]}"} \
     ${params_vcpkg[@]+"${params_vcpkg[@]}"} ${params[@]+"${params[@]}"}
-if [ $use_vcpkg = true ] || [ $use_msys = true ] || [ $use_macos = true ]; then
-    Python3_VERSION=$(cat pythonversion.txt)
-fi
 popd >/dev/null
 
 echo "------------------------"
@@ -677,10 +1068,10 @@ if $use_msys; then
     fi
 
     # Copy the application to the destination directory.
-    cp "$build_dir/HexVolumeRenderer.exe" "$destination_dir/bin"
+    cp "$build_dir/Correrender.exe" "$destination_dir/bin"
 
     # Copy all dependencies of the application to the destination directory.
-    ldd_output="$(ldd $destination_dir/bin/HexVolumeRenderer.exe)"
+    ldd_output="$(ldd $destination_dir/bin/Correrender.exe)"
     for library in $ldd_output
     do
         if [[ $library == "$MSYSTEM_PREFIX"* ]] ;
@@ -695,17 +1086,17 @@ if $use_msys; then
     done
 elif [ $use_macos = true ] && [ $use_vcpkg = true ]; then
     [ -d $destination_dir ] || mkdir $destination_dir
-    rsync -a "$build_dir/HexVolumeRenderer.app/Contents/MacOS/HexVolumeRenderer" $destination_dir
+    rsync -a "$build_dir/Correrender.app/Contents/MacOS/Correrender" $destination_dir
 elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
     brew_prefix="$(brew --prefix)"
     mkdir -p $destination_dir
 
-    if [ -d "$destination_dir/HexVolumeRenderer.app" ]; then
-        rm -rf "$destination_dir/HexVolumeRenderer.app"
+    if [ -d "$destination_dir/Correrender.app" ]; then
+        rm -rf "$destination_dir/Correrender.app"
     fi
 
     # Copy the application to the destination directory.
-    cp -a "$build_dir/HexVolumeRenderer.app" "$destination_dir"
+    cp -a "$build_dir/Correrender.app" "$destination_dir"
 
     # Copy sgl to the destination directory.
     if [ $debug = true ] ; then
@@ -771,7 +1162,7 @@ elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
             fi
         done < <(echo "$otool_output")
     }
-    copy_dependencies_recursive "$build_dir/HexVolumeRenderer.app/Contents/MacOS/HexVolumeRenderer"
+    copy_dependencies_recursive "$build_dir/Correrender.app/Contents/MacOS/Correrender"
     if [ $debug = true ]; then
         copy_dependencies_recursive "./third_party/sgl/install/lib/libsgld.dylib"
     else
@@ -790,15 +1181,11 @@ else
     mkdir -p $destination_dir/bin
 
     # Copy the application to the destination directory.
-    rsync -a "$build_dir/HexVolumeRenderer" "$destination_dir/bin"
+    rsync -a "$build_dir/Correrender" "$destination_dir/bin"
 
     # Copy all dependencies of the application to the destination directory.
-    ldd_output="$(ldd $build_dir/HexVolumeRenderer)"
+    ldd_output="$(ldd $build_dir/Correrender)"
 
-    if ! $is_embree_installed && [ $os_arch = "x86_64" ]; then
-        libembree3_so="$(readlink -f "${projectpath}/third_party/embree-${embree_version}.x86_64.linux/lib/libembree3.so")"
-        ldd_output="$ldd_output $libembree3_so"
-    fi
     library_blacklist=(
         "libOpenGL" "libGLdispatch" "libGL.so" "libGLX.so"
         "libwayland" "libffi." "libX" "libxcb" "libxkbcommon"
@@ -836,57 +1223,17 @@ else
             patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/$(basename "$library")"
         fi
     done
-    patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/HexVolumeRenderer"
-    if ! $is_embree_installed; then
-        ln -sf "./$(basename "$libembree3_so")" "$destination_dir/bin/libembree3.so"
-    fi
+    patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/Correrender"
 fi
 
-# 2023-11-11: It seems like for LineVis, vcpkg_installed is in the root directory, but for HexVolumeRenderer
-# it is in the build folder.
-if [ $use_vcpkg = false ]; then
-    if [ -d "vcpkg_installed" ]; then
-        vcpkg_installed_dir="vcpkg_installed"
-    elif [ -d "$build_dir/vcpkg_installed" ]; then
-        vcpkg_installed_dir="$build_dir/vcpkg_installed"
-    fi
-fi
-# Copy python3 to the destination directory.
-if $use_msys; then
-    if [ ! -d "$destination_dir/bin/python3" ]; then
-        mkdir -p "$destination_dir/bin/python3/lib"
-        #cp -r "$MSYSTEM_PREFIX/lib/$Python3_VERSION" "$destination_dir/bin/python3/lib"
-        rsync -qav "$MSYSTEM_PREFIX/lib/$Python3_VERSION" "$destination_dir/bin/python3/lib" --exclude site-packages --exclude dist-packages
-    fi
-elif [ $use_macos = true ] && [ $use_vcpkg = true ]; then
-    [ -d $destination_dir/python3 ]     || mkdir $destination_dir/python3
-    [ -d $destination_dir/python3/lib ] || mkdir $destination_dir/python3/lib
-    rsync -a "vcpkg_installed/$(ls $vcpkg_installed_dir | grep -Ewv 'vcpkg')/lib/$Python3_VERSION" $destination_dir/python3/lib
-    #rsync -a "$(eval echo "vcpkg_installed/$(ls $vcpkg_installed_dir | grep -Ewv 'vcpkg')/lib/python*")" $destination_dir/python3/lib
-elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
-    python_version=${Python3_VERSION#python}
-    python_subdir="$brew_prefix/Cellar/python@${Python3_VERSION#python}"
-    PYTHONHOME_global="$python_subdir/$(ls "$python_subdir")/Frameworks/Python.framework/Versions/$python_version"
-    if [ ! -d "$binaries_dest_dir/python3" ]; then
-        mkdir -p "$binaries_dest_dir/python3/lib"
-        rsync -a "$PYTHONHOME_global/lib/$Python3_VERSION" "$binaries_dest_dir/python3/lib"
-        rsync -a "$brew_prefix/lib/$Python3_VERSION" "$binaries_dest_dir/python3/lib"
-        #rsync -a "$(eval echo "$brew_prefix/lib/python*")" $binaries_dest_dir/python3/lib
-    fi
-elif [ $use_vcpkg = true ]; then
-    [ -d $destination_dir/bin/python3 ]     || mkdir $destination_dir/bin/python3
-    [ -d $destination_dir/bin/python3/lib ] || mkdir $destination_dir/bin/python3/lib
-    python_lib_dir="$vcpkg_installed_dir/$(ls --ignore=vcpkg $vcpkg_installed_dir)/lib/$Python3_VERSION"
-    rsync -a "$python_lib_dir" $destination_dir/bin/python3/lib
-    #rsync -a "$(eval echo "$vcpkg_installed_dir/$(ls --ignore=vcpkg $vcpkg_installed_dir)/lib/python*")" $destination_dir/python3/lib
-fi
 
 # Copy the docs to the destination directory.
 cp "README.md" "$destination_dir"
 if [ ! -d "$destination_dir/LICENSE" ]; then
     mkdir -p "$destination_dir/LICENSE"
     cp -r "docs/license-libraries/." "$destination_dir/LICENSE/"
-    cp -r "LICENSE" "$destination_dir/LICENSE/LICENSE-hexvolumerenderer.txt"
+    cp -r "LICENSE" "$destination_dir/LICENSE/LICENSE-correrender.txt"
+    cp -r "submodules/IsosurfaceCpp/LICENSE" "$destination_dir/LICENSE/graphics/LICENSE-isosurfacecpp.txt"
 fi
 if [ ! -d "$destination_dir/docs" ]; then
     cp -r "docs" "$destination_dir"
@@ -894,34 +1241,35 @@ fi
 
 # Create a run script.
 if $use_msys; then
-    printf "@echo off\npushd %%~dp0\npushd bin\nstart \"\" HexVolumeRenderer.exe\n" > "$destination_dir/run.bat"
+    printf "@echo off\npushd %%~dp0\npushd bin\nstart \"\" Correrender.exe\n" > "$destination_dir/run.bat"
 elif $use_macos; then
-    printf "#!/bin/sh\npushd \"\$(dirname \"\$0\")\" >/dev/null\n./HexVolumeRenderer.app/Contents/MacOS/HexVolumeRenderer\npopd\n" > "$destination_dir/run.sh"
+    printf "#!/bin/sh\npushd \"\$(dirname \"\$0\")\" >/dev/null\n./Correrender.app/Contents/MacOS/Correrender\npopd\n" > "$destination_dir/run.sh"
     chmod +x "$destination_dir/run.sh"
 else
-    printf "#!/bin/bash\npushd \"\$(dirname \"\$0\")/bin\" >/dev/null\n./HexVolumeRenderer\npopd\n" > "$destination_dir/run.sh"
+    printf "#!/bin/bash\npushd \"\$(dirname \"\$0\")/bin\" >/dev/null\n./Correrender\npopd\n" > "$destination_dir/run.sh"
     chmod +x "$destination_dir/run.sh"
 fi
 
 # Replicability Stamp mode.
-if [ $replicability = true ]; then
+if $replicability; then
+    mkdir -p "./Data/VolumeDataSets"
+    if [ ! -f "./Data/VolumeDataSets/linear_4x4.nc" ]; then
+        #echo "------------------------"
+        #echo "generating synthetic data"
+        #echo "------------------------"
+        #pushd scripts >/dev/null
+        #python3 generate_synth_box_ensembles.py
+        #popd >/dev/null
+        echo "------------------------"
+        echo "downloading synthetic data"
+        echo "------------------------"
+        curl --show-error --fail \
+        https://zenodo.org/records/10018860/files/linear_4x4.nc --output "./Data/VolumeDataSets/linear_4x4.nc"
+    fi
+    if [ ! -f "./Data/VolumeDataSets/datasets.json" ]; then
+        printf "{ \"datasets\": [ { \"name\": \"linear_4x4\", \"filename\": \"linear_4x4.nc\" } ] }" >> ./Data/VolumeDataSets/datasets.json
+    fi
     params_run+=(--replicability)
-fi
-# Download the data sets.
-if [ $replicability = true ] && [ ! -d "Data/Meshes/2019 - Symmetric Moving Frames" ]; then
-    # This tool can help download data sets from HexaLab.
-    # The program assumes the user has the rights to download the data.
-    #
-    # HexaLab.net: an online viewer for hexahedral meshes
-    # Matteo Bracci, Marco Tarini, Nico Pietroni, Marco Livesu, Paolo Cignoni
-    # Computer-Aided Design, Volume 110, May 2019
-    # DOI:10.1016/j.cad.2018.12.003
-    # (preprint available on arxiv)
-    # Copyright 2018 Visual Computing Lab ISTI - CNR
-    echo "------------------------"
-    echo "Downloading HexaLab data sets..."
-    echo "------------------------"
-    build/HexaLabDatasetsDownloader
 fi
 
 
@@ -949,27 +1297,11 @@ else
       export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/sgl/install/lib"
   fi
 fi
-if [ $use_macos = false ] && [ $use_msys = false ]; then
-    if ! $is_embree_installed && [ $os_arch = "x86_64" ]; then
-        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/embree-${embree_version}.x86_64.linux/lib"
-    fi
-fi
-if [ $use_macos = true ] && [ $use_vcpkg = true ]; then
-    export PYTHONHOME="$PYTHONHOME_global"
-elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
-    export PYTHONHOME="../$destination_dir/python3"
-elif $use_msys; then
-    export PYTHONHOME="/mingw64"
-else
-    if [ $use_vcpkg = true ]; then
-        export PYTHONHOME="../Shipping/bin/python3"
-    fi
-fi
 
 if [ $run_program = true ] && [ $use_macos = false ]; then
-    ./HexVolumeRenderer ${params_run[@]+"${params_run[@]}"}
+    ./Correrender ${params_run[@]+"${params_run[@]}"}
 elif [ $run_program = true ] && [ $use_macos = true ]; then
-    #open ./HexVolumeRenderer.app
-    #open ./HexVolumeRenderer.app --args --perf
-    ./HexVolumeRenderer.app/Contents/MacOS/HexVolumeRenderer ${params_run[@]+"${params_run[@]}"}
+    #open ./Correrender.app
+    #open ./Correrender.app --args --perf
+    ./Correrender.app/Contents/MacOS/Correrender ${params_run[@]+"${params_run[@]}"}
 fi
