@@ -6,11 +6,7 @@
  * - https://github.com/intel/compute-runtime/issues/213
  */
 {
-global:
-  /* Export Python symbols. */
-  Py*;
-  _Py*;
 local:
-  /* Hide all other symbols. */
+  /* Hide all symbols. */
   *;
 };

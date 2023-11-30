@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2022, Christoph Neuhauser
+ * Copyright (c) 2020, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,118 +26,81 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef CORRERENDER_MAINAPP_HPP
-#define CORRERENDER_MAINAPP_HPP
+#ifndef MAINAPP_HPP
+#define MAINAPP_HPP
 
 #include <string>
 #include <vector>
 #include <map>
 
 #include <Utils/SciVis/SciVisApp.hpp>
+#include <Graphics/Shader/Shader.hpp>
+#include <ImGui/Widgets/TransferFunctionWindow.hpp>
 
 #ifdef SUPPORT_CUDA_INTEROP
 #include <Graphics/Vulkan/Utils/InteropCuda.hpp>
 #endif
 
-#ifdef SUPPORT_RENDERDOC_DEBUGGER
-#include "Utils/RenderDocDebugger.hpp"
-#endif
-
-#include "Utils/InternalState.hpp"
-#include "Loaders/DataSetList.hpp"
-#include "Calculators/CorrelationDefines.hpp"
-#include "Renderers/SceneData.hpp"
+#include "SceneData.hpp"
+#include "DataSetList.hpp"
+#include "CloudData.hpp"
+#include "PathTracer/VolumetricPathTracingPass.hpp"
 
 #ifdef USE_PYTHON
-//#include "Widgets/ReplayWidget.hpp"
+#include "Widgets/ReplayWidget.hpp"
 #endif
 
-namespace sgl { namespace dialog {
-class MsgBoxHandle;
-typedef std::shared_ptr<MsgBoxHandle> MsgBoxHandlePtr;
-}}
-
-namespace IGFD {
-class FileDialog;
-}
-typedef IGFD::FileDialog ImGuiFileDialog;
-
-namespace Json {
-class Value;
-}
-
-class Renderer;
-typedef std::shared_ptr<Renderer> RendererPtr;
-class VolumeData;
-typedef std::shared_ptr<VolumeData> VolumeDataPtr;
 class DataView;
 typedef std::shared_ptr<DataView> DataViewPtr;
-class ViewManager;
-class TFOptimization;
 
 class MainApp : public sgl::SciVisApp {
 public:
+    /**
+     * @param supportsRaytracing Whether raytracing via OpenGL-Vulkan interoperability is supported.
+     */
     MainApp();
     ~MainApp() override;
     void render() override;
     void update(float dt) override;
     void resolutionChanged(sgl::EventPtr event) override;
 
-    /// For changing performance measurement modes.
-    void setNewState(const InternalState& newState);
-
-    /// Replicability stamp mode.
-    void setUseReplicabilityStampMode();
-
 protected:
     void renderGuiGeneralSettingsPropertyEditor() override;
-    void beginFrameMarker() override;
-    void endFrameMarker() override;
 
 private:
     /// Renders the GUI of the scene settings and all filters and renderers.
     void renderGui() override;
     /// Update the color space (linear RGB vs. sRGB).
     void updateColorSpaceMode() override;
-    /// Called when the camera moved.
+    // Called when the camera moved.
     void hasMoved() override;
     /// Callback when the camera was reset.
     void onCameraReset() override;
-
-    void scheduleRecreateSceneFramebuffer();
-    bool scheduledRecreateSceneFramebuffer = false;
-    bool componentOtherThanRendererNeedsReRender = false;
 
     // Dock space mode.
     void renderGuiMenuBar();
     void renderGuiPropertyEditorBegin() override;
     void renderGuiPropertyEditorCustomNodes() override;
-    void addNewDataView();
-    void initializeFirstDataView();
     bool scheduledDockSpaceModeChange = false;
     bool newDockSpaceMode = false;
     int focusedWindowIndex = -1;
     int mouseHoverWindowIndex = -1;
-    std::vector<DataViewPtr> dataViews;
-    int hasMovedIndex = -1;
-    bool isFirstFrame = true;
+    bool showRendererWindow = true;
+    DataViewPtr dataView;
+    sgl::CameraPtr cameraHandle;
 
     /// Scene data (e.g., camera, main framebuffer, ...).
-    int32_t viewportPositionX = 0;
-    int32_t viewportPositionY = 0;
-    uint32_t viewportWidth = 0;
-    uint32_t viewportHeight = 0;
-    int supersamplingFactor = 1;
     SceneData sceneData;
 
     // This setting lets all data views use the same viewport resolution.
     bool useFixedSizeViewport = false;
-    glm::ivec2 fixedViewportSizeEdit{ 2186, 1358 };
-    glm::ivec2 fixedViewportSize{ 2186, 1358 };
+    glm::ivec2 fixedViewportSizeEdit{ 1920, 1080 };
+    glm::ivec2 fixedViewportSize{ 1920, 1080 };
 
     // Data set GUI information.
     void loadAvailableDataSetInformation();
-    std::vector<std::string> getSelectedDataSetFilenames();
+    const std::string& getSelectedDataSetFilename();
+    const std::string& getSelectedDataSetEmissionFilename();
     void openFileDialog();
     DataSetInformationPtr dataSetInformationRoot;
     std::vector<DataSetInformationPtr> dataSetInformationList; //< List of all leaves.
@@ -145,80 +108,37 @@ private:
     int selectedDataSetIndex = 0; //< Contains "Local file..." at beginning, thus starts actually at 1.
     int currentlyLoadedDataSetIndex = -1;
     std::string customDataSetFileName;
+    std::string customDataSetFileNameEmission;
     ImGuiFileDialog* fileDialogInstance = nullptr;
     std::string fileDialogDirectory;
-    std::vector<sgl::dialog::MsgBoxHandlePtr> nonBlockingMsgBoxHandles;
-    // For volume export dialog.
-    void openExportFieldFileDialog();
-    int selectedFieldIndexExport = 0;
-    std::string exportFieldFileDialogDirectory;
-    // For loading and saving the application state.
-    void openSelectStateDialog();
-    void saveStateToFile(const std::string& stateFilePath);
-    void loadStateFromFile(const std::string& stateFilePath);
-    void loadStateFromJsonObject(Json::Value root);
-    void loadReplicabilityStampState();
-    bool useReplicabilityStampMode = false;
-    int replicabilityFrameNumber = 0;
-    bool stateModeSave = false;
-    std::string stateFileDirectory;
-    // For field similarity computation.
-    CorrelationMeasureType correlationMeasureFieldSimilarity = CorrelationMeasureType::PEARSON;
-    int useFieldAccuracyDouble = 1;
-    int similarityFieldIdx0 = 0, similarityFieldIdx1 = 0;
-    float similarityMetricNumber = 0.0f;
-    float maxCorrelationValue = 0.0f;
-    TFOptimization* tfOptimization = nullptr;
 
-    // For making performance measurements.
-    AutomaticPerformanceMeasurer* performanceMeasurer = nullptr;
-    InternalState lastState;
-    bool firstState = true;
+    // For mapping volume density to display density and emission.
+    sgl::TransferFunctionWindow transferFunctionWindow;
+
+    std::shared_ptr<VolumetricPathTracingPass> volumetricPathTracingPass;
     bool usesNewState = true;
-
-#ifdef USE_PYTHON
-    /*ReplayWidget replayWidget;
-    bool replayWidgetRunning = false;
-    bool realTimeReplayUpdates = false;
-    bool updateTransferFunctionRange = false;
-    glm::vec2 transferFunctionRange{};*/
-#endif
 
 #ifdef SUPPORT_CUDA_INTEROP
     CUcontext cuContext = {};
     CUdevice cuDevice = 0;
 #endif
     bool cudaInteropInitialized = false;
-    bool nvrtcInitialized = false;
-    bool openclInteropInitialized = false;
-
-#ifdef SUPPORT_RENDERDOC_DEBUGGER
-    RenderDocDebugger renderDocDebugger;
-#endif
+    bool optixInitialized = false;
 
 
     /// --- Visualization pipeline ---
 
-    /// Loads volume data from a file.
-    void loadVolumeDataSet(const std::vector<std::string>& fileName);
+    /// Loads line data from a file.
+    void loadCloudDataSet(const std::string& fileName, const std::string& emissionFileName, bool blockingDataLoading = true);
+    /// Checks if an asynchronous loading request was finished.
+    void checkLoadingRequestFinished();
     /// Reload the currently loaded data set.
     void reloadDataSet() override;
-    /// Prepares the visualization pipeline for rendering.
-    void prepareVisualizationPipeline();
-    /// Sets the used renderers.
-    void addNewRenderer(RenderingMode renderingMode);
-    void setRenderer(RenderingMode newRenderingMode, RendererPtr& newVolumeRenderer);
-    void onUnsupportedRendererSelected(const std::string& warningText, RendererPtr& newVolumeRenderer);
 
-    /// A list of filters that are applied sequentially on the data.
-    ViewManager* viewManager = nullptr;
-    std::vector<RendererPtr> volumeRenderers;
-    size_t rendererCreationCounter = 0;
-    VolumeDataPtr volumeData;
-    DataSetType dataSetType = DataSetType::NONE;
-    bool newDataLoaded = true;
-    sgl::AABB3 boundingBox;
     const int NUM_MANUAL_LOADERS = 1;
+    bool newMeshLoaded = true;
+    sgl::AABB3 modelBoundingBox;
+    CloudDataPtr cloudData;
 };
 
-#endif //CORRERENDER_MAINAPP_HPP
+#endif // MAINAPP_HPP

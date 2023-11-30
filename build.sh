@@ -52,20 +52,6 @@ build_dir_release=".build_release"
 use_vcpkg=false
 link_dynamic=false
 custom_glslang=false
-build_with_zarr_support=true
-build_with_cuda_support=true
-build_with_skia_support=false
-skia_link_dynamically=true
-build_with_vkvg_support=false
-build_with_osqp_support=true
-build_with_zink_support=false
-if $use_msys; then
-    build_with_cuda_support=false
-    # VKVG support is disabled due to: https://github.com/jpbruyere/vkvg/issues/140
-    build_with_vkvg_support=false
-fi
-# Replicability Stamp (https://www.replicabilitystamp.org/) mode for replicating a figure from the corresponding paper.
-replicability=false
 
 # Process command line arguments.
 for ((i=1;i<=$#;i++));
@@ -84,8 +70,6 @@ do
         link_dynamic=true
     elif [ ${!i} = "--custom-glslang" ]; then
         custom_glslang=true
-    elif [ ${!i} = "--replicability" ]; then
-        replicability=true
     fi
 done
 
@@ -98,7 +82,7 @@ else
 fi
 destination_dir="Shipping"
 if $use_macos; then
-    binaries_dest_dir="$destination_dir/Correrender.app/Contents/MacOS"
+    binaries_dest_dir="$destination_dir/CloudRendering.app/Contents/MacOS"
     if ! command -v brew &> /dev/null; then
         if [ ! -d "/opt/homebrew/bin" ]; then
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -198,10 +182,7 @@ if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [
             || ! is_installed_pacman "mingw-w64-x86_64-shaderc" \
             || ! is_installed_pacman "mingw-w64-x86_64-opencl-headers" \
             || ! is_installed_pacman "mingw-w64-x86_64-opencl-icd" || ! is_installed_pacman "mingw-w64-x86_64-jsoncpp" \
-            || ! is_installed_pacman "mingw-w64-x86_64-nlohmann-json" || ! is_installed_pacman "mingw-w64-x86_64-blosc" \
-            || ! is_installed_pacman "mingw-w64-x86_64-netcdf" || ! is_installed_pacman "mingw-w64-x86_64-eccodes" \
-            || ! is_installed_pacman "mingw-w64-x86_64-eigen3" || ! is_installed_pacman "mingw-w64-x86_64-libtiff" \
-            || ! is_installed_pacman "mingw-w64-x86_64-nlopt"; then
+            || ! is_installed_pacman "mingw-w64-x86_64-openexr"; then
         echo "------------------------"
         echo "installing dependencies "
         echo "------------------------"
@@ -211,13 +192,7 @@ if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [
         mingw64/mingw-w64-x86_64-vulkan-headers mingw64/mingw-w64-x86_64-vulkan-loader \
         mingw64/mingw-w64-x86_64-vulkan-validation-layers mingw64/mingw-w64-x86_64-shaderc \
         mingw64/mingw-w64-x86_64-opencl-headers mingw64/mingw-w64-x86_64-opencl-icd mingw64/mingw-w64-x86_64-jsoncpp \
-        mingw64/mingw-w64-x86_64-nlohmann-json mingw64/mingw-w64-x86_64-blosc mingw64/mingw-w64-x86_64-netcdf \
-        mingw64/mingw-w64-x86_64-eccodes mingw64/mingw-w64-x86_64-eigen3 mingw64/mingw-w64-x86_64-libtiff \
-        mingw64/mingw-w64-x86_64-nlopt
-    fi
-    if ! (is_installed_pacman "mingw-w64-x86_64-curl" || is_installed_pacman "mingw-w64-x86_64-curl-gnutls" \
-            || is_installed_pacman "mingw-w64-x86_64-curl-winssl"); then
-        pacman --noconfirm -S --needed mingw64/mingw-w64-x86_64-curl
+        mingw64/mingw-w64-x86_64-openexr
     fi
 elif $use_macos && command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_dir_release ]; then
     if ! is_installed_brew "git"; then
@@ -279,26 +254,8 @@ elif $use_macos && command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && 
         if ! is_installed_brew "jsoncpp"; then
             brew install jsoncpp
         fi
-        if ! is_installed_brew "nlohmann-json"; then
-            brew install nlohmann-json
-        fi
-        if ! is_installed_brew "c-blosc"; then
-            brew install c-blosc
-        fi
-        if ! is_installed_brew "netcdf"; then
-            brew install netcdf
-        fi
-        if ! is_installed_brew "eigen"; then
-            brew install eigen
-        fi
-        if ! is_installed_brew "libtiff"; then
-            brew install libtiff
-        fi
-        if ! is_installed_brew "curl"; then
-            brew install curl
-        fi
-        if ! is_installed_brew "nlopt"; then
-            brew install nlopt
+        if ! is_installed_brew "openexr"; then
+            brew install openexr
         fi
     fi
 elif command -v apt &> /dev/null; then
@@ -329,23 +286,12 @@ elif command -v apt &> /dev/null; then
                 || ! is_installed_apt "libpng-dev" || ! is_installed_apt "libsdl2-dev" \
                 || ! is_installed_apt "libsdl2-image-dev" || ! is_installed_apt "libglew-dev" \
                 || ! is_installed_apt "opencl-c-headers" || ! is_installed_apt "ocl-icd-opencl-dev" \
-                || ! is_installed_apt "libjsoncpp-dev" || ! is_installed_apt "nlohmann-json3-dev" \
-                || ! is_installed_apt "libblosc-dev" || ! is_installed_apt "liblz4-dev" \
-                || ! is_installed_apt "libnetcdf-dev" || ! is_installed_apt "libeccodes-dev" \
-                || ! is_installed_apt "libeccodes-tools" || ! is_installed_apt "libopenjp2-7-dev" \
-                || ! is_installed_apt "libeigen3-dev" || ! is_installed_apt "libtiff-dev" \
-                || ! is_installed_apt "libnlopt-cxx-dev"; then
+                || ! is_installed_apt "libjsoncpp-dev" || ! is_installed_apt "libopenexr-dev"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo apt install -y libboost-filesystem-dev libglm-dev libarchive-dev libtinyxml2-dev libpng-dev libsdl2-dev \
-            libsdl2-image-dev libglew-dev opencl-c-headers ocl-icd-opencl-dev libjsoncpp-dev nlohmann-json3-dev \
-            libblosc-dev liblz4-dev libnetcdf-dev libeccodes-dev libeccodes-tools libopenjp2-7-dev libeigen3-dev \
-            libtiff-dev libnlopt-cxx-dev
-        fi
-        if ! (is_installed_apt "libcurl4-openssl-dev" || is_installed_apt "libcurl4-gnutls-dev" \
-                || is_installed_apt "libcurl4-nss-dev"); then
-            sudo apt install -y libcurl4-openssl-dev
+            libsdl2-image-dev libglew-dev opencl-c-headers ocl-icd-opencl-dev libjsoncpp-dev libopenexr-dev
         fi
     fi
 elif command -v pacman &> /dev/null; then
@@ -373,21 +319,12 @@ elif command -v pacman &> /dev/null; then
                 || ! is_installed_pacman "sdl2_image" || ! is_installed_pacman "glew" \
                 || ! is_installed_pacman "vulkan-devel" || ! is_installed_pacman "shaderc" \
                 || ! is_installed_pacman "opencl-headers" || ! is_installed_pacman "ocl-icd" \
-                || ! is_installed_pacman "jsoncpp" || ! is_installed_pacman "nlohmann-json" \
-                || ! is_installed_pacman "blosc" || ! is_installed_pacman "netcdf" || ! is_installed_pacman "eigen" \
-                || ! is_installed_pacman "libtiff" || ! is_installed_pacman "curl" \
-                || ! is_installed_pacman "nlopt"; then
+                || ! is_installed_pacman "jsoncpp" || ! is_installed_pacman "openexr"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo pacman -S boost glm libarchive tinyxml2 libpng sdl2 sdl2_image glew vulkan-devel shaderc opencl-headers \
-            ocl-icd jsoncpp nlohmann-json blosc netcdf eigen libtiff curl nlopt
-        fi
-        if ! command -v yay &> /dev/null && ! is_installed_yay "eccodes"; then
-            echo "------------------------"
-            echo "installing dependencies "
-            echo "------------------------"
-            yay -S eccodes
+            ocl-icd jsoncpp openexr
         fi
     fi
 elif command -v yum &> /dev/null; then
@@ -419,17 +356,14 @@ elif command -v yum &> /dev/null; then
                 || ! is_installed_rpm "SDL2-devel" || ! is_installed_rpm "SDL2_image-devel" \
                 || ! is_installed_rpm "glew-devel" || ! is_installed_rpm "vulkan-headers" \
                 || ! is_installed_rpm "libshaderc-devel" || ! is_installed_rpm "opencl-headers" \
-                || ! is_installed_rpm "ocl-icd" || ! is_installed_rpm "jsoncpp-devel" || ! is_installed_rpm "json-devel" \
-                || ! is_installed_rpm "blosc-devel" || ! is_installed_rpm "netcdf-devel" \
-                || ! is_installed_rpm "eccodes-devel" || ! is_installed_rpm "eigen3-devel" \
-                || ! is_installed_rpm "libtiff-devel" || ! is_installed_rpm "libcurl-devel" \
-                || ! is_installed_rpm "NLopt-devel"; then
+                || ! is_installed_rpm "ocl-icd" || ! is_installed_rpm "jsoncpp-devel" \
+                || ! is_installed_rpm "openexr-devel"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo yum install -y boost-devel glm-devel libarchive-devel tinyxml2-devel libpng-devel SDL2-devel \
-            SDL2_image-devel glew-devel vulkan-headers libshaderc-devel opencl-headers ocl-icd jsoncpp-devel json-devel \
-            blosc-devel netcdf-devel eccodes-devel eigen3-devel libtiff-devel libcurl-devel NLopt-devel
+            SDL2_image-devel glew-devel vulkan-headers libshaderc-devel opencl-headers ocl-icd jsoncpp-devel \
+            openexr-devel
         fi
     fi
 else
@@ -453,31 +387,10 @@ if [ $use_macos = false ] && ! command -v pkg-config &> /dev/null; then
     exit 1
 fi
 
-if [ ! -d "submodules/IsosurfaceCpp/src" ]; then
-    echo "------------------------"
-    echo "initializing submodules "
-    echo "------------------------"
-    git submodule init
-    git submodule update
-fi
 
 [ -d "./third_party/" ] || mkdir "./third_party/"
 pushd third_party > /dev/null
 
-cmake_version=$(cmake --version | head -n 1 | awk '{print $NF}')
-cmake_version_major=$(echo $cmake_version | cut -d. -f1)
-cmake_version_minor=$(echo $cmake_version | cut -d. -f2)
-if [[ $cmake_version_major < 3 || ($cmake_version_major == 3 && $cmake_version_minor < 18) ]]; then
-    cmake_download_version="3.25.2"
-    if [ ! -d "cmake-${cmake_download_version}-linux-x86_64" ]; then
-        echo "------------------------"
-        echo "    downloading cmake   "
-        echo "------------------------"
-        curl --silent --show-error --fail -OL "https://github.com/Kitware/CMake/releases/download/v${cmake_download_version}/cmake-${cmake_download_version}-linux-x86_64.tar.gz"
-        tar -xf cmake-${cmake_download_version}-linux-x86_64.tar.gz -C .
-    fi
-    PATH="${projectpath}/third_party/cmake-${cmake_download_version}-linux-x86_64/bin:$PATH"
-fi
 
 params_sgl=()
 params=()
@@ -737,241 +650,6 @@ if [ ! -d "./sgl/install" ]; then
     popd >/dev/null
 fi
 
-if $build_with_zarr_support; then
-    if [ ! -d "./xtl" ]; then
-        echo "------------------------"
-        echo "    downloading xtl     "
-        echo "------------------------"
-        # Make sure we have no leftovers from a failed build attempt.
-        if [ -d "./xtl-src" ]; then
-            rm -rf "./xtl-src"
-        fi
-        git clone https://github.com/xtensor-stack/xtl.git xtl-src
-        mkdir -p xtl-src/build
-        pushd xtl-src/build >/dev/null
-        cmake ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xtl" ..
-        make install
-        popd >/dev/null
-    fi
-    if [ ! -d "./xtensor" ]; then
-        echo "------------------------"
-        echo "  downloading xtensor   "
-        echo "------------------------"
-        # Make sure we have no leftovers from a failed build attempt.
-        if [ -d "./xtensor-src" ]; then
-            rm -rf "./xtensor-src"
-        fi
-        git clone https://github.com/xtensor-stack/xtensor.git xtensor-src
-        mkdir -p xtensor-src/build
-        pushd xtensor-src/build >/dev/null
-        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
-        -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xtensor" ..
-        make install
-        popd >/dev/null
-    fi
-    if [ ! -d "./xsimd" ]; then
-        echo "------------------------"
-        echo "   downloading xsimd    "
-        echo "------------------------"
-        # Make sure we have no leftovers from a failed build attempt.
-        if [ -d "./xsimd-src" ]; then
-            rm -rf "./xsimd-src"
-        fi
-        git clone https://github.com/xtensor-stack/xsimd.git xsimd-src
-        mkdir -p xsimd-src/build
-        pushd xsimd-src/build >/dev/null
-        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
-        -DENABLE_XTL_COMPLEX=ON \
-        -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xsimd" ..
-        make install
-        popd >/dev/null
-    fi
-
-    # Seems like xtensor can install its CMake config either to the share or lib folder.
-    if [ -d "${projectpath}/third_party/xtensor/share/cmake/xtensor" ]; then
-        xtensor_CMAKE_DIR="${projectpath}/third_party/xtensor/share/cmake/xtensor"
-    else
-        xtensor_CMAKE_DIR="${projectpath}/third_party/xtensor/lib/cmake/xtensor"
-    fi
-
-    if [ ! -d "./z5" ]; then
-        echo "------------------------"
-        echo "     downloading z5     "
-        echo "------------------------"
-        # Make sure we have no leftovers from a failed build attempt.
-        if [ -d "./z5-src" ]; then
-            rm -rf "./z5-src"
-        fi
-        git clone https://github.com/constantinpape/z5.git z5-src
-        if [ $use_macos = true ]; then
-            sed -i -e 's/SET(Boost_NO_SYSTEM_PATHS ON)/#SET(Boost_NO_SYSTEM_PATHS ON)/g' z5-src/CMakeLists.txt
-        else
-            sed -i '/^SET(Boost_NO_SYSTEM_PATHS ON)$/s/^/#/' z5-src/CMakeLists.txt
-        fi
-        if [ $use_vcpkg = true ]; then
-            cat > z5-src/vcpkg.json <<EOF
-{
-    "\$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
-    "name": "z5",
-    "version": "0.1.0",
-    "dependencies": [ "boost-core", "boost-filesystem", "nlohmann-json", "blosc" ]
-}
-EOF
-        fi
-        mkdir -p z5-src/build
-        pushd z5-src/build >/dev/null
-        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
-        -Dxtensor_DIR="${xtensor_CMAKE_DIR}" \
-        -Dxsimd_DIR="${projectpath}/third_party/xsimd/lib/cmake/xsimd" \
-        -DBUILD_Z5PY=OFF -DWITH_ZLIB=ON -DWITH_LZ4=ON -DWITH_BLOSC=ON \
-        -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/z5" ${params_vcpkg[@]+"${params_vcpkg[@]}"} ..
-        make install
-        popd >/dev/null
-    fi
-    params+=(-Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
-    -Dxtensor_DIR="${xtensor_CMAKE_DIR}" \
-    -Dxsimd_DIR="${projectpath}/third_party/xsimd/lib/cmake/xsimd" \
-    -Dz5_DIR="${projectpath}/third_party/z5/lib/cmake/z5")
-fi
-
-if $build_with_cuda_support; then
-    if [ ! -d "./tiny-cuda-nn" ]; then
-        echo "------------------------"
-        echo "downloading tiny-cuda-nn"
-        echo "------------------------"
-        git clone https://github.com/chrismile/tiny-cuda-nn.git tiny-cuda-nn --recurse-submodules
-        pushd tiny-cuda-nn >/dev/null
-        git checkout activations
-        popd >/dev/null
-    fi
-    if [ ! -d "./quick-mlp" ]; then
-        echo "------------------------"
-        echo "  downloading QuickMLP  "
-        echo "------------------------"
-        git clone https://github.com/chrismile/quick-mlp.git quick-mlp --recurse-submodules
-    fi
-fi
-
-if $build_with_skia_support; then
-    if $skia_link_dynamically; then
-        out_dir="out/Shared"
-    else
-        out_dir="out/Static"
-    fi
-    if [ ! -d "./skia/$out_dir" ]; then
-        echo "------------------------"
-        echo "    downloading Skia    "
-        echo "------------------------"
-        if [ ! -d "./skia" ]; then
-            git clone https://skia.googlesource.com/skia.git
-            pushd skia >/dev/null
-            python3 tools/git-sync-deps
-            bin/fetch-ninja
-        else
-            pushd skia >/dev/null
-        fi
-        if $skia_link_dynamically; then
-            bin/gn gen out/Shared --args='is_official_build=true is_component_build=true is_debug=false skia_use_vulkan=true skia_use_system_harfbuzz=false skia_use_fontconfig=false'
-            third_party/ninja/ninja -C out/Shared
-            params+=(-DSkia_DIR="${projectpath}/third_party/skia" -DSkia_BUILD_TYPE=Shared)
-        else
-            bin/gn gen out/Static --args='is_official_build=true is_debug=false skia_use_vulkan=true skia_use_system_harfbuzz=false skia_use_fontconfig=false'
-            third_party/ninja/ninja -C out/Static
-            params+=(-DSkia_DIR="${projectpath}/third_party/skia" -DSkia_BUILD_TYPE=Static)
-        fi
-        popd >/dev/null
-    fi
-fi
-
-if $build_with_vkvg_support; then
-    if [ ! -d "./vkvg" ]; then
-        echo "------------------------"
-        echo "    downloading VKVG    "
-        echo "------------------------"
-        if [ -d "./vkvg-src" ]; then
-            rm -rf "./vkvg-src"
-        fi
-        git clone --recursive https://github.com/chrismile/vkvg vkvg-src
-        mkdir -p vkvg-src/build
-        pushd vkvg-src/build >/dev/null
-        cmake .. ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/vkvg" \
-        -DVKVG_ENABLE_VK_SCALAR_BLOCK_LAYOUT=ON -DVKVG_ENABLE_VK_TIMELINE_SEMAPHORE=ON \
-        -DVKVG_USE_FONTCONFIG=OFF -DVKVG_USE_HARFBUZZ=OFF -DVKVG_BUILD_TESTS=OFF
-        make -j $(nproc)
-        make install
-        popd >/dev/null
-    fi
-    params+=(-Dvkvg_DIR="${projectpath}/third_party/vkvg")
-fi
-
-if $build_with_osqp_support; then
-    if [ ! -d "./osqp" ]; then
-        echo "------------------------"
-        echo "    downloading OSQP    "
-        echo "------------------------"
-        if [ -d "./osqp-src" ]; then
-            rm -rf "./osqp-src"
-        fi
-        git clone https://github.com/osqp/osqp osqp-src
-        mkdir -p osqp-src/build
-        pushd osqp-src/build >/dev/null
-        cmake .. ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/osqp"
-        make -j $(nproc)
-        make install
-        popd >/dev/null
-    fi
-    params+=(-Dosqp_DIR="${projectpath}/third_party/osqp/lib/cmake/osqp")
-fi
-
-if [ ! -d "${projectpath}/third_party/limbo" ]; then
-    echo "------------------------"
-    echo "    downloading limbo   "
-    echo "------------------------"
-    git clone --recursive https://github.com/chrismile/limbo.git "${projectpath}/third_party/limbo"
-    pushd limbo >/dev/null
-    git checkout fixes
-    popd >/dev/null
-fi
-
-if $build_with_zink_support; then
-    if [ ! -d "./mesa" ]; then
-        # Download libdrm and Mesa.
-        LIBDRM_VERSION=libdrm-2.4.115
-        MESA_VERSION=mesa-23.1.3
-        wget https://dri.freedesktop.org/libdrm/${LIBDRM_VERSION}.tar.xz
-        wget https://archive.mesa3d.org/${MESA_VERSION}.tar.xz
-        tar -xvf ${LIBDRM_VERSION}.tar.xz
-        tar -xvf ${MESA_VERSION}.tar.xz
-
-        # Install all dependencies.
-        pip3 install --user meson mako
-        # TODO: Add support for other operating systems.
-        sudo apt-get -y build-dep mesa
-        sudo apt install -y ninja libxcb-dri3-dev libxcb-present-dev libxshmfence-dev
-
-        pushd ${LIBDRM_VERSION} >/dev/null
-        meson builddir/ --prefix="${projectpath}/third_party/mesa"
-        ninja -C builddir/ install
-        popd >/dev/null
-
-        pushd ${MESA_VERSION} >/dev/null
-        PKG_CONFIG_PATH="${projectpath}/third_party/mesa/lib/x86_64-linux-gnu/pkgconfig" \
-        meson setup builddir/ -Dprefix="${projectpath}/third_party/mesa" \
-        -Dgallium-drivers=zink,swrast -Dvulkan-drivers= -Dbuildtype=release \
-        -Dgallium-va=disabled -Dglx=dri -Dplatforms=x11 -Degl=enabled -Dglvnd=true
-        meson install -C builddir/
-        popd >/dev/null
-    fi
-    if [[ -z "${LD_LIBRARY_PATH+x}" ]]; then
-        export LD_LIBRARY_PATH="${projectpath}/third_party/mesa/lib/x86_64-linux-gnu"
-    else
-        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/mesa/lib/x86_64-linux-gnu"
-    fi
-    export __GLX_VENDOR_LIBRARY_NAME=mesa
-    export MESA_LOADER_DRIVER_OVERRIDE=zink
-    export GALLIUM_DRIVER=zink
-    params+=(-DUSE_ZINK=ON)
-fi
 
 popd >/dev/null # back to project root
 
@@ -1068,10 +746,10 @@ if $use_msys; then
     fi
 
     # Copy the application to the destination directory.
-    cp "$build_dir/Correrender.exe" "$destination_dir/bin"
+    cp "$build_dir/CloudRendering.exe" "$destination_dir/bin"
 
     # Copy all dependencies of the application to the destination directory.
-    ldd_output="$(ldd $destination_dir/bin/Correrender.exe)"
+    ldd_output="$(ldd $destination_dir/bin/CloudRendering.exe)"
     for library in $ldd_output
     do
         if [[ $library == "$MSYSTEM_PREFIX"* ]] ;
@@ -1086,17 +764,17 @@ if $use_msys; then
     done
 elif [ $use_macos = true ] && [ $use_vcpkg = true ]; then
     [ -d $destination_dir ] || mkdir $destination_dir
-    rsync -a "$build_dir/Correrender.app/Contents/MacOS/Correrender" $destination_dir
+    rsync -a "$build_dir/CloudRendering.app/Contents/MacOS/CloudRendering" $destination_dir
 elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
     brew_prefix="$(brew --prefix)"
     mkdir -p $destination_dir
 
-    if [ -d "$destination_dir/Correrender.app" ]; then
-        rm -rf "$destination_dir/Correrender.app"
+    if [ -d "$destination_dir/CloudRendering.app" ]; then
+        rm -rf "$destination_dir/CloudRendering.app"
     fi
 
     # Copy the application to the destination directory.
-    cp -a "$build_dir/Correrender.app" "$destination_dir"
+    cp -a "$build_dir/CloudRendering.app" "$destination_dir"
 
     # Copy sgl to the destination directory.
     if [ $debug = true ] ; then
@@ -1162,7 +840,7 @@ elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
             fi
         done < <(echo "$otool_output")
     }
-    copy_dependencies_recursive "$build_dir/Correrender.app/Contents/MacOS/Correrender"
+    copy_dependencies_recursive "$build_dir/CloudRendering.app/Contents/MacOS/CloudRendering"
     if [ $debug = true ]; then
         copy_dependencies_recursive "./third_party/sgl/install/lib/libsgld.dylib"
     else
@@ -1181,10 +859,10 @@ else
     mkdir -p $destination_dir/bin
 
     # Copy the application to the destination directory.
-    rsync -a "$build_dir/Correrender" "$destination_dir/bin"
+    rsync -a "$build_dir/CloudRendering" "$destination_dir/bin"
 
     # Copy all dependencies of the application to the destination directory.
-    ldd_output="$(ldd $build_dir/Correrender)"
+    ldd_output="$(ldd $build_dir/CloudRendering)"
 
     library_blacklist=(
         "libOpenGL" "libGLdispatch" "libGL.so" "libGLX.so"
@@ -1223,7 +901,7 @@ else
             patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/$(basename "$library")"
         fi
     done
-    patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/Correrender"
+    patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/CloudRendering"
 fi
 
 
@@ -1232,8 +910,7 @@ cp "README.md" "$destination_dir"
 if [ ! -d "$destination_dir/LICENSE" ]; then
     mkdir -p "$destination_dir/LICENSE"
     cp -r "docs/license-libraries/." "$destination_dir/LICENSE/"
-    cp -r "LICENSE" "$destination_dir/LICENSE/LICENSE-correrender.txt"
-    cp -r "submodules/IsosurfaceCpp/LICENSE" "$destination_dir/LICENSE/graphics/LICENSE-isosurfacecpp.txt"
+    cp -r "LICENSE" "$destination_dir/LICENSE/LICENSE-cloudrendering.txt"
 fi
 if [ ! -d "$destination_dir/docs" ]; then
     cp -r "docs" "$destination_dir"
@@ -1241,36 +918,15 @@ fi
 
 # Create a run script.
 if $use_msys; then
-    printf "@echo off\npushd %%~dp0\npushd bin\nstart \"\" Correrender.exe\n" > "$destination_dir/run.bat"
+    printf "@echo off\npushd %%~dp0\npushd bin\nstart \"\" CloudRendering.exe\n" > "$destination_dir/run.bat"
 elif $use_macos; then
-    printf "#!/bin/sh\npushd \"\$(dirname \"\$0\")\" >/dev/null\n./Correrender.app/Contents/MacOS/Correrender\npopd\n" > "$destination_dir/run.sh"
+    printf "#!/bin/sh\npushd \"\$(dirname \"\$0\")\" >/dev/null\n./CloudRendering.app/Contents/MacOS/CloudRendering\npopd\n" > "$destination_dir/run.sh"
     chmod +x "$destination_dir/run.sh"
 else
-    printf "#!/bin/bash\npushd \"\$(dirname \"\$0\")/bin\" >/dev/null\n./Correrender\npopd\n" > "$destination_dir/run.sh"
+    printf "#!/bin/bash\npushd \"\$(dirname \"\$0\")/bin\" >/dev/null\n./CloudRendering\npopd\n" > "$destination_dir/run.sh"
     chmod +x "$destination_dir/run.sh"
 fi
 
-# Replicability Stamp mode.
-if $replicability; then
-    mkdir -p "./Data/VolumeDataSets"
-    if [ ! -f "./Data/VolumeDataSets/linear_4x4.nc" ]; then
-        #echo "------------------------"
-        #echo "generating synthetic data"
-        #echo "------------------------"
-        #pushd scripts >/dev/null
-        #python3 generate_synth_box_ensembles.py
-        #popd >/dev/null
-        echo "------------------------"
-        echo "downloading synthetic data"
-        echo "------------------------"
-        curl --show-error --fail \
-        https://zenodo.org/records/10018860/files/linear_4x4.nc --output "./Data/VolumeDataSets/linear_4x4.nc"
-    fi
-    if [ ! -f "./Data/VolumeDataSets/datasets.json" ]; then
-        printf "{ \"datasets\": [ { \"name\": \"linear_4x4\", \"filename\": \"linear_4x4.nc\" } ] }" >> ./Data/VolumeDataSets/datasets.json
-    fi
-    params_run+=(--replicability)
-fi
 
 
 # Run the program as the last step.
@@ -1299,9 +955,9 @@ else
 fi
 
 if [ $run_program = true ] && [ $use_macos = false ]; then
-    ./Correrender ${params_run[@]+"${params_run[@]}"}
+    ./CloudRendering ${params_run[@]+"${params_run[@]}"}
 elif [ $run_program = true ] && [ $use_macos = true ]; then
-    #open ./Correrender.app
-    #open ./Correrender.app --args --perf
-    ./Correrender.app/Contents/MacOS/Correrender ${params_run[@]+"${params_run[@]}"}
+    #open ./CloudRendering.app
+    #open ./CloudRendering.app --args --perf
+    ./CloudRendering.app/Contents/MacOS/CloudRendering ${params_run[@]+"${params_run[@]}"}
 fi
