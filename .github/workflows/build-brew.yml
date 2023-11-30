@@ -50,6 +50,7 @@ jobs:
           fi
           brew install --force --overwrite gcc
         elif [ "$RUNNER_OS" == "macOS" ]; then
+          brew link --overwrite python@3.11
           brew install --force --overwrite llvm libomp pkg-config
         else
           echo "$RUNNER_OS is not supported."
