@@ -32,7 +32,7 @@
 #include <Graphics/Vulkan/Utils/SyncObjects.hpp>
 #include <Graphics/Vulkan/Image/Image.hpp>
 #include <Graphics/Vulkan/Render/Renderer.hpp>
-#include "PathTracer/VolumetricPathTracingPass.hpp"
+#include "Renderers/Scattering/PathTracer/VolumetricPathTracingPass.hpp"
 
 class CloudData;
 typedef std::shared_ptr<CloudData> CloudDataPtr;
@@ -50,7 +50,7 @@ public:
     explicit VolumetricPathTracingTestRenderer(sgl::vk::Renderer* renderer);
     ~VolumetricPathTracingTestRenderer();
 
-    /// Sets the cloud data that is rendered when calling @see renderFrameCpu.
+    /// Sets the cloud data that is rendered when calling @see renderFrame.
     void setCloudData(const CloudDataPtr& cloudData);
 
     /// Called when the resolution of the application window has changed.

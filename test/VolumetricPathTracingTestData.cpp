@@ -26,7 +26,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "CloudData.hpp"
+#include "LineData/Scattering/CloudData.hpp"
 #include "VolumetricPathTracingTestData.hpp"
 
 CloudDataPtr createCloudBlock(

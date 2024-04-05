@@ -35,9 +35,9 @@
 #include <Graphics/Vulkan/Utils/Instance.hpp>
 #include <Graphics/Vulkan/Utils/Device.hpp>
 
-#include "nanovdb/NanoVDB.h"
-#include "nanovdb/util/Primitives.h"
-#include "CloudData.hpp"
+#include "Renderers/Scattering/nanovdb/NanoVDB.h"
+#include "Renderers/Scattering/nanovdb/util/Primitives.h"
+#include "LineData/Scattering/CloudData.hpp"
 #include "VolumetricPathTracingTestData.hpp"
 #include "VolumetricPathTracingTestRenderer.hpp"
 
@@ -242,7 +242,7 @@ int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
 
     // Initialize the filesystem utilities.
-    sgl::FileUtils::get()->initialize("CloudRendering", argc, argv);
+    sgl::FileUtils::get()->initialize("LineVis", argc, argv);
 
     // Load the file containing the app settings.
     std::string settingsFile = sgl::FileUtils::get()->getConfigDirectory() + "settings.txt";

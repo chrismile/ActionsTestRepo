@@ -78,11 +78,19 @@ IF "%VULKAN_SDK%"=="" (
 )
 :vulkan_finished
 
+if not exist .\submodules\IsosurfaceCpp\src (
+   echo ------------------------
+   echo initializing submodules
+   echo ------------------------
+   git submodule init   || exit /b 1
+   git submodule update || exit /b 1
+)
 
 set third_party_dir=%~dp0/third_party
 set cmake_args=-DCMAKE_TOOLCHAIN_FILE="third_party/vcpkg/scripts/buildsystems/vcpkg.cmake" ^
                -DVCPKG_TARGET_TRIPLET=%vcpkg_triplet% ^
                -DCMAKE_CXX_FLAGS="/MP" ^
+-DPYTHONHOME="./python3" ^
                -Dsgl_DIR="third_party/sgl/install/lib/cmake/sgl/"
 
 set cmake_args_general=-DCMAKE_TOOLCHAIN_FILE="%third_party_dir%/vcpkg/scripts/buildsystems/vcpkg.cmake" ^
@@ -95,9 +103,9 @@ if not exist .\vcpkg (
    echo ------------------------
    echo    fetching vcpkg
    echo ------------------------
-   git clone --depth 1 https://github.com/Microsoft/vcpkg.git || exit /b 1
-   call vcpkg\bootstrap-vcpkg.bat -disableMetrics             || exit /b 1
-   vcpkg\vcpkg install --triplet=%vcpkg_triplet%              || exit /b 1
+   git clone --depth 1 -b lzma-workaround https://github.com/chrismile/vcpkg.git || exit /b 1
+   call vcpkg\bootstrap-vcpkg.bat -disableMetrics || exit /b 1
+   vcpkg\vcpkg install --triplet=%vcpkg_triplet% || exit /b 1
 )
 
 if not exist .\sgl (
@@ -128,6 +136,93 @@ if not exist .\sgl\install (
    popd
 )
 
+set embree_version=3.13.3
+if not exist ".\embree-%embree_version%.x64.vc14.windows" (
+    echo ------------------------
+    echo    downloading Embree
+    echo ------------------------
+    curl.exe -L "https://github.com/embree/embree/releases/download/v%embree_version%/embree-%embree_version%.x64.vc14.windows.zip" --output embree-%embree_version%.x64.vc14.windows.zip
+    tar -xvzf "embree-%embree_version%.x64.vc14.windows.zip"
+)
+set cmake_args=%cmake_args% -Dembree_DIR="third_party/embree-%embree_version%.x64.vc14.windows/lib/cmake/embree-%embree_version%"
+
+set ospray_version=2.9.0
+if not exist ".\ospray-%ospray_version%.x86_64.windows" (
+    echo ------------------------
+    echo   downloading OSPRay
+    echo ------------------------
+    curl.exe -L "https://github.com/ospray/OSPRay/releases/download/v%ospray_version%/ospray-%ospray_version%.x86_64.windows.zip" --output ospray-%ospray_version%.x86_64.windows.zip
+    tar -xvzf "ospray-%ospray_version%.x86_64.windows.zip"
+)
+set cmake_args=%cmake_args% -Dospray_DIR="third_party/ospray-%ospray_version%.x86_64.windows/lib/cmake/ospray-%ospray_version%"
+
+set eccodes_version=2.26.0
+if not exist ".\eccodes-%eccodes_version%-Source" (
+    echo ------------------------
+    echo   downloading ecCodes
+    echo ------------------------
+    curl.exe -L "https://confluence.ecmwf.int/download/attachments/45757960/eccodes-%eccodes_version%-Source.tar.gz?api=v2" --output eccodes-%eccodes_version%-Source.tar.gz
+    tar -xvzf "eccodes-%eccodes_version%-Source.tar.gz"
+)
+
+:: ecCodes needs bash.exe, but it is just a dummy pointing the caller to WSL if not installed.
+:: ecCodes is disabled for now due to build errors on Windows.
+set use_eccodes=false
+:: set bash_output=empty
+:: for /f %%i in ('where bash') do set bash_location=%%i
+:: IF "%bash_location%"=="" (
+::     set bash_location=C:\Windows\System32\bash.exe
+:: )
+:: IF EXIST "%bash_location%" (
+::     goto bash_exists
+:: ) ELSE (
+::     goto system_bash_not_exists
+:: )
+::
+:: :: goto circumvents problems when not using EnableDelayedExpansion.
+:: :bash_exists
+:: set bash_output=empty
+:: for /f %%i in ('"%bash_location%" --version') do set bash_output=%%i
+:: IF "%bash_output%"=="" (
+::     set bash_output=empty
+:: )
+:: :: Output is usually https://aka.ms/wslstore when WSL is not installed.
+:: if not x%bash_output:wsl=%==x%bash_output% (
+::     set use_eccodes=false
+:: ) ELSE (
+::     set use_eccodes=true
+:: )
+:: goto finished
+::
+:: :system_bash_not_exists
+:: set bash_location="C:/Program Files/Git/bin/bash.exe"
+:: IF EXIST "%bash_location%" (
+::     set "PATH=C:\Program Files\Git\bin;%PATH%"
+::     goto bash_exists
+:: ) ELSE (
+::     goto finished
+:: )
+::
+:: :finished
+:: echo bash_location: %bash_location%
+:: echo use_eccodes: %use_eccodes%
+
+if %use_eccodes% == true if not exist ".\eccodes-%eccodes_version%" (
+    echo ------------------------
+    echo    building ecCodes
+    echo ------------------------
+    pushd eccodes-%eccodes_version%-Source
+    if not exist .\build\ mkdir .\build\
+    pushd build
+    cmake .. %cmake_generator% -DCMAKE_INSTALL_PREFIX=../../eccodes-%eccodes_version% -DCMAKE_CXX_FLAGS="/MP" || exit /b 1
+    cmake --build . --config Debug   -- /m            || exit /b 1
+    cmake --build . --config Debug   --target install || exit /b 1
+    cmake --build . --config Release -- /m            || exit /b 1
+    cmake --build . --config Release --target install || exit /b 1
+    popd
+    popd
+)
+set cmake_args=%cmake_args% -Deccodes_DIR="third_party/eccodes-%eccodes_version%/lib/cmake/eccodes-%eccodes_version%"
 
 popd
 
@@ -164,6 +259,9 @@ cmake --build %build_dir% --config %cmake_config% -- /m || exit /b 1
 echo ------------------------
 echo    copying new files
 echo ------------------------
+robocopy .build\vcpkg_installed\x64-windows\tools\python3 ^
+         %destination_dir%\python3 /e >NUL
+robocopy third_party\ospray-%ospray_version%.x86_64.windows\bin %destination_dir% *.dll >NUL
 if %debug% == true (
    if not exist %destination_dir%\*.pdb (
       del %destination_dir%\*.dll
@@ -185,7 +283,7 @@ echo All done!
 pushd %destination_dir%
 
 if %run_program% == true (
-   CloudRendering.exe
+   LineVis.exe
 ) else (
    echo Build finished.
 )

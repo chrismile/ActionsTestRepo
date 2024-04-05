@@ -26,7 +26,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-set -euo pipefail
+# Conda crashes with "set -euo pipefail".
+set -eo pipefail
 
 scriptpath="$( cd "$(dirname "$0")" ; pwd -P )"
 projectpath="$scriptpath"
@@ -50,8 +51,17 @@ glibcxx_debug=false
 build_dir_debug=".build_debug"
 build_dir_release=".build_release"
 use_vcpkg=false
+use_conda=false
+conda_env_name="linevis"
 link_dynamic=false
 custom_glslang=false
+if [ $use_msys = false ] && command -v pacman &> /dev/null; then
+    is_embree_installed=true
+    is_ospray_installed=true
+else
+    is_embree_installed=false
+    is_ospray_installed=false
+fi
 
 # Process command line arguments.
 for ((i=1;i<=$#;i++));
@@ -62,8 +72,13 @@ do
         debug=true
     elif [ ${!i} = "--glibcxx-debug" ]; then
         glibcxx_debug=true
-    elif [ ${!i} = "--vcpkg" ]; then
+    elif [ ${!i} = "--vcpkg" ] || [ ${!i} = "--use-vcpkg" ]; then
         use_vcpkg=true
+    elif [ ${!i} = "--conda" ] || [ ${!i} = "--use-conda" ]; then
+        use_conda=true
+    elif [ ${!i} = "--conda-env-name" ]; then
+        ((i++))
+        conda_env_name=${!i}
     elif [ ${!i} = "--link-static" ]; then
         link_dynamic=false
     elif [ ${!i} = "--link-dynamic" ]; then
@@ -82,7 +97,7 @@ else
 fi
 destination_dir="Shipping"
 if $use_macos; then
-    binaries_dest_dir="$destination_dir/CloudRendering.app/Contents/MacOS"
+    binaries_dest_dir="$destination_dir/LineVis.app/Contents/MacOS"
     if ! command -v brew &> /dev/null; then
         if [ ! -d "/opt/homebrew/bin" ]; then
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -160,6 +175,15 @@ is_installed_brew() {
     fi
 }
 
+# https://stackoverflow.com/questions/8063228/check-if-a-variable-exists-in-a-list-in-bash
+list_contains() {
+    if [[ "$1" =~ (^|[[:space:]])"$2"($|[[:space:]]) ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_dir_release ]; then
     if ! command -v cmake &> /dev/null || ! command -v git &> /dev/null || ! command -v rsync &> /dev/null \
             || ! command -v curl &> /dev/null || ! command -v wget &> /dev/null \
@@ -182,7 +206,10 @@ if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [
             || ! is_installed_pacman "mingw-w64-x86_64-shaderc" \
             || ! is_installed_pacman "mingw-w64-x86_64-opencl-headers" \
             || ! is_installed_pacman "mingw-w64-x86_64-opencl-icd" || ! is_installed_pacman "mingw-w64-x86_64-jsoncpp" \
-            || ! is_installed_pacman "mingw-w64-x86_64-openexr"; then
+            || ! is_installed_pacman "mingw-w64-x86_64-eigen3" || ! is_installed_pacman "mingw-w64-x86_64-python" \
+            || ! is_installed_pacman "mingw-w64-x86_64-zeromq" || ! is_installed_pacman "mingw-w64-x86_64-cppzmq" \
+            || ! is_installed_pacman "mingw-w64-x86_64-netcdf" || ! is_installed_pacman "mingw-w64-x86_64-openexr" \
+            || ! is_installed_pacman "mingw-w64-x86_64-eccodes"; then
         echo "------------------------"
         echo "installing dependencies "
         echo "------------------------"
@@ -192,8 +219,12 @@ if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [
         mingw64/mingw-w64-x86_64-vulkan-headers mingw64/mingw-w64-x86_64-vulkan-loader \
         mingw64/mingw-w64-x86_64-vulkan-validation-layers mingw64/mingw-w64-x86_64-shaderc \
         mingw64/mingw-w64-x86_64-opencl-headers mingw64/mingw-w64-x86_64-opencl-icd mingw64/mingw-w64-x86_64-jsoncpp \
-        mingw64/mingw-w64-x86_64-openexr
+        mingw64/mingw-w64-x86_64-eigen3 mingw64/mingw-w64-x86_64-python mingw64/mingw-w64-x86_64-zeromq \
+        mingw64/mingw-w64-x86_64-cppzmq mingw64/mingw-w64-x86_64-netcdf mingw64/mingw-w64-x86_64-openexr \
+        mingw64/mingw-w64-x86_64-eccodes
     fi
+elif $use_msys && command -v pacman &> /dev/null; then
+    :
 elif $use_macos && command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_dir_release ]; then
     if ! is_installed_brew "git"; then
         brew install git
@@ -212,6 +243,15 @@ elif $use_macos && command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && 
     fi
     if ! is_installed_brew "libomp"; then
         brew install libomp
+    fi
+    if ! is_installed_brew "autoconf"; then
+        brew install autoconf
+    fi
+    if ! is_installed_brew "automake"; then
+        brew install automake
+    fi
+    if ! is_installed_brew "autoconf-archive"; then
+        brew install autoconf-archive
     fi
 
     # Homebrew MoltenVK does not contain script for setting environment variables, unfortunately.
@@ -254,11 +294,28 @@ elif $use_macos && command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && 
         if ! is_installed_brew "jsoncpp"; then
             brew install jsoncpp
         fi
+        if ! is_installed_brew "eigen"; then
+            brew install eigen
+        fi
+        if ! is_installed_brew "python@3.12"; then
+            brew install python@3.12
+        fi
+        if ! is_installed_brew "zeromq"; then
+            brew install zeromq
+        fi
+        if ! is_installed_brew "cppzmq"; then
+            brew install cppzmq
+        fi
+        if ! is_installed_brew "netcdf"; then
+            brew install netcdf
+        fi
         if ! is_installed_brew "openexr"; then
             brew install openexr
         fi
     fi
-elif command -v apt &> /dev/null; then
+elif $use_macos && command -v brew &> /dev/null; then
+    :
+elif command -v apt &> /dev/null && ! $use_conda; then
     if ! command -v cmake &> /dev/null || ! command -v git &> /dev/null || ! command -v curl &> /dev/null \
             || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null \
             || ! command -v patchelf &> /dev/null; then
@@ -273,12 +330,14 @@ elif command -v apt &> /dev/null; then
         if ! is_installed_apt "libgl-dev" || ! is_installed_apt "libxmu-dev" || ! is_installed_apt "libxi-dev" \
                 || ! is_installed_apt "libx11-dev" || ! is_installed_apt "libxft-dev" \
                 || ! is_installed_apt "libxext-dev" || ! is_installed_apt "libwayland-dev" \
-                || ! is_installed_apt "libxkbcommon-dev" || ! is_installed_apt "libegl1-mesa-dev"; then
+                || ! is_installed_apt "libxkbcommon-dev" || ! is_installed_apt "libegl1-mesa-dev" \
+                || ! is_installed_apt "libibus-1.0-dev" || ! is_installed_apt "autoconf" \
+                || ! is_installed_apt "automake" || ! is_installed_apt "autoconf-archive"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo apt install -y libgl-dev libxmu-dev libxi-dev libx11-dev libxft-dev libxext-dev libwayland-dev \
-            libxkbcommon-dev libegl1-mesa-dev
+            libxkbcommon-dev libegl1-mesa-dev libibus-1.0-dev autoconf automake autoconf-archive
         fi
     else
         if ! is_installed_apt "libboost-filesystem-dev" || ! is_installed_apt "libglm-dev" \
@@ -286,15 +345,20 @@ elif command -v apt &> /dev/null; then
                 || ! is_installed_apt "libpng-dev" || ! is_installed_apt "libsdl2-dev" \
                 || ! is_installed_apt "libsdl2-image-dev" || ! is_installed_apt "libglew-dev" \
                 || ! is_installed_apt "opencl-c-headers" || ! is_installed_apt "ocl-icd-opencl-dev" \
-                || ! is_installed_apt "libjsoncpp-dev" || ! is_installed_apt "libopenexr-dev"; then
+                || ! is_installed_apt "libjsoncpp-dev" || ! is_installed_apt "libeigen3-dev" \
+                || ! is_installed_apt "python3-dev" || ! is_installed_apt "libzmq3-dev" \
+                || ! is_installed_apt "libnetcdf-dev" || ! is_installed_apt "libopenexr-dev" \
+                || ! is_installed_apt "libeccodes-dev" || ! is_installed_apt "libeccodes-tools" \
+                || ! is_installed_apt "libopenjp2-7-dev"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo apt install -y libboost-filesystem-dev libglm-dev libarchive-dev libtinyxml2-dev libpng-dev libsdl2-dev \
-            libsdl2-image-dev libglew-dev opencl-c-headers ocl-icd-opencl-dev libjsoncpp-dev libopenexr-dev
+            libsdl2-image-dev libglew-dev opencl-c-headers ocl-icd-opencl-dev libjsoncpp-dev libeigen3-dev python3-dev \
+            libzmq3-dev libnetcdf-dev libopenexr-dev libeccodes-dev libeccodes-tools libopenjp2-7-dev
         fi
     fi
-elif command -v pacman &> /dev/null; then
+elif command -v pacman &> /dev/null && ! $use_conda; then
     if ! command -v cmake &> /dev/null || ! command -v git &> /dev/null || ! command -v curl &> /dev/null \
             || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null \
             || ! command -v patchelf &> /dev/null; then
@@ -307,11 +371,12 @@ elif command -v pacman &> /dev/null; then
     # Dependencies of sgl and the application.
     if $use_vcpkg; then
         if ! is_installed_pacman "libgl" || ! is_installed_pacman "vulkan-devel" || ! is_installed_pacman "shaderc" \
-                || ! is_installed_pacman "openssl"; then
+                || ! is_installed_pacman "openssl" || ! is_installed_pacman "autoconf" \
+                || ! is_installed_pacman "automake" || ! is_installed_pacman "autoconf-archive"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo pacman -S libgl vulkan-devel shaderc openssl
+            sudo pacman -S libgl vulkan-devel shaderc openssl autoconf automake autoconf-archive
         fi
     else
         if ! is_installed_pacman "boost" || ! is_installed_pacman "glm" || ! is_installed_pacman "libarchive" \
@@ -319,15 +384,23 @@ elif command -v pacman &> /dev/null; then
                 || ! is_installed_pacman "sdl2_image" || ! is_installed_pacman "glew" \
                 || ! is_installed_pacman "vulkan-devel" || ! is_installed_pacman "shaderc" \
                 || ! is_installed_pacman "opencl-headers" || ! is_installed_pacman "ocl-icd" \
-                || ! is_installed_pacman "jsoncpp" || ! is_installed_pacman "openexr"; then
+                || ! is_installed_pacman "jsoncpp" || ! is_installed_pacman "eigen" || ! is_installed_pacman "python3" \
+                || ! is_installed_pacman "zeromq" || ! is_installed_pacman "cppzmq" || ! is_installed_pacman "netcdf" \
+                || ! is_installed_pacman "openexr" || ! is_installed_pacman "ospray"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo pacman -S boost glm libarchive tinyxml2 libpng sdl2 sdl2_image glew vulkan-devel shaderc opencl-headers \
-            ocl-icd jsoncpp openexr
+            ocl-icd jsoncpp eigen python3 zeromq cppzmq netcdf openexr ospray
+        fi
+        if ! command -v yay &> /dev/null && ! is_installed_yay "eccodes"; then
+            echo "------------------------"
+            echo "installing dependencies "
+            echo "------------------------"
+            yay -S eccodes
         fi
     fi
-elif command -v yum &> /dev/null; then
+elif command -v yum &> /dev/null && ! $use_conda; then
     if ! command -v cmake &> /dev/null || ! command -v git &> /dev/null || ! command -v curl &> /dev/null \
             || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null \
             || ! command -v patchelf &> /dev/null; then
@@ -340,15 +413,16 @@ elif command -v yum &> /dev/null; then
     # Dependencies of sgl and the application.
     if $use_vcpkg; then
         if ! is_installed_rpm "perl" || ! is_installed_rpm "libstdc++-devel" || ! is_installed_rpm "libstdc++-static" \
-                || ! is_installed_rpm "glew-devel" || ! is_installed_rpm "libXext-devel" \
-                || ! is_installed_rpm "vulkan-headers" || ! is_installed_rpm "vulkan-loader" \
-                || ! is_installed_rpm "vulkan-tools" || ! is_installed_rpm "vulkan-validation-layers" \
-                || ! is_installed_rpm "libshaderc-devel"; then
+                || ! is_installed_rpm "autoconf" || ! is_installed_rpm "automake" \
+                || ! is_installed_rpm "autoconf-archive" || ! is_installed_rpm "glew-devel" \
+                || ! is_installed_rpm "libXext-devel" || ! is_installed_rpm "vulkan-headers" \
+                || ! is_installed_rpm "vulkan-loader" || ! is_installed_rpm "vulkan-tools" \
+                || ! is_installed_rpm "vulkan-validation-layers" || ! is_installed_rpm "libshaderc-devel"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo yum install -y perl libstdc++-devel libstdc++-static glew-devel libXext-devel vulkan-headers \
-            vulkan-loader vulkan-tools vulkan-validation-layers libshaderc-devel
+            sudo yum install -y perl libstdc++-devel libstdc++-static autoconf automake autoconf-archive glew-devel \
+            libXext-devel vulkan-headers vulkan-loader vulkan-tools vulkan-validation-layers libshaderc-devel
         fi
     else
         if ! is_installed_rpm "boost-devel" || ! is_installed_rpm "glm-devel" || ! is_installed_rpm "libarchive-devel" \
@@ -357,14 +431,87 @@ elif command -v yum &> /dev/null; then
                 || ! is_installed_rpm "glew-devel" || ! is_installed_rpm "vulkan-headers" \
                 || ! is_installed_rpm "libshaderc-devel" || ! is_installed_rpm "opencl-headers" \
                 || ! is_installed_rpm "ocl-icd" || ! is_installed_rpm "jsoncpp-devel" \
-                || ! is_installed_rpm "openexr-devel"; then
+                || ! is_installed_rpm "eigen3-devel" || ! is_installed_rpm "python3-devel" \
+                || ! is_installed_rpm "zeromq-devel" || ! is_installed_rpm "cppzmq-devel" \
+                || ! is_installed_rpm "netcdf-devel" || ! is_installed_rpm "openexr-devel" \
+                || ! is_installed_rpm "eccodes-devel"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo yum install -y boost-devel glm-devel libarchive-devel tinyxml2-devel libpng-devel SDL2-devel \
             SDL2_image-devel glew-devel vulkan-headers libshaderc-devel opencl-headers ocl-icd jsoncpp-devel \
-            openexr-devel
+            eigen3-devel python3-devel zeromq-devel cppzmq-devel netcdf-devel openexr-devel eccodes-devel
         fi
+    fi
+elif $use_conda && ! $use_macos; then
+    if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+        . "$HOME/miniconda3/etc/profile.d/conda.sh" shell.bash hook
+    elif [ -f "/opt/anaconda3/etc/profile.d/conda.sh" ]; then
+        . "/opt/anaconda3/etc/profile.d/conda.sh" shell.bash hook
+    elif [ ! -z "${CONDA_PREFIX+x}" ]; then
+        . "$CONDA_PREFIX/etc/profile.d/conda.sh" shell.bash hook
+    fi
+
+    if ! command -v conda &> /dev/null; then
+        echo "------------------------"
+        echo "  installing Miniconda  "
+        echo "------------------------"
+        if [ "$os_arch" = "x86_64" ]; then
+            wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+            chmod +x Miniconda3-latest-Linux-x86_64.sh
+            bash ./Miniconda3-latest-Linux-x86_64.sh
+            . "$HOME/miniconda3/etc/profile.d/conda.sh" shell.bash hook
+            rm ./Miniconda3-latest-Linux-x86_64.sh
+        else
+            wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
+            chmod +x Miniconda3-latest-Linux-aarch64.sh
+            bash ./Miniconda3-latest-Linux-aarch64.sh
+            . "$HOME/miniconda3/etc/profile.d/conda.sh" shell.bash hook
+            rm ./Miniconda3-latest-Linux-aarch64.sh
+        fi
+    fi
+
+    if ! conda env list | grep ".*${conda_env_name}.*" >/dev/null 2>&1; then
+        echo "------------------------"
+        echo "creating conda environment"
+        echo "------------------------"
+        conda create -n "${conda_env_name}" -y
+        conda activate "${conda_env_name}"
+    elif [ "${var+CONDA_DEFAULT_ENV}" != "${conda_env_name}" ]; then
+        conda activate "${conda_env_name}"
+    fi
+
+    conda_pkg_list="$(conda list)"
+    if ! list_contains "$conda_pkg_list" "boost" || ! list_contains "$conda_pkg_list" "glm" \
+            || ! list_contains "$conda_pkg_list" "libarchive" || ! list_contains "$conda_pkg_list" "tinyxml2" \
+            || ! list_contains "$conda_pkg_list" "libpng" || ! list_contains "$conda_pkg_list" "sdl2" \
+            || ! list_contains "$conda_pkg_list" "sdl2" || ! list_contains "$conda_pkg_list" "glew" \
+            || ! list_contains "$conda_pkg_list" "cxx-compiler" || ! list_contains "$conda_pkg_list" "make" \
+            || ! list_contains "$conda_pkg_list" "cmake" || ! list_contains "$conda_pkg_list" "pkg-config" \
+            || ! list_contains "$conda_pkg_list" "gdb" || ! list_contains "$conda_pkg_list" "git" \
+            || ! list_contains "$conda_pkg_list" "mesa-libgl-devel-cos7-x86_64" \
+            || ! list_contains "$conda_pkg_list" "libglvnd-glx-cos7-x86_64" \
+            || ! list_contains "$conda_pkg_list" "mesa-dri-drivers-cos7-aarch64" \
+            || ! list_contains "$conda_pkg_list" "libxau-devel-cos7-aarch64" \
+            || ! list_contains "$conda_pkg_list" "libselinux-devel-cos7-aarch64" \
+            || ! list_contains "$conda_pkg_list" "libxdamage-devel-cos7-aarch64" \
+            || ! list_contains "$conda_pkg_list" "libxxf86vm-devel-cos7-aarch64" \
+            || ! list_contains "$conda_pkg_list" "libxext-devel-cos7-aarch64" \
+            || ! list_contains "$conda_pkg_list" "xorg-libxfixes" || ! list_contains "$conda_pkg_list" "xorg-libxau" \
+            || ! list_contains "$conda_pkg_list" "xorg-libxrandr" || ! list_contains "$conda_pkg_list" "patchelf" \
+            || ! list_contains "$conda_pkg_list" "libvulkan-headers" || ! list_contains "$conda_pkg_list" "shaderc" \
+            || ! list_contains "$conda_pkg_list" "jsoncpp" || ! list_contains "$conda_pkg_list" "eigen" \
+            || ! list_contains "$conda_pkg_list" "zeromq" || ! list_contains "$conda_pkg_list" "cppzmq" \
+            || ! list_contains "$conda_pkg_list" "netcdf4" || ! list_contains "$conda_pkg_list" "openexr" \
+            || ! list_contains "$conda_pkg_list" "eccodes"; then
+        echo "------------------------"
+        echo "installing dependencies "
+        echo "------------------------"
+        conda install -y -c conda-forge boost glm libarchive tinyxml2 libpng sdl2 sdl2 glew cxx-compiler make cmake \
+        pkg-config gdb git mesa-libgl-devel-cos7-x86_64 libglvnd-glx-cos7-x86_64 mesa-dri-drivers-cos7-aarch64 \
+        libxau-devel-cos7-aarch64 libselinux-devel-cos7-aarch64 libxdamage-devel-cos7-aarch64 \
+        libxxf86vm-devel-cos7-aarch64 libxext-devel-cos7-aarch64 xorg-libxfixes xorg-libxau xorg-libxrandr patchelf \
+        libvulkan-headers shaderc jsoncpp eigen zeromq cppzmq netcdf4 openexr eccodes
     fi
 else
     echo "Warning: Unsupported system package manager detected." >&2
@@ -387,6 +534,13 @@ if [ $use_macos = false ] && ! command -v pkg-config &> /dev/null; then
     exit 1
 fi
 
+if [ ! -d "submodules/IsosurfaceCpp/src" ]; then
+    echo "------------------------"
+    echo "initializing submodules "
+    echo "------------------------"
+    git submodule init
+    git submodule update
+fi
 
 [ -d "./third_party/" ] || mkdir "./third_party/"
 pushd third_party > /dev/null
@@ -434,11 +588,13 @@ if [ $search_for_vulkan_sdk = true ]; then
     echo "------------------------"
 
     found_vulkan=false
+    use_local_vulkan_sdk=false
 
     if [ $use_macos = false ]; then
         if [ -d "VulkanSDK" ]; then
             VK_LAYER_PATH=""
             source "VulkanSDK/$(ls VulkanSDK)/setup-env.sh"
+            use_local_vulkan_sdk=true
             pkgconfig_dir="$(realpath "VulkanSDK/$(ls VulkanSDK)/$os_arch/lib/pkgconfig")"
             if [ -d "$pkgconfig_dir" ]; then
                 export PKG_CONFIG_PATH="$pkgconfig_dir"
@@ -446,7 +602,7 @@ if [ $search_for_vulkan_sdk = true ]; then
             found_vulkan=true
         fi
 
-        if ! $found_vulkan && (lsb_release -a 2> /dev/null | grep -q 'Ubuntu' || lsb_release -a 2> /dev/null | grep -q 'Mint'); then
+        if ! $found_vulkan && (lsb_release -a 2> /dev/null | grep -q 'Ubuntu' || lsb_release -a 2> /dev/null | grep -q 'Mint') && ! $use_conda; then
             if lsb_release -a 2> /dev/null | grep -q 'Ubuntu'; then
                 distro_code_name=$(lsb_release -cs)
             else
@@ -476,8 +632,14 @@ if [ $search_for_vulkan_sdk = true ]; then
             curl --silent --show-error --fail -O https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
             mkdir -p VulkanSDK
             tar -xf vulkan-sdk.tar.gz -C VulkanSDK
+            if [ "$os_arch" != "x86_64" ]; then
+                pushd "VulkanSDK/$(ls VulkanSDK)" >/dev/null
+                ./vulkansdk -j $(nproc) vulkan-loader glslang shaderc
+                popd >/dev/null
+            fi
             VK_LAYER_PATH=""
             source "VulkanSDK/$(ls VulkanSDK)/setup-env.sh"
+            use_local_vulkan_sdk=true
 
             # Fix pkgconfig file.
             shaderc_pkgconfig_file="VulkanSDK/$(ls VulkanSDK)/$os_arch/lib/pkgconfig/shaderc.pc"
@@ -521,6 +683,18 @@ if [ $search_for_vulkan_sdk = true ]; then
         echo "Please refer to https://vulkan.lunarg.com/sdk/home#${os_name} for instructions on how to install the Vulkan SDK."
         exit 1
     fi
+
+    # On RHEL 8.6, I got the following errors when using the libvulkan.so provided by the SDK:
+    # dlopen failed: /lib64/libm.so.6: version `GLIBC_2.29' not found (required by /home/u12458/Correrender/third_party/VulkanSDK/1.3.275.0/x86_64/lib/libvulkan.so)
+    # Thus, we should remove it from the path if necessary.
+    if $use_local_vulkan_sdk; then
+        pushd VulkanSDK/$(ls VulkanSDK)/$os_arch/lib >/dev/null
+        if ldd -r libvulkan.so | grep "undefined symbol"; then
+            echo "Removing Vulkan SDK libvulkan.so from path..."
+            export LD_LIBRARY_PATH=$(echo ${LD_LIBRARY_PATH} | awk -v RS=: -v ORS=: '/VulkanSDK/ {next} {print}' | sed 's/:*$//') && echo $OUTPATH
+        fi
+        popd >/dev/null
+    fi
 fi
 
 if $custom_glslang; then
@@ -558,7 +732,7 @@ if [ $use_vcpkg = true ] && [ ! -d "./vcpkg" ]; then
         echo "The environment variable VULKAN_SDK is not set but is required in the installation process."
         exit 1
     fi
-    git clone --depth 1 https://github.com/Microsoft/vcpkg.git
+    git clone --depth 1 -b lzma-workaround https://github.com/chrismile/vcpkg.git
     vcpkg/bootstrap-vcpkg.sh -disableMetrics
     vcpkg/vcpkg install
 fi
@@ -650,6 +824,106 @@ if [ ! -d "./sgl/install" ]; then
     popd >/dev/null
 fi
 
+if [ $use_vcpkg = true ]; then
+    params+=(-DPYTHONHOME="./python3")
+fi
+
+if $use_msys; then
+    Python3_VERSION="$(find "$MSYSTEM_PREFIX/lib/" -maxdepth 1 -type d -name 'python*' -printf "%f" -quit)"
+    params+=(-DPython3_FIND_REGISTRY=NEVER -DPYTHONHOME="./python3" -DPYTHONPATH="./python3/lib/$Python3_VERSION")
+fi
+embree_version="3.13.3"
+ospray_version="2.9.0"
+
+if [ $use_macos = false ] && [ $use_msys = false ]; then
+    if ! $is_embree_installed && [ $os_arch = "x86_64" ]; then
+        if [ ! -d "./embree-${embree_version}.x86_64.linux" ]; then
+            echo "------------------------"
+            echo "   downloading Embree   "
+            echo "------------------------"
+            wget "https://github.com/embree/embree/releases/download/v${embree_version}/embree-${embree_version}.x86_64.linux.tar.gz"
+            tar -xvzf "embree-${embree_version}.x86_64.linux.tar.gz"
+        fi
+        params+=(-Dembree_DIR="${projectpath}/third_party/embree-${embree_version}.x86_64.linux/lib/cmake/embree-${embree_version}")
+    fi
+
+    if ! $is_ospray_installed && [ $os_arch = "x86_64" ]; then
+        if [ ! -d "./ospray-${ospray_version}.x86_64.linux" ]; then
+            echo "------------------------"
+            echo "   downloading OSPRay   "
+            echo "------------------------"
+            wget "https://github.com/ospray/OSPRay/releases/download/v${ospray_version}/ospray-${ospray_version}.x86_64.linux.tar.gz"
+            tar -xvzf "ospray-${ospray_version}.x86_64.linux.tar.gz"
+        fi
+        params+=(-Dospray_DIR="${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/cmake/ospray-${ospray_version}")
+    fi
+elif [ $use_macos = true ]; then
+    if [ ! -d "./ospray/ospray/lib/cmake" ]; then
+        # Make sure we have no leftovers from a failed build attempt.
+        if [ -d "./ospray-repo" ]; then
+            rm -rf "./ospray-repo"
+        fi
+        if [ -d "./ospray-build" ]; then
+            rm -rf "./ospray-build"
+        fi
+        if [ -d "./ospray" ]; then
+            rm -rf "./ospray"
+        fi
+
+        params_ospray=()
+        if [[ $(uname -m) == 'arm64' ]]; then
+            params_ospray+=(-DBUILD_TBB_FROM_SOURCE=On)
+        fi
+
+        # Build OSPRay and its dependencies.
+        git clone https://github.com/ospray/ospray.git ospray-repo
+        mkdir ospray-build
+        pushd "./ospray-build" >/dev/null
+        cmake ../ospray-repo/scripts/superbuild -DCMAKE_INSTALL_PREFIX="$projectpath/third_party/ospray" \
+        -DBUILD_JOBS=$(sysctl -n hw.ncpu) -DBUILD_OSPRAY_APPS=Off ${params_ospray[@]+"${params_ospray[@]}"}
+        cmake --build . --parallel $(sysctl -n hw.ncpu)
+        cmake --build . --parallel $(sysctl -n hw.ncpu)
+        popd >/dev/null
+    fi
+
+    params+=(-Dembree_DIR="${projectpath}/third_party/ospray/embree/lib/cmake/$(ls "${projectpath}/third_party/ospray/embree/lib/cmake")")
+    params+=(-Dospray_DIR="${projectpath}/third_party/ospray/ospray/lib/cmake/$(ls "${projectpath}/third_party/ospray/ospray/lib/cmake")")
+fi
+
+#if [ -d "./ospray/ospray/lib/cmake" ]; then
+#    is_ospray_installed=true
+#else
+#    is_ospray_installed=false
+#
+#    # Make sure we have no leftovers from a failed build attempt.
+#    if [ -d "./ospray-repo" ]; then
+#        rm -rf "./ospray-repo"
+#    fi
+#    if [ -d "./ospray-build" ]; then
+#        rm -rf "./ospray-build"
+#    fi
+#    if [ -d "./ospray" ]; then
+#        rm -rf "./ospray"
+#    fi
+#
+#    # Build OSPRay and its dependencies.
+#    git clone https://github.com/ospray/ospray.git ospray-repo
+#    mkdir ospray-build
+#    pushd "./ospray-build" >/dev/null
+#    cmake ../ospray-repo/scripts/superbuild -G "MSYS Makefiles" \
+#    -DCMAKE_INSTALL_PREFIX="$projectpath/third_party/ospray" \
+#    -DBUILD_JOBS=$(nproc) -DBUILD_OSPRAY_APPS=Off
+#    cmake --build . --parallel $(nproc)
+#    cmake --build . --parallel $(nproc)
+#    popd >/dev/null
+#
+#    is_ospray_installed=true
+#fi
+#
+#if $is_ospray_installed; then
+#    params+=(-Dembree_DIR="${projectpath}/third_party/ospray/embree/lib/cmake/$(ls "${projectpath}/third_party/ospray/embree/lib/cmake")")
+#    params+=(-Dospray_DIR="${projectpath}/third_party/ospray/ospray/lib/cmake/$(ls "${projectpath}/third_party/ospray/ospray/lib/cmake")")
+#fi
 
 popd >/dev/null # back to project root
 
@@ -694,6 +968,9 @@ cmake .. \
     -Dsgl_DIR="$projectpath/third_party/sgl/install/lib/cmake/sgl/" \
     ${params_gen[@]+"${params_gen[@]}"} ${params_link[@]+"${params_link[@]}"} \
     ${params_vcpkg[@]+"${params_vcpkg[@]}"} ${params[@]+"${params[@]}"}
+if [ $use_vcpkg = true ] || [ $use_msys = true ] || [ $use_macos = true ]; then
+    Python3_VERSION=$(cat pythonversion.txt)
+fi
 popd >/dev/null
 
 echo "------------------------"
@@ -746,10 +1023,10 @@ if $use_msys; then
     fi
 
     # Copy the application to the destination directory.
-    cp "$build_dir/CloudRendering.exe" "$destination_dir/bin"
+    cp "$build_dir/LineVis.exe" "$destination_dir/bin"
 
     # Copy all dependencies of the application to the destination directory.
-    ldd_output="$(ldd $destination_dir/bin/CloudRendering.exe)"
+    ldd_output="$(ldd $destination_dir/bin/LineVis.exe)"
     for library in $ldd_output
     do
         if [[ $library == "$MSYSTEM_PREFIX"* ]] ;
@@ -764,17 +1041,17 @@ if $use_msys; then
     done
 elif [ $use_macos = true ] && [ $use_vcpkg = true ]; then
     [ -d $destination_dir ] || mkdir $destination_dir
-    rsync -a "$build_dir/CloudRendering.app/Contents/MacOS/CloudRendering" $destination_dir
+    rsync -a "$build_dir/LineVis.app/Contents/MacOS/LineVis" $destination_dir
 elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
     brew_prefix="$(brew --prefix)"
     mkdir -p $destination_dir
 
-    if [ -d "$destination_dir/CloudRendering.app" ]; then
-        rm -rf "$destination_dir/CloudRendering.app"
+    if [ -d "$destination_dir/LineVis.app" ]; then
+        rm -rf "$destination_dir/LineVis.app"
     fi
 
     # Copy the application to the destination directory.
-    cp -a "$build_dir/CloudRendering.app" "$destination_dir"
+    cp -a "$build_dir/LineVis.app" "$destination_dir"
 
     # Copy sgl to the destination directory.
     if [ $debug = true ] ; then
@@ -840,12 +1117,28 @@ elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
             fi
         done < <(echo "$otool_output")
     }
-    copy_dependencies_recursive "$build_dir/CloudRendering.app/Contents/MacOS/CloudRendering"
+    copy_dependencies_recursive "$build_dir/LineVis.app/Contents/MacOS/LineVis"
     if [ $debug = true ]; then
         copy_dependencies_recursive "./third_party/sgl/install/lib/libsgld.dylib"
     else
         copy_dependencies_recursive "./third_party/sgl/install/lib/libsgl.dylib"
     fi
+    copy_ospray_lib_symlinked() {
+        local lib_name="$1"
+        local lib_path_1="./third_party/ospray/ospray/lib/$lib_name"
+        local lib_path_2="./third_party/ospray/ospray/lib/$(readlink $lib_path_1)"
+        local lib_path_3="./third_party/ospray/ospray/lib/$(readlink $lib_path_2)"
+        cp "$lib_path_1" "$binaries_dest_dir"
+        cp "$lib_path_2" "$binaries_dest_dir"
+        cp "$lib_path_3" "$binaries_dest_dir"
+        copy_dependencies_recursive "$lib_path_1"
+        copy_dependencies_recursive "$lib_path_2"
+        copy_dependencies_recursive "$lib_path_3"
+    }
+    copy_ospray_lib_symlinked "libopenvkl.dylib"
+    copy_ospray_lib_symlinked "libopenvkl_module_cpu_device.dylib"
+    copy_ospray_lib_symlinked "libopenvkl_module_cpu_device_4.dylib"
+    copy_ospray_lib_symlinked "libospray_module_cpu.dylib"
 
     # Fix code signing for arm64.
     for filename in $binaries_dest_dir/*
@@ -859,11 +1152,22 @@ else
     mkdir -p $destination_dir/bin
 
     # Copy the application to the destination directory.
-    rsync -a "$build_dir/CloudRendering" "$destination_dir/bin"
+    rsync -a "$build_dir/LineVis" "$destination_dir/bin"
 
     # Copy all dependencies of the application to the destination directory.
-    ldd_output="$(ldd $build_dir/CloudRendering)"
+    ldd_output="$(ldd $build_dir/LineVis)"
 
+    if ! $is_ospray_installed && [ $os_arch = "x86_64" ]; then
+        libembree3_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libembree3.so")"
+        libospray_module_cpu_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libospray_module_cpu.so")"
+        libopenvkl_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl.so")"
+        libopenvkl_module_cpu_device_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device.so")"
+        libopenvkl_module_cpu_device_4_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device_4.so")"
+        libopenvkl_module_cpu_device_8_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device_8.so")"
+        libopenvkl_module_cpu_device_16_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device_16.so")"
+        ldd_output="$ldd_output $libembree3_so $libospray_module_cpu_so $libopenvkl_so $libopenvkl_module_cpu_device_so"
+        ldd_output="$ldd_output $libopenvkl_module_cpu_device_4_so $libopenvkl_module_cpu_device_8_so $libopenvkl_module_cpu_device_16_so"
+    fi
     library_blacklist=(
         "libOpenGL" "libGLdispatch" "libGL.so" "libGLX.so"
         "libwayland" "libffi." "libX" "libxcb" "libxkbcommon"
@@ -901,16 +1205,69 @@ else
             patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/$(basename "$library")"
         fi
     done
-    patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/CloudRendering"
+    patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/LineVis"
+    if ! $is_ospray_installed; then
+        ln -sf "./$(basename "$libembree3_so")" "$destination_dir/bin/libembree3.so"
+        ln -sf "./$(basename "$libospray_module_cpu_so")" "$destination_dir/bin/libospray_module_cpu.so"
+        ln -sf "./$(basename "$libopenvkl_so")" "$destination_dir/bin/libopenvkl.so"
+        ln -sf "./$(basename "$libopenvkl_so")" "$destination_dir/bin/libopenvkl.so.1"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_so")" "$destination_dir/bin/libopenvkl_module_cpu_device.so"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_so")" "$destination_dir/bin/libopenvkl_module_cpu_device.so.1"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_4_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_4.so"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_4_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_4.so.1"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_8_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_8.so"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_8_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_8.so.1"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_16_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_16.so"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_16_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_16.so.1"
+    fi
 fi
 
+# 2023-11-11: It seems like for LineVis, vcpkg_installed is in the root directory, but for HexVolumeRenderer
+# it is in the build folder.
+if [ $use_vcpkg = true ]; then
+    if [ -d "vcpkg_installed" ]; then
+        vcpkg_installed_dir="vcpkg_installed"
+    elif [ -d "$build_dir/vcpkg_installed" ]; then
+        vcpkg_installed_dir="$build_dir/vcpkg_installed"
+    fi
+fi
+# Copy python3 to the destination directory.
+if $use_msys; then
+    if [ ! -d "$destination_dir/bin/python3" ]; then
+        mkdir -p "$destination_dir/bin/python3/lib"
+        #cp -r "$MSYSTEM_PREFIX/lib/$Python3_VERSION" "$destination_dir/bin/python3/lib"
+        rsync -qav "$MSYSTEM_PREFIX/lib/$Python3_VERSION" "$destination_dir/bin/python3/lib" --exclude site-packages --exclude dist-packages
+    fi
+elif [ $use_macos = true ] && [ $use_vcpkg = true ]; then
+    [ -d $destination_dir/python3 ]     || mkdir $destination_dir/python3
+    [ -d $destination_dir/python3/lib ] || mkdir $destination_dir/python3/lib
+    rsync -a "vcpkg_installed/$(ls $vcpkg_installed_dir | grep -Ewv 'vcpkg')/lib/$Python3_VERSION" $destination_dir/python3/lib
+    #rsync -a "$(eval echo "vcpkg_installed/$(ls $vcpkg_installed_dir | grep -Ewv 'vcpkg')/lib/python*")" $destination_dir/python3/lib
+elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
+    python_version=${Python3_VERSION#python}
+    python_subdir="$brew_prefix/Cellar/python@${Python3_VERSION#python}"
+    PYTHONHOME_global="$python_subdir/$(ls "$python_subdir")/Frameworks/Python.framework/Versions/$python_version"
+    if [ ! -d "$binaries_dest_dir/python3" ]; then
+        mkdir -p "$binaries_dest_dir/python3/lib"
+        rsync -a "$PYTHONHOME_global/lib/$Python3_VERSION" "$binaries_dest_dir/python3/lib"
+        rsync -a "$brew_prefix/lib/$Python3_VERSION" "$binaries_dest_dir/python3/lib"
+        #rsync -a "$(eval echo "$brew_prefix/lib/python*")" $binaries_dest_dir/python3/lib
+    fi
+elif [ $use_vcpkg = true ]; then
+    [ -d $destination_dir/bin/python3 ]     || mkdir $destination_dir/bin/python3
+    [ -d $destination_dir/bin/python3/lib ] || mkdir $destination_dir/bin/python3/lib
+    python_lib_dir="$vcpkg_installed_dir/$(ls --ignore=vcpkg $vcpkg_installed_dir)/lib/$Python3_VERSION"
+    rsync -a "$python_lib_dir" $destination_dir/bin/python3/lib
+    #rsync -a "$(eval echo "$vcpkg_installed_dir/$(ls --ignore=vcpkg $vcpkg_installed_dir)/lib/python*")" $destination_dir/python3/lib
+fi
 
 # Copy the docs to the destination directory.
 cp "README.md" "$destination_dir"
 if [ ! -d "$destination_dir/LICENSE" ]; then
     mkdir -p "$destination_dir/LICENSE"
     cp -r "docs/license-libraries/." "$destination_dir/LICENSE/"
-    cp -r "LICENSE" "$destination_dir/LICENSE/LICENSE-cloudrendering.txt"
+    cp -r "LICENSE" "$destination_dir/LICENSE/LICENSE-linevis.txt"
+    cp -r "submodules/IsosurfaceCpp/LICENSE" "$destination_dir/LICENSE/graphics/LICENSE-isosurfacecpp.txt"
 fi
 if [ ! -d "$destination_dir/docs" ]; then
     cp -r "docs" "$destination_dir"
@@ -918,12 +1275,12 @@ fi
 
 # Create a run script.
 if $use_msys; then
-    printf "@echo off\npushd %%~dp0\npushd bin\nstart \"\" CloudRendering.exe\n" > "$destination_dir/run.bat"
+    printf "@echo off\npushd %%~dp0\npushd bin\nstart \"\" LineVis.exe\n" > "$destination_dir/run.bat"
 elif $use_macos; then
-    printf "#!/bin/sh\npushd \"\$(dirname \"\$0\")\" >/dev/null\n./CloudRendering.app/Contents/MacOS/CloudRendering\npopd\n" > "$destination_dir/run.sh"
+    printf "#!/bin/sh\npushd \"\$(dirname \"\$0\")\" >/dev/null\n./LineVis.app/Contents/MacOS/LineVis\npopd\n" > "$destination_dir/run.sh"
     chmod +x "$destination_dir/run.sh"
 else
-    printf "#!/bin/bash\npushd \"\$(dirname \"\$0\")/bin\" >/dev/null\n./CloudRendering\npopd\n" > "$destination_dir/run.sh"
+    printf "#!/bin/bash\npushd \"\$(dirname \"\$0\")/bin\" >/dev/null\n./LineVis\npopd\n" > "$destination_dir/run.sh"
     chmod +x "$destination_dir/run.sh"
 fi
 
@@ -953,11 +1310,27 @@ else
       export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/sgl/install/lib"
   fi
 fi
+if [ $use_macos = true ] && [ $use_vcpkg = true ]; then
+    export PYTHONHOME="$PYTHONHOME_global"
+elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
+    export PYTHONHOME="../$destination_dir/python3"
+elif $use_msys; then
+    export PYTHONHOME="/mingw64"
+else
+    if [ $use_vcpkg = true ]; then
+        export PYTHONHOME="../Shipping/bin/python3"
+    fi
+fi
+if [ $use_macos = false ] && [ $use_msys = false ]; then
+    if ! $is_ospray_installed && [ $os_arch = "x86_64" ]; then
+        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib"
+    fi
+fi
 
 if [ $run_program = true ] && [ $use_macos = false ]; then
-    ./CloudRendering ${params_run[@]+"${params_run[@]}"}
+    ./LineVis ${params_run[@]+"${params_run[@]}"}
 elif [ $run_program = true ] && [ $use_macos = true ]; then
-    #open ./CloudRendering.app
-    #open ./CloudRendering.app --args --perf
-    ./CloudRendering.app/Contents/MacOS/CloudRendering ${params_run[@]+"${params_run[@]}"}
+    #open ./LineVis.app
+    #open ./LineVis.app --args --perf
+    ./LineVis.app/Contents/MacOS/LineVis ${params_run[@]+"${params_run[@]}"}
 fi

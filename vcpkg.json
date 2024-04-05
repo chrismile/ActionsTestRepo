@@ -1,6 +1,6 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
-    "name": "cloud-rendering",
+    "name": "linevis",
     "version": "0.1.0",
     "dependencies": [
         "boost-core",
@@ -37,10 +37,16 @@
             "default-features": true,
             "features": [ "bzip2", "lz4", "lzma", "zstd" ]
         },
+        "vulkan-headers",
         "shaderc",
+        "opencl",
         "glm",
         "tbb",
+        "eigen3",
         "jsoncpp",
+        "python3",
+        "cppzmq",
+        "netcdf-c",
         "openexr"
     ],
     "features": {
@@ -49,10 +55,6 @@
             "dependencies": [
                 "tbb"
             ]
-        },
-        "tests": {
-            "description": "Unit test cases for the volumetric path tracing algorithms.",
-            "dependencies": [ "gtest" ]
         }
     }
 }

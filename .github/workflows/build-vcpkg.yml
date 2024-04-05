@@ -2,9 +2,9 @@ name: Build using vcpkg
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 env:
   BUILD_TYPE: Release
@@ -14,10 +14,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-20.04, macos-latest ]
+        os: [ ubuntu-20.04, windows-2019, windows-2022, macos-latest ]
+        linking: [ dynamic, static ]
+        exclude:
+          # dynamic linking fails for SDL2_image and python3 compilation on macOS as of 2022-08-30.
+          - os: macos-latest
+            linking: dynamic
+          # Windows always worked without a problem with both dynamic and static linking, no need to test.
+          - os: windows-2019
+            linking: static
+          - os: windows-2022
+            linking: static
 
     runs-on: ${{ matrix.os }}
-    name: "${{ github.workflow }}: ${{ matrix.os }}"
+    name: "${{ github.workflow }}: ${{ matrix.os }} (${{ matrix.linking }})"
 
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
@@ -31,13 +41,13 @@ jobs:
       run: |
         if [ "$RUNNER_OS" == "Linux" ]; then
           echo "VCPKG_COPY_TRIPLET=x64-linux" >> $GITHUB_ENV
-          echo "VCPKG_DEFAULT_TRIPLET=x64-linux-release-only" >> $GITHUB_ENV
+          echo "VCPKG_DEFAULT_TRIPLET=x64-linux-${{matrix.linking}}-release-only" >> $GITHUB_ENV
         elif [ "$RUNNER_OS" == "Windows" ]; then
           echo "VCPKG_COPY_TRIPLET=x64-windows" >> $GITHUB_ENV
-          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-release-only" >> $GITHUB_ENV
+          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-${{matrix.linking}}-release-only" >> $GITHUB_ENV
         elif [ "$RUNNER_OS" == "macOS" ]; then
           echo "VCPKG_COPY_TRIPLET=x64-osx" >> $GITHUB_ENV
-          echo "VCPKG_DEFAULT_TRIPLET=x64-osx-release-only" >> $GITHUB_ENV
+          echo "VCPKG_DEFAULT_TRIPLET=x64-osx-${{matrix.linking}}-release-only" >> $GITHUB_ENV
         else
           echo "$RUNNER_OS is not supported."
           exit 1
@@ -82,8 +92,9 @@ jobs:
               echo "PKG_CONFIG_PATH=\"$(realpath "VulkanSDK/$(ls VulkanSDK)/$os_arch/lib/pkgconfig")\"" >> $GITHUB_ENV
             fi
           fi
-          # Also install the dependencies for building GLEW here.
-          sudo apt install libxmu-dev libxi-dev libgl-dev libglu1-mesa-dev
+          # Also install the dependencies for building ports like GLEW here.
+          sudo apt install -y libgl-dev libxmu-dev libxi-dev libx11-dev libxft-dev libxext-dev \
+          libwayland-dev libxkbcommon-dev libegl1-mesa-dev libibus-1.0-dev autoconf-archive
         elif [ "$RUNNER_OS" == "Windows" ]; then
           # Chocolatey is broken as of 2023-07-07
           #choco install vulkan-sdk
@@ -101,23 +112,35 @@ jobs:
           cd ~/VulkanSDK/$VULKAN_SDK_VERSION
           sudo ./install_vulkan.py || true
           sudo hdiutil unmount "${vulkan_dir}"
-          brew install --force --overwrite llvm libomp pkg-config
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
+          brew update
+          #rm /usr/local/bin/2to3 || true
+          #rm /usr/local/bin/idle3 || true
+          #rm /usr/local/bin/pydoc3 || true
+          #rm /usr/local/bin/python3 || true
+          #rm /usr/local/bin/python3-config || true
+          brew install --force --overwrite llvm libomp pkg-config autoconf automake autoconf-archive
         else
           echo "$RUNNER_OS is not supported."
           exit 1
         fi
 
     - name: Setup vcpkg
-      uses: lukka/run-vcpkg@v11
+      uses: lukka/run-vcpkg@v10
       with:
-        vcpkgGitURL: 'https://github.com/jimwang118/vcpkg.git'
-        vcpkgGitCommitId: 'c9073038fe5313bc8a76982d632ceaf896695597'
+        vcpkgGitURL: 'https://github.com/chrismile/vcpkg.git'
+        vcpkgGitCommitId: '3a0b82e69003f3839e9eef842a64354492a2babe'
         doNotCacheOnWorkflowFailure: true
 
     - name: Create custom vcpkg triplet
+      shell: bash
       run: |
         cp "${{env.VCPKG_ROOT}}/triplets/${{env.VCPKG_COPY_TRIPLET}}.cmake" "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
         echo "set(VCPKG_BUILD_TYPE release)" >> "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
+        sed -i -e 's/.*VCPKG_LIBRARY_LINKAGE.*/set(VCPKG_LIBRARY_LINKAGE ${{matrix.linking}})/g' "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
+        if [ "$RUNNER_OS" == "Linux" ] && [ "${{matrix.linking}}" == "dynamic" ]; then
+            echo "set(VCPKG_FIXUP_ELF_RPATH ON)" >> "${{env.VCPKG_ROOT}}/triplets/community/${{env.VCPKG_DEFAULT_TRIPLET}}.cmake"
+        fi
 
     - name: Configure CMake (sgl)
       shell: bash
@@ -143,7 +166,15 @@ jobs:
     - name: Install (sgl)
       run: cmake --build ${{env.sgl_REPO_DIR}}/build --config ${{env.BUILD_TYPE}} --target install
 
-    - name: Configure CMake (CloudRendering)
+    - name: Cleanup sgl build files (Windows only)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        # Recently, there were some "There is not enough space on the disk" errors when building the application.
+        # Remove the sgl build folder after install to make sure enough space is left on the disk for the next steps.
+        rm -rf "${{env.sgl_REPO_DIR}}/build"
+
+    - name: Configure CMake (LineVis)
       shell: bash
       run: |
         if [ "$RUNNER_OS" == "Linux" ]; then
@@ -164,7 +195,7 @@ jobs:
         fi
         cmake -B "${{github.workspace}}/build" -DCMAKE_TOOLCHAIN_FILE="${{env.VCPKG_ROOT}}/scripts/buildsystems/vcpkg.cmake" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DVCPKG_TARGET_TRIPLET=${{env.VCPKG_DEFAULT_TRIPLET}} -Dsgl_DIR=${{env.sgl_DIR}}/lib/cmake/sgl
 
-    - name: Build (CloudRendering)
+    - name: Build (LineVis)
       shell: bash
       run: |
         if [ "$RUNNER_OS" == "Linux" ]; then
@@ -187,3 +218,4 @@ jobs:
         # Recently, there were some "There is not enough space on the disk" errors after having added OpenCL support.
         # Remove some temporary files to make sure the vcpkg build artifacts can be packaged without out-of-memory errors.
         rm -rf "${{env.VCPKG_ROOT}}/downloads"
+        
