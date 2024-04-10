@@ -216,7 +216,7 @@ jobs:
       if: always()
       shell: bash
       run: |
-        cat /home/runner/work/sgl/sgl/vcpkg/buildtrees/vulkan-loader/install-x64-linux-release-only-rel-out.log
+        cat /home/runner/work/ActionsTestRepo/ActionsTestRepo/vcpkg/buildtrees/vulkan-loader/install-x64-linux-static-release-only-rel-out.log
 
 
 
