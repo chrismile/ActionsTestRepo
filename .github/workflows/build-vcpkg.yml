@@ -64,6 +64,8 @@ jobs:
         submodules: true
 
     - uses: lukka/get-cmake@latest
+      with:
+        cmakeVersion: 3.29.0
 
     - name: Install Vulkan SDK
       shell: bash
@@ -214,9 +216,8 @@ jobs:
       if: always()
       shell: bash
       run: |
-        cat /home/runner/work/ActionsTestRepo/ActionsTestRepo/vcpkg/buildtrees/shaderc/config-x64-linux-dynamic-release-only-rel-CMakeCache.txt.log
-        echo "FILEX"
-        cat /home/runner/work/ActionsTestRepo/ActionsTestRepo/vcpkg/buildtrees/shaderc/config-x64-linux-dynamic-release-only-out.log
+        cat /home/runner/work/sgl/sgl/vcpkg/buildtrees/vulkan-loader/install-x64-linux-release-only-rel-out.log
+
 
 
     - name: Remove symbolic links before caching (Windows only)
