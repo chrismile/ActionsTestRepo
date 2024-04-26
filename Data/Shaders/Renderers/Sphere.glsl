@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2020 - 2021, Christoph Neuhauser
+ * Copyright (c) 2020 - 2022, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -89,44 +89,16 @@ void main() {
     vec3 crossProdVn = cross(v, n);
     float ribbonPosition = length(crossProdVn);
 
-    vec4 fragmentColor = blinnPhongShading(sphereColor, fragmentNormal);
-    float fragmentDepth = length(fragmentPositionWorld - cameraPosition);
+    vec4 fragmentColor = blinnPhongShadingSurface(sphereColor, fragmentPositionWorld, fragmentNormal);
+
+    /*float fragmentDepth = length(fragmentPositionWorld - cameraPosition);
     const float WHITE_THRESHOLD = 0.7;
     float EPSILON = clamp(fragmentDepth * 0.0005 / sphereRadius, 0.0, 0.49);
     float coverage = 1.0 - smoothstep(1.0 - 2.0*EPSILON, 1.0, ribbonPosition);
     vec4 colorOut = vec4(mix(fragmentColor.rgb, foregroundColor.rgb,
             smoothstep(WHITE_THRESHOLD - EPSILON, WHITE_THRESHOLD + EPSILON, ribbonPosition)),
             fragmentColor.a * coverage);
+    fragColor = colorOut;*/
 
-    fragColor = colorOut;
-}
-
-
--- Vertex.Textured
-
-#version 450 core
-
-layout(location = 0) in vec3 vertexPosition;
-layout(location = 1) in vec2 vertexTexCoords;
-
-layout(location = 0) out vec2 fragmentTexCoords;
-
-void main() {
-    fragmentTexCoords = vertexTexCoords;
-    gl_Position = mvpMatrix * vec4(vertexPosition, 1.0);
-}
-
-
--- Fragment.Textured
-
-#version 450 core
-
-layout(location = 0) in vec2 fragmentTexCoords;
-
-layout(location = 0) out vec4 fragColor;
-
-layout(binding = 0) uniform sampler2D mollweideMapImage;
-
-void main() {
-    fragColor = texture(mollweideMapImage, fragmentTexCoords);
+    fragColor = fragmentColor;
 }

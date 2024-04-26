@@ -1,11 +1,13 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
-    "name": "linevis",
+    "name": "correrender",
     "version": "0.1.0",
     "dependencies": [
         "boost-core",
         "boost-algorithm",
         "boost-filesystem",
+        "boost-math",
+        "boost-parameter",
         {
             "name": "boost-interprocess",
             "platform": "windows"
@@ -40,14 +42,19 @@
         "vulkan-headers",
         "shaderc",
         "opencl",
+        "glew",
         "glm",
         "tbb",
         "eigen3",
         "jsoncpp",
+        "nlohmann-json",
         "python3",
-        "cppzmq",
         "netcdf-c",
-        "openexr"
+        "blosc",
+        "eigen3",
+        "nlopt",
+        "curl",
+        "tiff"
     ],
     "features": {
         "tbb": {

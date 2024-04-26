@@ -36,18 +36,59 @@
 #include <ImGui/ImGuiWrapper.hpp>
 #include <ImGui/imgui_impl_vulkan.h>
 
-#include "LineData/LineData.hpp"
-#include "Renderers/LineRenderer.hpp"
+#include "Volume/VolumeData.hpp"
+#include "Renderers/Renderer.hpp"
 #include "DataView.hpp"
+
+std::set<int> DataView::usedViewIndices;
+std::set<int> DataView::freeViewIndices;
+
+std::string DataView::getWindowNameImGui(const std::vector<DataViewPtr>& dataViews, int index) const {
+    bool foundDuplicateName = false;
+    for (int i = 0; i < int(dataViews.size()); i++) {
+        if (i == index) {
+            continue;
+        }
+        if (dataViews.at(i)->viewName == viewName) {
+            foundDuplicateName = true;
+            break;
+        }
+    }
+
+    if (foundDuplicateName) {
+        int idx = 1;
+        for (int i = 0; i < index; i++) {
+            if (dataViews.at(i)->viewName == viewName) {
+                idx++;
+            }
+        }
+        return viewName + " (" + std::to_string(idx) + ")###data_view_" + std::to_string(viewIdx);
+    } else {
+        return viewName + "###data_view_" + std::to_string(viewIdx);
+    }
+}
 
 DataView::DataView(SceneData* parentSceneData)
         : parentSceneData(parentSceneData), renderer(*parentSceneData->renderer), sceneData(*parentSceneData) {
+    if (freeViewIndices.empty()) {
+        viewIdx = int(usedViewIndices.size());
+    } else {
+        auto it = freeViewIndices.begin();
+        viewIdx = *it;
+        freeViewIndices.erase(it);
+    }
+    usedViewIndices.insert(viewIdx);
+
     device = renderer->getDevice();
 
     sceneData.sceneTexture = &sceneTextureVk;
     sceneData.sceneDepthTexture = &sceneDepthTextureVk;
+    sceneData.viewportPositionX = &viewportPositionX;
+    sceneData.viewportPositionY = &viewportPositionY;
     sceneData.viewportWidth = &viewportWidth;
     sceneData.viewportHeight = &viewportHeight;
+    sceneData.viewportWidthVirtual = &viewportWidthVirtual;
+    sceneData.viewportHeightVirtual = &viewportHeightVirtual;
 
     const sgl::CameraPtr& parentCamera = parentSceneData->camera;
 
@@ -55,36 +96,30 @@ DataView::DataView(SceneData* parentSceneData)
     camera->copyState(parentCamera);
     sceneData.camera = camera;
 
-    camera2d = std::make_shared<sgl::Camera>();
-    camera2d->setPosition(glm::vec3(0.0f, 0.0f, 1.0f));
-    camera2d->setFOVy(sgl::PI / 2.0f);
-    camera2d->setNearClipDistance(0.001f);
-    camera2d->setFarClipDistance(100.0f);
-
-    camera2dNavigator = std::make_shared<sgl::CameraNavigator2D>(
-            *sceneData.MOVE_SPEED, *sceneData.MOUSE_ROT_SPEED);
-
     sceneTextureBlitPass = std::make_shared<sgl::vk::BlitRenderPass>(renderer);
+    sceneTextureBlitDownscalePass = sgl::vk::BlitRenderPassPtr(new sgl::vk::BlitRenderPass(
+            renderer, { "Blit.Vertex", "Blit.FragmentDownscale" }));
     sceneTextureGammaCorrectionPass = sgl::vk::BlitRenderPassPtr(new sgl::vk::BlitRenderPass(
-            renderer, {"GammaCorrection.Vertex", "GammaCorrection.Fragment"}));
+            renderer, { "GammaCorrection.Vertex", "GammaCorrection.Fragment" }));
+    sceneTextureGammaCorrectionDownscalePass = sgl::vk::BlitRenderPassPtr(new sgl::vk::BlitRenderPass(
+            renderer, { "GammaCorrection.Vertex", "GammaCorrection.FragmentDownscale" }));
 
     screenshotReadbackHelper = std::make_shared<sgl::vk::ScreenshotReadbackHelper>(renderer);
 }
 
 DataView::~DataView() {
-    if (lineRenderer) {
-        delete lineRenderer;
-        lineRenderer = nullptr;
-    }
     if (descriptorSetImGui) {
         sgl::ImGuiWrapper::get()->freeDescriptorSet(descriptorSetImGui);
         descriptorSetImGui = nullptr;
     }
+    freeViewIndices.insert(viewIdx);
 }
 
 void DataView::resize(int newWidth, int newHeight) {
     viewportWidth = uint32_t(std::max(newWidth, 0));
     viewportHeight = uint32_t(std::max(newHeight, 0));
+    viewportWidthVirtual = viewportWidth * uint32_t(supersamplingFactor);
+    viewportHeightVirtual = viewportHeight * uint32_t(supersamplingFactor);
 
     if (viewportWidth == 0 || viewportHeight == 0) {
         sceneTextureVk = {};
@@ -94,8 +129,8 @@ void DataView::resize(int newWidth, int newHeight) {
     }
 
     sgl::vk::ImageSettings imageSettings;
-    imageSettings.width = viewportWidth;
-    imageSettings.height = viewportHeight;
+    imageSettings.width = viewportWidthVirtual;
+    imageSettings.height = viewportHeightVirtual;
 
     // Create scene texture.
     imageSettings.usage =
@@ -111,18 +146,28 @@ void DataView::resize(int newWidth, int newHeight) {
             VK_IMAGE_ASPECT_COLOR_BIT);
     //sceneTextureVk->getImage()->transitionImageLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     renderer->transitionImageLayout(sceneTextureVk->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    if (*sceneData.screenshotTransparentBackground) {
+        clearColor.setA(0);
+    }
     sceneTextureVk->getImageView()->clearColor(
             clearColor.getFloatColorRGBA(), renderer->getVkCommandBuffer());
+    if (*sceneData.screenshotTransparentBackground) {
+        clearColor.setA(255);
+    }
 
     // Create scene depth texture.
-    imageSettings.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageSettings.usage =
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imageSettings.format = sceneDepthTextureVkFormat;
-
     sceneDepthTextureVk = std::make_shared<sgl::vk::Texture>(
             device, imageSettings, sgl::vk::ImageSamplerSettings(),
             VK_IMAGE_ASPECT_DEPTH_BIT);
+    sceneData.initDepthColor();
 
     // Create composited (gamma-resolved, if VK_FORMAT_R16G16B16A16_UNORM for scene texture) scene texture.
+    imageSettings.width = viewportWidth;
+    imageSettings.height = viewportHeight;
     imageSettings.usage =
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     imageSettings.format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -134,10 +179,15 @@ void DataView::resize(int newWidth, int newHeight) {
     sceneTextureBlitPass->setInputTexture(sceneTextureVk);
     sceneTextureBlitPass->setOutputImage(compositedTextureVk->getImageView());
     sceneTextureBlitPass->recreateSwapchain(viewportWidth, viewportHeight);
-
+    sceneTextureBlitDownscalePass->setInputTexture(sceneTextureVk);
+    sceneTextureBlitDownscalePass->setOutputImage(compositedTextureVk->getImageView());
+    sceneTextureBlitDownscalePass->recreateSwapchain(viewportWidth, viewportHeight);
     sceneTextureGammaCorrectionPass->setInputTexture(sceneTextureVk);
     sceneTextureGammaCorrectionPass->setOutputImage(compositedTextureVk->getImageView());
     sceneTextureGammaCorrectionPass->recreateSwapchain(viewportWidth, viewportHeight);
+    sceneTextureGammaCorrectionDownscalePass->setInputTexture(sceneTextureVk);
+    sceneTextureGammaCorrectionDownscalePass->setOutputImage(compositedTextureVk->getImageView());
+    sceneTextureGammaCorrectionDownscalePass->recreateSwapchain(viewportWidth, viewportHeight);
 
     screenshotReadbackHelper->onSwapchainRecreated(viewportWidth, viewportHeight);
 
@@ -151,11 +201,9 @@ void DataView::resize(int newWidth, int newHeight) {
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     auto renderTarget = std::make_shared<sgl::RenderTarget>(
-            int(viewportWidth), int(viewportHeight));
+            int(viewportWidthVirtual), int(viewportHeightVirtual));
     camera->setRenderTarget(renderTarget, false);
     camera->onResolutionChanged({});
-    camera2d->setRenderTarget(renderTarget, false);
-    camera2d->onResolutionChanged({});
 }
 
 void DataView::beginRender() {
@@ -167,16 +215,47 @@ void DataView::beginRender() {
     renderer->setProjectionMatrix(camera->getProjectionMatrix());
     renderer->setViewMatrix(camera->getViewMatrix());
     renderer->setModelMatrix(sgl::matrixIdentity());
+
+    if (*sceneData.screenshotTransparentBackground) {
+        clearColor.setA(0);
+    }
+    renderer->insertImageMemoryBarriers(
+            { sceneTextureVk->getImage(), sceneDepthTextureVk->getImage() },
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_ACCESS_NONE_KHR, VK_ACCESS_TRANSFER_WRITE_BIT);
+    sceneTextureVk->getImageView()->clearColor(clearColor.getFloatColorRGBA(), renderer->getVkCommandBuffer());
+    sceneDepthTextureVk->getImageView()->clearDepthStencil(1.0f, 0, renderer->getVkCommandBuffer());
+    sceneData.clearRenderTargetState();
+    if (*sceneData.screenshotTransparentBackground) {
+        clearColor.setA(255);
+    }
 }
 
 void DataView::endRender() {
-    renderer->transitionImageLayout(
-            sceneTextureVk->getImage(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    sceneData.switchColorState(RenderTargetAccess::SAMPLED_FRAGMENT_SHADER);
+    //renderer->transitionImageLayout(
+    //        sceneTextureVk->getImage(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    sgl::vk::BlitRenderPass* renderPass;
     if (useLinearRGB) {
-        sceneTextureGammaCorrectionPass->render();
+        if (supersamplingFactor > 1) {
+            renderPass = sceneTextureGammaCorrectionDownscalePass.get();
+        } else {
+            renderPass = sceneTextureGammaCorrectionPass.get();
+        }
     } else {
-        sceneTextureBlitPass->render();
+        if (supersamplingFactor > 1) {
+            renderPass = sceneTextureBlitDownscalePass.get();
+        } else {
+            renderPass = sceneTextureBlitPass.get();
+        }
     }
+    if (supersamplingFactor > 1) {
+        renderPass->buildIfNecessary();
+        renderer->pushConstants(
+                renderPass->getGraphicsPipeline(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, supersamplingFactor);
+    }
+    renderPass->render();
 }
 
 void DataView::syncCamera() {
@@ -207,40 +286,4 @@ ImTextureID DataView::getImGuiTextureId() const {
 
 void DataView::setClearColor(const sgl::Color& color) {
     clearColor = color;
-    if (!lineRenderer || !lineRenderer->getHasLineData()) {
-        renderer->transitionImageLayout(sceneTextureVk->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        sceneTextureVk->getImageView()->clearColor(
-                clearColor.getFloatColorRGBA(), renderer->getVkCommandBuffer());
-    }
-    if (lineRenderer) {
-        lineRenderer->onClearColorChanged();
-    }
-}
-
-void DataView::updateCameraMode() {
-    if (lineRenderer->getUseCamera3d()) {
-        sceneData.camera = camera;
-    } else {
-        sceneData.camera = camera2d;
-    }
-}
-
-void DataView::moveCamera2dKeyboard(float dt) {
-    bool cameraMoved = camera2dNavigator->moveCameraKeyboard(camera2d, dt);
-    if (cameraMoved) {
-        reRender = true;
-        if (lineRenderer != nullptr) {
-            lineRenderer->onHasMoved();
-        }
-    }
-}
-
-void DataView::moveCamera2dMouse(float dt) {
-    bool cameraMoved = camera2dNavigator->moveCameraMouse(camera2d, dt);
-    if (cameraMoved) {
-        reRender = true;
-        if (lineRenderer != nullptr) {
-            lineRenderer->onHasMoved();
-        }
-    }
 }

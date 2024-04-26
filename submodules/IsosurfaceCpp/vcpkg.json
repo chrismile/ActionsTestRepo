@@ -1,0 +1,16 @@
+{
+    "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+    "name": "isosurfacecpp",
+    "version": "0.1.0",
+    "dependencies": [
+        "glm", "tbb"
+    ],
+    "features": {
+        "tbb": {
+            "description": "Use TBB instead of OpenMP for multi-threading",
+            "dependencies": [
+                "tbb"
+            ]
+        }
+    }
+}

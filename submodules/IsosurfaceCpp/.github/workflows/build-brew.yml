@@ -1,0 +1,60 @@
+name: Build using Homebrew
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+
+    runs-on: ${{ matrix.os }}
+    name: "${{ github.workflow }}: ${{ matrix.os }}"
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Dependencies via Homebrew
+        shell: bash
+        run: |
+          # Normally, we would first install Homebrew here: apt install curl,
+          # /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          # https://stackoverflow.com/questions/25128546/how-to-automate-homebrew-installation
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            if ! command -v brew &> /dev/null; then
+              sudo apt install curl build-essential gcc
+              /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+              echo '# Set PATH, MANPATH, etc., for Homebrew.' >> ~/.bash_profile
+              echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> ~/.bash_profile
+              eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+            fi
+            brew install gcc
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            brew install llvm libomp
+          else
+            echo "$RUNNER_OS is not supported."
+            exit 1
+          fi
+          brew install cmake glm
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          params=()
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            params+=(-DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=LAST -DCMAKE_FIND_APPBUNDLE=NEVER)
+          fi
+          cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_PREFIX_PATH="$(brew --prefix)" "${params[@]}"
+
+      - name: Build
+        run: cmake --build "${{github.workspace}}/build" --config ${{env.BUILD_TYPE}} --parallel 4
