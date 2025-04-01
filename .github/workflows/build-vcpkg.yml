@@ -130,7 +130,6 @@ jobs:
           vcpkgGitURL: 'https://github.com/microsoft/vcpkg.git'
           vcpkgGitCommitId: 'ea2a964f9303270322cf3f2d51c265ba146c422d'
           vcpkgDirectory: ${{env.VCPKG_ROOT}}
-          doNotCacheOnWorkflowFailure: true
 
       - name: Create custom vcpkg triplet
         shell: bash

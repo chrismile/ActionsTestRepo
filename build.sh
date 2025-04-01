@@ -675,12 +675,16 @@ cmake_version=$(cmake --version | head -n 1 | awk '{print $NF}')
 cmake_version_major=$(echo $cmake_version | cut -d. -f1)
 cmake_version_minor=$(echo $cmake_version | cut -d. -f2)
 if [[ $cmake_version_major < 3 || ($cmake_version_major == 3 && $cmake_version_minor < 18) ]]; then
-    cmake_download_version="3.25.2"
+    os_arch_cmake=${os_arch}
+    if [ "$os_arch" = "arm64" ]; then
+        os_arch_cmake="aarch64"
+    fi
+    cmake_download_version="4.0.0"
     if [ ! -d "cmake-${cmake_download_version}-linux-x86_64" ]; then
         echo "------------------------"
         echo "    downloading cmake   "
         echo "------------------------"
-        curl --silent --show-error --fail -OL "https://github.com/Kitware/CMake/releases/download/v${cmake_download_version}/cmake-${cmake_download_version}-linux-x86_64.tar.gz"
+        curl --silent --show-error --fail -OL "https://github.com/Kitware/CMake/releases/download/v${cmake_download_version}/cmake-${cmake_download_version}-linux-${os_arch_cmake}.tar.gz"
         tar -xf cmake-${cmake_download_version}-linux-x86_64.tar.gz -C .
     fi
     PATH="${projectpath}/third_party/cmake-${cmake_download_version}-linux-x86_64/bin:$PATH"
@@ -998,16 +1002,8 @@ fi
 
 # xtl and other dependencies broke compatibility with medium-old versions of CMake (< 3.29).
 is_old_cmake=false
-cmake_version=($(cmake --version))
-cmake_version=${cmake_version[2]}
-if [[ $cmake_version == "3."* ]]; then
-    # We will only check for 3.* here, as older versions (2.x) are not supported and newer CMake versions might break
-    # the versioning scheme.
-    cmake_version_medium_minor="${cmake_version#*.}"
-    cmake_version_medium="${cmake_version_medium_minor%%.*}"
-    if [ "$cmake_version_medium" -lt "29" ]; then
-        is_old_cmake=true
-    fi
+if [[ $cmake_version_major < 3 || ($cmake_version_major == 3 && $cmake_version_minor < 29) ]]; then
+    is_old_cmake=true
 fi
 
 if $build_with_zarr_support; then
