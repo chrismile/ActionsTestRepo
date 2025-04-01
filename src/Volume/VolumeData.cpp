@@ -30,8 +30,6 @@
 #include <utility>
 #include <cstring>
 
-#include <boost/algorithm/string/case_conv.hpp>
-
 #ifdef USE_TBB
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_reduce.h>
@@ -68,6 +66,9 @@
 #include "Loaders/GribLoader.hpp"
 #endif
 #include "Loaders/NetCdfLoader.hpp"
+#ifdef USE_HDF5
+#include "Loaders/Hdf5Loader.hpp"
+#endif
 #include "Loaders/RbcBinFileLoader.hpp"
 #include "Loaders/StructuredGridVtkLoader.hpp"
 #include "Loaders/VtkXmlLoader.hpp"
@@ -166,6 +167,9 @@ VolumeData::VolumeData(sgl::vk::Renderer* renderer) : renderer(renderer), multiV
             registerVolumeLoader<GribLoader>(),
 #endif
             registerVolumeLoader<NetCdfLoader>(),
+#ifdef USE_HDF5
+            registerVolumeLoader<Hdf5Loader>(),
+#endif
             registerVolumeLoader<RbcBinFileLoader>(),
             registerVolumeLoader<StructuredGridVtkLoader>(),
             registerVolumeLoader<VtkXmlLoader>(),
@@ -227,8 +231,7 @@ VolumeData::VolumeData(sgl::vk::Renderer* renderer) : renderer(renderer), multiV
     factoriesCalculator.emplace_back(
             "KL-Divergence Calculator", [renderer]() { return new DKLCalculator(renderer); });
 
-    sgl::vk::ImageSamplerSettings samplerSettings{};
-    imageSampler = std::make_shared<sgl::vk::ImageSampler>(device, samplerSettings, 0.0f);
+    createImageSampler();
 
     renderRestrictionUniformBuffer = std::make_shared<sgl::vk::Buffer>(
             device, 4 * sizeof(float), VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -261,6 +264,18 @@ VolumeData::~VolumeData() {
     if (heightData) {
         delete[] heightData;
     }
+}
+
+void VolumeData::createImageSampler() {
+    sgl::vk::ImageSamplerSettings samplerSettings{};
+    if (textureInterpolationMode == TextureInterpolationMode::NEAREST) {
+        samplerSettings.minFilter = VK_FILTER_NEAREST;
+        samplerSettings.magFilter = VK_FILTER_NEAREST;
+    } else if (textureInterpolationMode == TextureInterpolationMode::LINEAR) {
+        samplerSettings.minFilter = VK_FILTER_LINEAR;
+        samplerSettings.magFilter = VK_FILTER_LINEAR;
+    }
+    imageSampler = std::make_shared<sgl::vk::ImageSampler>(device, samplerSettings, 0.0f);
 }
 
 void VolumeData::setTransposeAxes(const glm::ivec3& axes) {
@@ -573,11 +588,23 @@ void VolumeData::addField(
 }
 
 const std::vector<std::string>& VolumeData::getFieldNames(FieldType fieldType) {
+    if (fieldType == FieldType::SCALAR_OR_COLOR) {
+        auto& scalarFieldNames = typeToFieldNamesMap[FieldType::SCALAR];
+        fieldNamesMapColorOrScalar = typeToFieldNamesMap[FieldType::COLOR];
+        for (const std::string& name : scalarFieldNames) {
+            fieldNamesMapColorOrScalar.push_back(name);
+        }
+        return fieldNamesMapColorOrScalar;
+    }
     return typeToFieldNamesMap[fieldType];
 }
 
 const std::vector<std::string>& VolumeData::getFieldNamesBase(FieldType fieldType) {
     return typeToFieldNamesMapBase[fieldType];
+}
+
+bool VolumeData::getIsColorField(int fieldIdx) {
+    return fieldIdx < int(typeToFieldNamesMap[FieldType::COLOR].size());
 }
 
 bool VolumeData::getFieldExists(FieldType fieldType, const std::string& fieldName) const {
@@ -680,6 +707,9 @@ bool VolumeData::setInputFiles(
     } else {
         standardScalarFieldIdx = std::clamp(
                 dataSetInformation.standardScalarFieldIdx, 0, int(getFieldNames(FieldType::SCALAR).size()) - 1);
+        if (standardScalarFieldIdx < 0) {
+            standardScalarFieldIdx = 0;
+        }
     }
 
     // Automatically add calculators for velocity, vorticity and helicity if possible.
@@ -732,7 +762,14 @@ bool VolumeData::setInputFiles(
         }
     }*/
 
-    if ((ts > 1 || es > 1) && viewManager) {
+    bool hasScalarData = false;
+    {
+        auto it = typeToFieldNamesMap.find(FieldType::SCALAR);
+        if (it != typeToFieldNamesMap.end() && !it->second.empty()) {
+            hasScalarData = true;
+        }
+    }
+    if ((ts > 1 || es > 1) && hasScalarData && viewManager) {
         addCalculator(std::make_shared<CorrelationCalculator>(renderer));
 /*#ifdef SUPPORT_PYTORCH
         addCalculator(std::make_shared<PyTorchCorrelationCalculator>(renderer));
@@ -1374,6 +1411,14 @@ void VolumeData::copyCacheEntryImageToBuffer(
 VolumeData::DeviceCacheEntry VolumeData::getFieldEntryDevice(
         FieldType fieldType, const std::string& fieldName, int timeStepIdx, int ensembleIdx,
         bool wantsImageData, const glm::uvec3& bufferTileSize) {
+    if (fieldType == FieldType::SCALAR_OR_COLOR) {
+        auto& fieldNamesColor = typeToFieldNamesMap[FieldType::COLOR];
+        if (std::find(fieldNamesColor.begin(), fieldNamesColor.end(), fieldName) == fieldNamesColor.end()) {
+            fieldType = FieldType::SCALAR;
+        } else {
+            fieldType = FieldType::COLOR;
+        }
+    }
     FieldAccess access = createFieldAccessStruct(fieldType, fieldName, timeStepIdx, ensembleIdx);
     access.isImageData = wantsImageData;
     access.bufferTileSize = bufferTileSize;
@@ -1428,9 +1473,9 @@ VolumeData::DeviceCacheEntry VolumeData::getFieldEntryDevice(
         }
     } else if (wantsImageData) {
         auto& image = deviceCacheEntry->getVulkanImage();
-        if (fieldType == FieldType::SCALAR) {
+        if (fieldType == FieldType::SCALAR || fieldType == FieldType::COLOR) {
             image->uploadData(access.sizeInBytes, bufferCpu->getDataNative());
-        } else {
+        } else if (fieldType == FieldType::VECTOR) {
             size_t bufferEntriesCount = size_t(xs) * size_t(ys) * size_t(zs);
             if (scalarDataFormat == ScalarDataFormat::FLOAT) {
                 const float* bufferIn = bufferCpu->data<float>();
@@ -1697,14 +1742,14 @@ void VolumeData::resetDirty() {
         // 2023-03-30: Make sure no data is reset for base fields to avoid recomputing on every calculator change.
         int startIdx = isFirstDirty ? int(0) : int(scalarFieldNamesBase.size());
         int numScalarFields = int(scalarFieldNames.size());
+        for (auto& calculator : calculators) {
+            calculator->setVolumeData(this, false);
+        }
         for (int varIdx = startIdx; varIdx < numScalarFields; varIdx++) {
             if (isFirstDirty && varIdx == standardScalarFieldIdx) {
                 continue;
             }
             multiVarTransferFunctionWindow.setAttributeDataDirty(varIdx);
-        }
-        for (auto& calculator : calculators) {
-            calculator->setVolumeData(this, false);
         }
     }
     dirty = false;
@@ -1777,6 +1822,16 @@ void VolumeData::renderGui(sgl::PropertyEditor& propertyEditor) {
                 "Ensemble Member", &currentEnsembleIdx, 0, es - 1) == ImGui::EditMode::INPUT_FINISHED) {
             currentEnsembleIdx = std::clamp(currentEnsembleIdx, 0, std::max(es - 1, 0));
             setBaseFieldsDirty();
+        }
+        if (propertyEditor.addCombo(
+                "Texture Interpolation", (int*)&textureInterpolationMode,
+                TEXTURE_INTERPOLATION_MODE_NAMES, IM_ARRAYSIZE(TEXTURE_INTERPOLATION_MODE_NAMES))) {
+            createImageSampler();
+            deviceFieldCache->doForEach([this](const DeviceCacheEntry& cacheEntry) {
+                cacheEntry->setImageSampler(imageSampler);
+            });
+            dirty = true;
+            reRender = true;
         }
         propertyEditor.addCheckbox("Render Color Legend", &shallRenderColorLegendWidgets);
         propertyEditor.endNode();
@@ -1853,6 +1908,13 @@ void VolumeData::renderGuiCalculators(sgl::PropertyEditor& propertyEditor) {
 
     // The code below was moved outside updateCalculator to avoid the use of invalid cache resources in
     // setAttributeDataDirty.
+    if (!calculatorResetTfWindowList.empty()) {
+        /*
+         * 2024-05-02: In case of a dirty calculator, we should prepare the visualization pipeline first before
+         * multiVarTransferFunctionWindow.setAttributeDataDirty may trigger a recompute using invalid data.
+         */
+        prepareVisualizationPipelineCallback();
+    }
     auto& fieldNames = typeToFieldNamesMap[FieldType::SCALAR];
     for (Calculator* calculator : calculatorResetTfWindowList) {
         if (calculator->getOutputFieldType() == FieldType::SCALAR) {
@@ -1887,7 +1949,8 @@ void VolumeData::renderViewCalculator(uint32_t viewIdx) {
     auto varIdx = uint32_t(typeToFieldNamesMapBase[FieldType::SCALAR].size());
     for (const CalculatorPtr& calculator : calculators) {
         auto calculatorRenderer = calculator->getCalculatorRenderer();
-        if (calculatorRenderer && getIsScalarFieldUsedInView(viewIdx, varIdx, calculator.get())) {
+        if (calculatorRenderer && getIsScalarFieldUsedInView(viewIdx, varIdx, calculator.get())
+                && calculator->getIsCalculatorRendererEnabled()) {
             calculatorRenderer->renderViewImpl(viewIdx);
         }
         if (calculator->getOutputFieldType() == FieldType::SCALAR) {
@@ -1900,7 +1963,8 @@ void VolumeData::renderViewCalculatorPostOpaque(uint32_t viewIdx) {
     auto varIdx = uint32_t(typeToFieldNamesMapBase[FieldType::SCALAR].size());
     for (const CalculatorPtr& calculator : calculators) {
         auto calculatorRenderer = calculator->getCalculatorRenderer();
-        if (calculatorRenderer && getIsScalarFieldUsedInView(viewIdx, varIdx, calculator.get())) {
+        if (calculatorRenderer && getIsScalarFieldUsedInView(viewIdx, varIdx, calculator.get())
+                && calculator->getIsCalculatorRendererEnabled()) {
             calculatorRenderer->renderViewPostOpaqueImpl(viewIdx);
         }
         if (calculator->getOutputFieldType() == FieldType::SCALAR) {
@@ -2388,7 +2452,7 @@ void VolumeData::setFileDialogInstance(ImGuiFileDialog* _fileDialogInstance) {
 }
 
 bool VolumeData::saveFieldToFile(const std::string& filePath, FieldType fieldType, int fieldIndex) {
-    std::string filenameLower = boost::to_lower_copy(filePath);
+    std::string filenameLower = sgl::toLowerCopy(filePath);
     if (fieldType != FieldType::SCALAR) {
         sgl::Logfile::get()->writeError(
                 "Error in VolumeData::saveFieldToFile: Currently, only the export of scalar fields is supported.");

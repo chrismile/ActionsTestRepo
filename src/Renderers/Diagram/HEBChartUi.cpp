@@ -44,6 +44,7 @@
 
 #include <Math/Math.hpp>
 #include <Math/Geometry/Circle.hpp>
+#include <Utils/StringUtils.hpp>
 #include <Graphics/Vector/nanovg/nanovg.h>
 #include <Graphics/Vector/VectorBackendNanoVG.hpp>
 #include <Input/Mouse.hpp>
@@ -618,7 +619,11 @@ void HEBChart::update(float dt) {
             showCorrelationForClickedPointNew = showCorrelationForClickedPoint;
         } else if (hoveredPointIdx >= 0) {
             clickedPointIdx = hoveredPointIdx;
+#ifdef SGL_INPUT_API_V2
+            if (regionsEqual && sgl::Keyboard->getModifier(ImGuiKey_ModCtrl)) {
+#else
             if (regionsEqual && (sgl::Keyboard->getModifier() & KMOD_CTRL) != 0) {
+#endif
                 showCorrelationForClickedPointNew = true;
                 showCorrelationForClickedPointChanged = true;
                 clickedPointGridIdx = uint32_t(std::find(
@@ -2320,7 +2325,7 @@ void HEBChart::drawColorLegends() {
         std::function<std::string(float)> labelMap;
         bool isEnsembleSpread = useColorMapVariance && i == 0;
         if (isEnsembleSpread) {
-            variableName = u8"\u03C3"; //< sigma.
+            variableName = U8("\u03C3"); //< sigma.
             colorMap = [fieldDataArrayLocal](float t) {
                 return fieldDataArrayLocal.front()->evalColorMapVec4Variance(t, true);
             };

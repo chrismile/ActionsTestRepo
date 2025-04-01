@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2022, Christoph Neuhauser
+ * Copyright (c) 2022-2024, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,11 +26,39 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef CORRERENDER_FIELDTYPE_HPP
-#define CORRERENDER_FIELDTYPE_HPP
+#ifndef CORRERENDER_HDF5LOADER_HPP
+#define CORRERENDER_HDF5LOADER_HPP
 
-enum class FieldType : uint32_t {
-    SCALAR = 1, VECTOR = 2, COLOR = 4, SCALAR_OR_COLOR = 5
+#include <unordered_map>
+#include "VolumeLoader.hpp"
+
+#include <hdf5.h>
+
+/**
+ * For more details on the HDF5 file format see: https://portal.hdfgroup.org/documentation/
+ */
+class Hdf5Loader : public VolumeLoader {
+public:
+    static std::vector<std::string> getSupportedExtensions() { return { "hdf5" }; }
+    Hdf5Loader();
+    ~Hdf5Loader() override;
+    bool setInputFiles(
+            VolumeData *volumeData, const std::string &filePath, const DataSetInformation &dataSetInformation) override;
+    bool getFieldEntry(
+            VolumeData *volumeData, FieldType fieldType, const std::string &fieldName,
+            int timestepIdx, int memberIdx, HostCacheEntryType *&fieldEntry) override;
+    bool getHasFloat32Data() override { return true; }
+
+private:
+    bool isOpen = false;
+    hid_t fileAccessPropertyList = -1, fileId = -1, volumeDataId = -1, dataSpaceId = -1, memSpaceId = -1;
+    int rank = 0;
+    std::vector<hsize_t> dims;
+    std::string filePath;
+    DataSetInformation dataSetInformation;
+    std::unordered_map<std::string, int> datasetNameMap;
+    int xs = 0, ys = 0, zs = 0, ts = 0, es = 0;
+    bool isColorData = false; // For storing pre-shaded volume data.
 };
 
-#endif //CORRERENDER_FIELDTYPE_HPP
+#endif //CORRERENDER_HDF5LOADER_HPP

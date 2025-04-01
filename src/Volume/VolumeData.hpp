@@ -85,6 +85,13 @@ class ComputeHistogramMaxPass;
 class ComputeHistogramDividePass;
 class DivergentMinMaxPass;
 
+enum class TextureInterpolationMode {
+    NEAREST, LINEAR
+};
+const char* const TEXTURE_INTERPOLATION_MODE_NAMES[] = {
+        "Nearest", "Linear"
+};
+
 class VolumeData {
     friend class MainApp;
 public:
@@ -154,6 +161,7 @@ public:
     void addCalculator(const CalculatorPtr& calculator);
     const std::vector<std::string>& getFieldNames(FieldType fieldType);
     const std::vector<std::string>& getFieldNamesBase(FieldType fieldType);
+    [[nodiscard]] bool getIsColorField(int fieldIdx);
     [[nodiscard]] bool getFieldExists(FieldType fieldType, const std::string& fieldName) const;
     [[nodiscard]] bool getIsScalarFieldDivergent(const std::string& fieldName) const;
     [[nodiscard]] inline int getGridSizeX() const { return xs; }
@@ -166,10 +174,21 @@ public:
     void setCurrentTimeStepIdx(int newTimeStepIdx);
     void setCurrentEnsembleIdx(int newEnsembleIdx);
     [[nodiscard]] inline size_t getSlice3dSizeInBytes(FieldType fieldType) const {
-        return size_t(xs) * size_t(ys) * size_t(zs) * sizeof(float) * (fieldType == FieldType::SCALAR ? 1 : 3);
+        size_t sizeInBytes = size_t(xs) * size_t(ys) * size_t(zs) * sizeof(float);
+        if (fieldType == FieldType::VECTOR) {
+            sizeInBytes *= 3;
+        } else if (fieldType == FieldType::COLOR) {
+            sizeInBytes *= 4;
+        }
+        return sizeInBytes;
     }
     [[nodiscard]] inline size_t getSlice3dSizeInBytes(FieldType fieldType, ScalarDataFormat dataFormat) const {
-        size_t sizeInBytes = size_t(xs) * size_t(ys) * size_t(zs) * (fieldType == FieldType::SCALAR ? 1 : 3);
+        size_t sizeInBytes = size_t(xs) * size_t(ys) * size_t(zs);
+        if (fieldType == FieldType::VECTOR) {
+            sizeInBytes *= 3;
+        } else if (fieldType == FieldType::COLOR) {
+            sizeInBytes *= 4;
+        }
         if (dataFormat == ScalarDataFormat::FLOAT) {
             sizeInBytes *= sizeof(float);
         } else if (dataFormat == ScalarDataFormat::SHORT || dataFormat == ScalarDataFormat::FLOAT16) {
@@ -280,6 +299,9 @@ public:
     const std::vector<CalculatorPtr>& getCalculators();
     std::vector<std::shared_ptr<ICorrelationCalculator>> getCorrelationCalculatorsUsed();
     [[nodiscard]] inline int getStandardScalarFieldIdx() const { return standardScalarFieldIdx; }
+    void setPrepareVisualizationPipelineCallback(std::function<void()> _prepareVisualizationPipelineCallback) {
+        prepareVisualizationPipelineCallback = _prepareVisualizationPipelineCallback;
+    }
 
     /// Sets data bindings used across renderers.
     virtual void setRenderDataBindings(const sgl::vk::RenderDataPtr& renderData);
@@ -348,6 +370,10 @@ protected:
     std::unordered_map<FieldType, std::vector<std::string>> typeToFieldNamesMap;
     std::unordered_map<FieldType, std::vector<std::string>> typeToFieldNamesMapBase; ///< Without calculator output.
     std::unordered_map<FieldType, std::vector<std::string>> typeToFieldUnitsMap; ///< Without calculator output.
+    std::vector<std::string> fieldNamesMapColorOrScalar;
+
+    void createImageSampler();
+    TextureInterpolationMode textureInterpolationMode = TextureInterpolationMode::LINEAR;
     sgl::vk::ImageSamplerPtr imageSampler{};
 
     // Utility functions.
@@ -435,6 +461,7 @@ protected:
     sgl::vk::BufferPtr stagingBuffer; ///< For transferring calculator output from the GPU to the CPU.
     std::vector<std::pair<std::string, std::function<Calculator*()>>> factoriesCalculator;
     std::unordered_map<CalculatorType, size_t> calculatorTypeUseCounts;
+    std::function<void()> prepareVisualizationPipelineCallback;
 
     // Associated lat/lon data (may be nullptr).
     float* latData = nullptr;

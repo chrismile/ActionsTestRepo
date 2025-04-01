@@ -31,8 +31,6 @@
 #include <algorithm>
 #include <csignal>
 
-#include <boost/algorithm/string.hpp>
-
 #ifdef USE_ZEROMQ
 #include <zmq.h>
 #endif
@@ -91,13 +89,21 @@
 #include "MainApp.hpp"
 
 void vulkanErrorCallback() {
+#ifdef SGL_INPUT_API_V2
+    sgl::AppSettings::get()->captureMouse(false);
+#else
     SDL_CaptureMouse(SDL_FALSE);
+#endif
     std::cerr << "Application callback" << std::endl;
 }
 
 #ifdef __linux__
 void signalHandler(int signum) {
+#ifdef SGL_INPUT_API_V2
+    sgl::AppSettings::get()->captureMouse(false);
+#else
     SDL_CaptureMouse(SDL_FALSE);
+#endif
     std::cerr << "Interrupt signal (" << signum << ") received." << std::endl;
     exit(signum);
 }
@@ -437,9 +443,9 @@ void MainApp::setNewState(const InternalState &newState) {
     // 3. Load the correct data set file.
     if (newState.dataSetDescriptor != lastState.dataSetDescriptor) {
         selectedDataSetIndex = 0;
-        std::string nameLower = boost::algorithm::to_lower_copy(newState.dataSetDescriptor.name);
+        std::string nameLower = sgl::toLowerCopy(newState.dataSetDescriptor.name);
         for (size_t i = 0; i < dataSetInformationList.size(); i++) {
-            if (boost::algorithm::to_lower_copy(dataSetInformationList.at(i)->name) == nameLower) {
+            if (sgl::toLowerCopy(dataSetInformationList.at(i)->name) == nameLower) {
                 selectedDataSetIndex = int(i) + NUM_MANUAL_LOADERS;
                 break;
             }
@@ -783,9 +789,15 @@ void MainApp::renderGui() {
         }
     }
 
+#ifdef SGL_INPUT_API_V2
+    if (sgl::Keyboard->keyPressed(ImGuiKey_O) && sgl::Keyboard->getModifier(ImGuiKey_ModCtrl)) {
+        openFileDialog();
+    }
+#else
     if (sgl::Keyboard->keyPressed(SDLK_o) && (sgl::Keyboard->getModifier() & (KMOD_LCTRL | KMOD_RCTRL)) != 0) {
         openFileDialog();
     }
+#endif
 
     if (IGFD_DisplayDialog(
             fileDialogInstance,
@@ -814,27 +826,8 @@ void MainApp::renderGui() {
 
             fileDialogDirectory = sgl::FileUtils::get()->getPathToFile(filename);
 
-            std::string filenameLower = boost::to_lower_copy(filename);
-
-            if (boost::ends_with(filenameLower, ".vtk")
-                    || boost::ends_with(filenameLower, ".vti")
-                    || boost::ends_with(filenameLower, ".vts")
-                    || boost::ends_with(filenameLower, ".vtr")
-                    || boost::ends_with(filenameLower, ".nc")
-                    || boost::ends_with(filenameLower, ".zarr")
-                    || boost::ends_with(filenameLower, ".am")
-                    || boost::ends_with(filenameLower, ".bin")
-                    || boost::ends_with(filenameLower, ".field")
-                    || boost::ends_with(filenameLower, ".cvol")
-                    || boost::ends_with(filenameLower, ".nii")
-#ifdef USE_ECCODES
-                    || boost::ends_with(filenameLower, ".grib")
-                    || boost::ends_with(filenameLower, ".grb")
-#endif
-                    || boost::ends_with(filenameLower, ".dat")
-                    || boost::ends_with(filenameLower, ".raw")
-                    || boost::ends_with(filenameLower, ".mhd")
-                    || boost::ends_with(filenameLower, ".ctl")) {
+            std::string filenameLower = sgl::toLowerCopy(filename);
+            if (checkHasValidExtension(filenameLower)) {
                 selectedDataSetIndex = 0;
                 customDataSetFileName = filename;
                 customDataSetFileNames.clear();
@@ -884,8 +877,8 @@ void MainApp::renderGui() {
 
             exportFieldFileDialogDirectory = sgl::FileUtils::get()->getPathToFile(filename);
 
-            std::string filenameLower = boost::to_lower_copy(filename);
-            if (boost::ends_with(filenameLower, ".nc") || boost::ends_with(filenameLower, ".cvol")) {
+            std::string filenameLower = sgl::toLowerCopy(filename);
+            if (sgl::endsWith(filenameLower, ".nc") || sgl::endsWith(filenameLower, ".cvol")) {
                 volumeData->saveFieldToFile(filename, FieldType::SCALAR, selectedFieldIndexExport);
             } else {
                 sgl::Logfile::get()->writeError(
@@ -948,7 +941,7 @@ void MainApp::renderGui() {
         }
 
         static bool isProgramStartup = true;
-        ImGuiID dockSpaceId = ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
+        ImGuiID dockSpaceId = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
         if (isProgramStartup) {
             ImGuiDockNode* centralNode = ImGui::DockBuilderGetNode(dockSpaceId);
             if (centralNode->IsEmpty()) {
@@ -1039,7 +1032,6 @@ void MainApp::renderGui() {
                     if (ImGui::IsWindowFocused()) {
                         focusedWindowIndex = i;
                     }
-                    sgl::ImGuiWrapper::get()->setWindowViewport(i, ImGui::GetWindowViewport());
                     sgl::ImGuiWrapper::get()->setWindowViewport(i, ImGui::GetWindowViewport());
                     sgl::ImGuiWrapper::get()->setWindowPosAndSize(i, ImGui::GetWindowPos(), ImGui::GetWindowSize());
 
@@ -1361,7 +1353,7 @@ void MainApp::openFileDialog() {
     IGFD_OpenModal(
             fileDialogInstance,
             "ChooseDataSetFile", "Choose a File",
-            ".*,.vtk,.vti,.vts,.vtr,.nc,.zarr,.am,.bin,.field,.cvol,.grib,.grb,.dat,.raw,.mhd,.ctl",
+            ".*,.vtk,.vti,.vts,.vtr,.nc,.hdf5,.zarr,.am,.bin,.field,.cvol,.grib,.grb,.dat,.raw,.mhd,.ctl",
             fileDialogDirectory.c_str(),
             "", 1, nullptr,
             ImGuiFileDialogFlags_None);
@@ -1921,6 +1913,51 @@ void MainApp::onCameraReset() {
     }
 }
 
+bool MainApp::checkHasValidExtension(const std::string& filenameLower) {
+    if (sgl::endsWith(filenameLower, ".vtk")
+            || sgl::endsWith(filenameLower, ".vti")
+            || sgl::endsWith(filenameLower, ".vts")
+            || sgl::endsWith(filenameLower, ".vtr")
+            || sgl::endsWith(filenameLower, ".nc")
+#ifdef USE_HDF5
+            || sgl::endsWith(filenameLower, ".hdf5")
+#endif
+            || sgl::endsWith(filenameLower, ".zarr")
+            || sgl::endsWith(filenameLower, ".am")
+            || sgl::endsWith(filenameLower, ".bin")
+            || sgl::endsWith(filenameLower, ".field")
+            || sgl::endsWith(filenameLower, ".cvol")
+            || sgl::endsWith(filenameLower, ".nii")
+#ifdef USE_ECCODES
+            || sgl::endsWith(filenameLower, ".grib")
+            || sgl::endsWith(filenameLower, ".grb")
+#endif
+            || sgl::endsWith(filenameLower, ".dat")
+            || sgl::endsWith(filenameLower, ".raw")
+            || sgl::endsWith(filenameLower, ".mhd")
+            || sgl::endsWith(filenameLower, ".ctl")) {
+        return true;
+    }
+    return false;
+}
+
+void MainApp::onFileDropped(const std::string& droppedFileName) {
+    std::string filenameLower = sgl::toLowerCopy(droppedFileName);
+    if (checkHasValidExtension(filenameLower)) {
+        device->waitIdle();
+        fileDialogDirectory = sgl::FileUtils::get()->getPathToFile(droppedFileName);
+        selectedDataSetIndex = 0;
+        customDataSetFileName = droppedFileName;
+        customDataSetFileNames.clear();
+        dataSetType = DataSetType::VOLUME;
+        loadVolumeDataSet(getSelectedDataSetFilenames());
+    } else {
+        sgl::Logfile::get()->writeError(
+                "The dropped file name has an unknown extension \""
+                + sgl::FileUtils::get()->getFileExtension(filenameLower) + "\".");
+    }
+}
+
 
 
 // --- Visualization pipeline ---
@@ -1970,6 +2007,7 @@ void MainApp::loadVolumeDataSet(const std::vector<std::string>& fileNames) {
 
     if (dataLoaded) {
         volumeData = newVolumeData;
+        volumeData->setPrepareVisualizationPipelineCallback([this]() { this->prepareVisualizationPipeline(); });
         //lineData->onMainThreadDataInit();
         volumeData->recomputeHistogram();
         volumeData->setClearColor(clearColor);

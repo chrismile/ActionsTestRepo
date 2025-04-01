@@ -33,7 +33,7 @@
 /*
  * - Overview over different analytic and iterative solvers:
  *   https://www.sci.utah.edu/~wald/Publications/2004/iso/IsoIsec_VMV2004.pdf
- * - Overview of analytic cubic solvrr with algorithm by Schwarze:
+ * - Overview of analytic cubic solver with algorithm by Schwarze:
  *   https://www.ppsloan.org/publications/iso98.pdf
      For more details on solver, see: https://dl.acm.org/doi/abs/10.5555/90767.90877
  */
@@ -59,10 +59,19 @@ layout(binding = 0) uniform RendererUniformDataBuffer {
 
 layout (binding = 1, rgba32f) uniform image2D outputImage;
 layout (binding = 2) uniform sampler3D scalarField;
+
 #ifdef SUPPORT_DEPTH_BUFFER
+
 layout (binding = 3, r32f) uniform image2D depthBuffer;
 float closestDepth, closestDepthNew;
 #include "DepthHelper.glsl"
+
+#ifdef SUPPORT_NORMAL_BUFFER
+layout (binding = 4, rgba32f) uniform image2D normalBuffer;
+vec3 surfaceNormal;
+bool normalSet;
+#endif
+
 #endif
 
 ivec3 gridSize;
@@ -121,10 +130,32 @@ void refineIsoSurfaceHit(inout vec3 currentPoint, vec3 rayDirection, float stepS
     }
 }
 
-vec4 getIsoSurfaceHitColor(vec3 currentPoint) {
+vec4 getIsoSurfaceHitColor(
+        vec3 currentPoint
+#if defined(USE_INTERPOLATION_NEAREST_NEIGHBOR) && defined(ANALYTIC_INTERSECTIONS)
+        , vec3 gradient
+#endif
+#if defined(CLOSE_ISOSURFACES) && !defined(ANALYTIC_INTERSECTIONS)
+        , bool isFirstPoint, vec3 entryNormal
+#endif
+) {
     //vec4 volumeColor = transferFunction(scalarValue);
     vec3 texCoords = (currentPoint - minBoundingBox) / (maxBoundingBox - minBoundingBox);
+#if !defined(USE_INTERPOLATION_NEAREST_NEIGHBOR) || !defined(ANALYTIC_INTERSECTIONS)
     vec3 gradient = computeGradient(texCoords);
+#endif
+#if defined(CLOSE_ISOSURFACES) && !defined(ANALYTIC_INTERSECTIONS)
+    if (isFirstPoint) {
+        gradient = entryNormal;
+    }
+#endif
+#ifdef SUPPORT_NORMAL_BUFFER
+    if (!normalSet) {
+        surfaceNormal = gradient;
+        normalSet = true;
+    }
+#endif
+    
     vec4 color = blinnPhongShadingSurface(isoSurfaceColor, currentPoint, gradient);
     //return vec4(vec3(0.5) + currentPoint * 2.0, 1.0);
 #ifdef SUPPORT_DEPTH_BUFFER
@@ -399,6 +430,16 @@ vec4 traverseVoxelGridAnalytic(vec3 rayDirection, vec3 startPoint, vec3 endPoint
     vec3 tMax = vec3(tMaxX, tMaxY, tMaxZ);
     vec3 tDelta = vec3(tDeltaX, tDeltaY, tDeltaZ);
 
+#ifdef USE_INTERPOLATION_NEAREST_NEIGHBOR
+    ivec3 stepDirCurr = ivec3(0, 0, 0);
+    int dirInit;
+    vec3 voxelGridLower = minBoundingBox;
+    vec3 voxelGridUpper = maxBoundingBox;
+    if (rayBoxIntersectionRayCoordsDir(startPoint, rayDirection, voxelGridLower, voxelGridUpper, dirInit)) {
+        stepDirCurr[dirInit] = step[dirInit];
+    }
+#endif
+
     int testIt = 0;
 
     while (all(greaterThanEqual(voxelIndex, ivec3(-1))) && all(lessThan(voxelIndex, gridSize))) {
@@ -409,6 +450,7 @@ vec4 traverseVoxelGridAnalytic(vec3 rayDirection, vec3 startPoint, vec3 endPoint
         }
 #endif
 
+#ifndef USE_INTERPOLATION_NEAREST_NEIGHBOR
         float f000 = texelFetchClamp(voxelIndex + ivec3(0,0,0), 0).r;
         float f100 = texelFetchClamp(voxelIndex + ivec3(1,0,0), 0).r;
         float f010 = texelFetchClamp(voxelIndex + ivec3(0,1,0), 0).r;
@@ -628,6 +670,26 @@ vec4 traverseVoxelGridAnalytic(vec3 rayDirection, vec3 startPoint, vec3 endPoint
 #endif
         }
 
+#else // !defined(USE_INTERPOLATION_NEAREST_NEIGHBOR)
+
+        float f000 = texelFetchClamp(voxelIndex, 0).r;
+        if (f000 >= isoValue) {
+#ifdef USE_RENDER_RESTRICTION
+            if (getShouldRender(currentPoint)) {
+#endif
+                vec3 gradient = vec3(stepDirCurr);
+                vec4 color = getIsoSurfaceHitColor(currentPoint, gradient);
+                if (blend(color, outputColor)) {
+                    // Early ray termination.
+                    return outputColor;
+                }
+#ifdef USE_RENDER_RESTRICTION
+            }
+#endif
+        }
+
+#endif
+        
         float newDist = length(vec3(voxelIndex) + vec3(0.5) - startPoint); // diff > sqrt(3)/2 (i.e., half diagonal)?
         if (newDist - maxDist > 0.866025404) {
             break;
@@ -637,17 +699,29 @@ vec4 traverseVoxelGridAnalytic(vec3 rayDirection, vec3 startPoint, vec3 endPoint
             if (tMaxX < tMaxZ) {
                 voxelIndex.x += stepX;
                 tMaxX += tDeltaX;
+#ifdef USE_INTERPOLATION_NEAREST_NEIGHBOR
+                stepDirCurr = ivec3(stepX, 0, 0);
+#endif
             } else {
                 voxelIndex.z += stepZ;
                 tMaxZ += tDeltaZ;
+#ifdef USE_INTERPOLATION_NEAREST_NEIGHBOR
+                stepDirCurr = ivec3(0, 0, stepZ);
+#endif
             }
         } else {
             if (tMaxY < tMaxZ) {
                 voxelIndex.y += stepY;
                 tMaxY += tDeltaY;
+#ifdef USE_INTERPOLATION_NEAREST_NEIGHBOR
+                stepDirCurr = ivec3(0, stepY, 0);
+#endif
             } else {
                 voxelIndex.z += stepZ;
                 tMaxZ += tDeltaZ;
+#ifdef USE_INTERPOLATION_NEAREST_NEIGHBOR
+                stepDirCurr = ivec3(0, 0, stepZ);
+#endif
             }
         }
     }
@@ -655,10 +729,19 @@ vec4 traverseVoxelGridAnalytic(vec3 rayDirection, vec3 startPoint, vec3 endPoint
     return outputColor;
 }
 #else
-vec4 traverseVoxelGridRayMarching(vec3 currentPoint, vec3 rayDirection, vec3 entrancePoint, vec3 exitPoint) {
+vec4 traverseVoxelGridRayMarching(
+        vec3 currentPoint, vec3 rayDirection, vec3 entrancePoint, vec3 exitPoint, bool startsInVolume
+#ifdef CLOSE_ISOSURFACES
+        , vec3 boxNormal
+#endif
+) {
     vec4 outputColor = vec4(0.0);
     float lastScalarSign, currentScalarSign;
+#ifdef CLOSE_ISOSURFACES
+    bool isFirstPoint = !startsInVolume;
+#else
     bool isFirstPoint = true;
+#endif
     float volumeDepth = length(exitPoint - entrancePoint);
     while (length(currentPoint - entrancePoint) < volumeDepth) {
 #ifdef SUPPORT_DEPTH_BUFFER
@@ -672,17 +755,28 @@ vec4 traverseVoxelGridRayMarching(vec3 currentPoint, vec3 rayDirection, vec3 ent
         float scalarValue = texture(scalarField, texCoords).r;
         if (!isnan(scalarValue)) {
             currentScalarSign = sign(scalarValue - isoValue);
+#ifdef CLOSE_ISOSURFACES
+            if (isFirstPoint) {
+                lastScalarSign = sign(-isoValue);
+            }
+#else
             if (isFirstPoint) {
                 isFirstPoint = false;
                 lastScalarSign = currentScalarSign;
             }
+#endif
 
             if (lastScalarSign != currentScalarSign) {
                 refineIsoSurfaceHit(currentPoint, rayDirection, currentScalarSign);
 #ifdef USE_RENDER_RESTRICTION
                 if (getShouldRender(currentPoint)) {
 #endif
-                vec4 color = getIsoSurfaceHitColor(currentPoint);
+                vec4 color = getIsoSurfaceHitColor(
+                    currentPoint
+#ifdef CLOSE_ISOSURFACES
+                    , isFirstPoint, boxNormal
+#endif
+                );
                 if (blend(color, outputColor)) {
                     break;
                 }
@@ -690,6 +784,10 @@ vec4 traverseVoxelGridRayMarching(vec3 currentPoint, vec3 rayDirection, vec3 ent
                 }
 #endif
             }
+
+#ifdef CLOSE_ISOSURFACES
+            isFirstPoint = false;
+#endif
         }
 
         currentPoint += rayDirection * stepSize;
@@ -708,6 +806,11 @@ void main() {
     }
 
     gridSize = textureSize(scalarField, 0);
+
+#ifdef SUPPORT_NORMAL_BUFFER
+    normalSet = false;
+    surfaceNormal = vec3(0.0);
+#endif
 
     vec3 rayOrigin = (inverseViewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
     vec2 fragNdc = 2.0 * ((vec2(gl_GlobalInvocationID.xy) + vec2(0.5)) / vec2(outputImageSize)) - 1.0;
@@ -731,7 +834,23 @@ void main() {
         vec3 exitPoint = rayOrigin + rayDirection * tFar;
         vec3 currentPoint = entrancePoint;
 
- #ifdef SUPPORT_DEPTH_BUFFER
+#ifdef CLOSE_ISOSURFACES
+        vec3 boxNormal;
+        vec3 C_Min = (voxelGridLower - rayOrigin) / rayDirection;
+        vec3 C_Max = (voxelGridUpper - rayOrigin) / rayDirection;
+        float minX = min(C_Min.x, C_Max.x);
+        float minY = min(C_Min.y, C_Max.y);
+        float minZ = min(C_Min.z, C_Max.z);
+        if (minX > minY && minX > minZ) {
+            boxNormal = vec3(-sign(rayDirection.x), 0.0, 0.0);
+        } else if (minY > minZ) {
+            boxNormal = vec3(0.0, -sign(rayDirection.y), 0.0);
+        } else {
+            boxNormal = vec3(0.0, 0.0, -sign(rayDirection.z));
+        }
+#endif
+
+#ifdef SUPPORT_DEPTH_BUFFER
         closestDepth = convertDepthBufferValueToLinearDepth(imageLoad(depthBuffer, imageCoords).x);
         // Convert depth to distance.
         closestDepth = closestDepth / zFactor;
@@ -744,10 +863,16 @@ void main() {
         }
         vec4 outputColor = traverseVoxelGridAnalytic(rayDirection, entrancePoint, exitPoint);
 #else
+        bool startsInVolume = tNear < 0.0;
         if (tNear < 0.0) {
             currentPoint = rayOrigin;
         }
-        vec4 outputColor = traverseVoxelGridRayMarching(currentPoint, rayDirection, entrancePoint, exitPoint);
+        vec4 outputColor = traverseVoxelGridRayMarching(
+                currentPoint, rayDirection, entrancePoint, exitPoint, startsInVolume
+#ifdef CLOSE_ISOSURFACES
+                , boxNormal
+#endif
+        );
 #endif
 
         vec4 backgroundColor = imageLoad(outputImage, imageCoords);
@@ -759,6 +884,11 @@ void main() {
         // Convert depth to distance.
         closestDepthNew = closestDepthNew * zFactor;
         imageStore(depthBuffer, imageCoords, vec4(convertLinearDepthToDepthBufferValue(closestDepthNew)));
+#ifdef SUPPORT_NORMAL_BUFFER
+        if (closestDepthNew < closestDepth) {
+            imageStore(normalBuffer, imageCoords, vec4(surfaceNormal, 1.0));
+        }
+#endif
 #endif
     }
 }

@@ -30,7 +30,7 @@
 
 #version 450 core
 
-layout(local_size_x = SUBGROUP_SIZE, local_size_y = N_ROWS, local_size_z = 1) in;
+layout(local_size_x = SUBGROUP_SIZE, local_size_y = NUM_ROWS, local_size_z = 1) in;
 
 #extension GL_EXT_control_flow_attributes : require
 #extension GL_EXT_scalar_block_layout : require
@@ -40,12 +40,20 @@ layout(local_size_x = SUBGROUP_SIZE, local_size_y = N_ROWS, local_size_z = 1) in
 //#extension GL_EXT_debug_printf : enable
 
 /**
+ * Vulkan GLSL implementation of a fully-fused MLP as described in:
+ * Müller, T., F. Rousselle, J. Novák, and A. Keller (2021). "Real-Time Neural Radiance Caching for Path Tracing".
+ * In: ACM Trans. Graph. 40.4. ISSN: 0730-0301. DOI: https://doi.org/10.1145/3450626.3459812.
+ *
+ * Performs a batch-wise (B) multiplication of the weight matrices of each MLP layer by the inputs of the layer.
+ * - Layers: X' = W * X, R^{N_out x B} = R^{N_out x N_in} * R^{N_in x B} + R^{N_out x B}
+ * - Subgroup operations:  R^{M x N} = R^{M x K} * R^{K x N} + R^{M x N}
+ *
  * Global defines:
- * - M: The matrix block size (usually 16 on NVIDIA hardware).
+ * - M, K, N: The matrix block sizes (usually M = K = N = 16 on NVIDIA hardware).
  * - SUBGROUP_SIZE: The subgroup size.
- * - N_ROWS: The number of subgroup blocks (NUM_CHANNELS / M) in the weight/output row drection.
- * - N_BATCH: The number of batch blocks (multiples of M).
- * - SHARED_MEMORY_SIZE: The number of half-precision float elements in shared memory (N_BATCH * M * NUM_CHANNELS).
+ * - NUM_ROWS: The number of subgroup blocks (NUM_CHANNELS_HIDDEN / M) in the weight/output row direction.
+ * - NUM_BATCHES: The number of batch blocks (multiples of N).
+ * - SHARED_MEMORY_SIZE: The number of half-precision float elements in shared memory (NUM_BATCHES * N * NUM_CHANNELS).
  * - NUM_LAYERS: Total number of layers.
  * - NUM_CHANNELS_IN, NUM_CHANNELS_OUT: The number of input/output channels.
  * - NUM_CHANNELS_IN_PADDED, NUM_CHANNELS_OUT_PADDED: The number of input/output channels (padded).
@@ -65,7 +73,6 @@ layout(local_size_x = SUBGROUP_SIZE, local_size_y = N_ROWS, local_size_z = 1) in
 //#define STORAGE_TYPE float16_t
 shared STORAGE_TYPE sharedMemory[SHARED_MEMORY_SIZE / SMEM_FACTOR];
 
-// Analogous to tiny-cuda-nn with column major format.
 //#define WEIGHT_IDX(channelOutIdx, channelInIdx) (WEIGHT_OFFSET + (channelInIdx) + (channelOutIdx) * NUM_CHANNELS_IN_PADDED)
 #define IDX_IN(channelIdx, batchIdx) ((channelIdx) + (batchIdx) * NUM_CHANNELS_IN)
 #ifdef FLOAT16_NO_PADDING
@@ -74,14 +81,17 @@ shared STORAGE_TYPE sharedMemory[SHARED_MEMORY_SIZE / SMEM_FACTOR];
 #define IDX_OUT(channelIdx, batchIdx) ((channelIdx) + (batchIdx) * NUM_CHANNELS_OUT_PADDED)
 #endif
 
+// Row major.
 layout(binding = 0, scalar) readonly buffer ParametersBuffer {
     float16_t parametersBuffer[];
 };
 
+// Column major.
 layout(binding = 1, scalar) readonly buffer InputBuffer {
     STORAGE_TYPE inputBuffer[];
 };
 
+// Column major.
 layout(binding = 2, scalar) writeonly buffer OutputBuffer {
     STORAGE_TYPE outputBuffer[];
 };
@@ -97,12 +107,12 @@ void main() {
     const uint localThreadIdx = gl_LocalInvocationID.x;
     const uint subgroupIdx = gl_WorkGroupID.x;
     const uint blockRowIdx = gl_LocalInvocationID.y;
-    const uint batchOffset = subgroupIdx * (M * N_BATCH / SMEM_FACTOR);
+    const uint batchOffset = subgroupIdx * (N * NUM_BATCHES / SMEM_FACTOR);
 
 #ifndef USE_CUSTOM_LAYERS_CODE
-    // Load inputs into shared memory (layout: NUM_CHANNELS_IN_PADDED rows, N_BATCH cols).
+    // Load inputs into shared memory (layout: NUM_CHANNELS_IN_PADDED rows, NUM_BATCHES cols).
 #ifdef FLOAT16_NO_PADDING
-    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_IN * M * N_BATCH; i += SUBGROUP_SIZE * N_ROWS) {
+    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_IN * N * NUM_BATCHES; i += SUBGROUP_SIZE * NUM_ROWS) {
         const uint channelIdx = i % NUM_CHANNELS_IN;
         const uint batchIdxLocal = i / NUM_CHANNELS_IN;
         const uint batchIdxGlobal = batchOffset + batchIdxLocal;
@@ -115,7 +125,7 @@ void main() {
         }
     }
 #else
-    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_IN_PADDED * M * N_BATCH / SMEM_FACTOR; i += SUBGROUP_SIZE * N_ROWS) {
+    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_IN_PADDED * N * NUM_BATCHES / SMEM_FACTOR; i += SUBGROUP_SIZE * NUM_ROWS) {
         if (i < inputBufferSizeTyped) {
 #ifdef BANK_SKEW
             const uint channelIdx = i % NUM_CHANNELS_IN_PADDED;
@@ -133,7 +143,7 @@ void main() {
 
     CoopMatA weightsMat; // row major
     CoopMatB inputMat; // column major
-    CoopMatAcc outputMat[N_BATCH];
+    CoopMatAcc outputMat[NUM_BATCHES];
 
     uint weightOffsetBase = 0;
     uint weightStride = 0;
@@ -154,7 +164,7 @@ void main() {
 #ifndef USE_CUSTOM_LAYERS_CODE
     // Write outputs into global memory
 #ifdef FLOAT16_NO_PADDING
-    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_OUT * M * N_BATCH; i += SUBGROUP_SIZE * N_ROWS) {
+    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_OUT * N * NUM_BATCHES; i += SUBGROUP_SIZE * NUM_ROWS) {
         const uint channelIdx = i % NUM_CHANNELS_OUT;
         const uint batchIdxLocal = i / NUM_CHANNELS_OUT;
         const uint batchIdxGlobal = batchOffset + batchIdxLocal;
@@ -167,7 +177,7 @@ void main() {
         }
     }
 #else
-    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_OUT_PADDED * M * N_BATCH / SMEM_FACTOR; i += SUBGROUP_SIZE * N_ROWS) {
+    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_OUT_PADDED * N * NUM_BATCHES / SMEM_FACTOR; i += SUBGROUP_SIZE * NUM_ROWS) {
         //if (i < outputBufferSizeTyped) {
 #ifdef BANK_SKEW
         const uint channelIdx = i % NUM_CHANNELS_OUT_PADDED;
@@ -187,7 +197,7 @@ void main() {
 
 #version 450 core
 
-layout(local_size_x = SUBGROUP_SIZE, local_size_y = N_ROWS, local_size_z = 1) in;
+layout(local_size_x = SUBGROUP_SIZE, local_size_y = NUM_ROWS, local_size_z = 1) in;
 
 #extension GL_EXT_control_flow_attributes : require
 #extension GL_EXT_scalar_block_layout : require
@@ -197,12 +207,20 @@ layout(local_size_x = SUBGROUP_SIZE, local_size_y = N_ROWS, local_size_z = 1) in
 //#extension GL_EXT_debug_printf : enable
 
 /**
+ * Vulkan GLSL implementation of a fully-fused MLP as described in:
+ * Müller, T., F. Rousselle, J. Novák, and A. Keller (2021). "Real-Time Neural Radiance Caching for Path Tracing".
+ * In: ACM Trans. Graph. 40.4. ISSN: 0730-0301. DOI: https://doi.org/10.1145/3450626.3459812.
+ *
+ * Performs a batch-wise (B) multiplication of the weight matrices of each MLP layer by the inputs of the layer.
+ * - Layers: X' = W * X, R^{N_out x B} = R^{N_out x N_in} * R^{N_in x B} + R^{N_out x B}
+ * - Subgroup operations:  R^{M x N} = R^{M x K} * R^{K x N} + R^{M x N}
+ *
  * Global defines:
- * - M: The matrix block size (usually 16 on NVIDIA hardware).
+ * - M, K, N: The matrix block sizes (usually M = K = N = 16 on NVIDIA hardware).
  * - SUBGROUP_SIZE: The subgroup size.
- * - N_ROWS: The number of subgroup blocks (NUM_CHANNELS / M) in the weight/output row drection.
- * - N_BATCH: The number of batch blocks (multiples of M).
- * - SHARED_MEMORY_SIZE: The number of half-precision float elements in shared memory (N_BATCH * M * NUM_CHANNELS).
+ * - NUM_ROWS: The number of subgroup blocks (NUM_CHANNELS_HIDDEN / M) in the weight/output row direction.
+ * - NUM_BATCHES: The number of batch blocks (multiples of N).
+ * - SHARED_MEMORY_SIZE: The number of half-precision float elements in shared memory (NUM_BATCHES * N * NUM_CHANNELS).
  * - NUM_LAYERS: Total number of layers.
  * - NUM_CHANNELS_IN, NUM_CHANNELS_OUT: The number of input/output channels.
  * - NUM_CHANNELS_IN_PADDED, NUM_CHANNELS_OUT_PADDED: The number of input/output channels (padded).
@@ -222,7 +240,6 @@ layout(local_size_x = SUBGROUP_SIZE, local_size_y = N_ROWS, local_size_z = 1) in
 //#define STORAGE_TYPE float16_t
 shared STORAGE_TYPE sharedMemory[SHARED_MEMORY_SIZE / SMEM_FACTOR];
 
-// Analogous to tiny-cuda-nn with column major format.
 //#define WEIGHT_IDX(channelOutIdx, channelInIdx) (WEIGHT_OFFSET + (channelInIdx) + (channelOutIdx) * NUM_CHANNELS_IN_PADDED)
 #define IDX_IN(channelIdx, batchIdx) ((channelIdx) + (batchIdx) * NUM_CHANNELS_IN)
 #ifdef FLOAT16_NO_PADDING
@@ -231,14 +248,17 @@ shared STORAGE_TYPE sharedMemory[SHARED_MEMORY_SIZE / SMEM_FACTOR];
 #define IDX_OUT(channelIdx, batchIdx) ((channelIdx) + (batchIdx) * NUM_CHANNELS_OUT_PADDED)
 #endif
 
+// Row major.
 layout(binding = 0, scalar) readonly buffer ParametersBuffer {
     float16_t parametersBuffer[];
 };
 
+// Column major.
 layout(binding = 1, scalar) readonly buffer InputBuffer {
     STORAGE_TYPE inputBuffer[];
 };
 
+// Column major.
 layout(binding = 2, scalar) writeonly buffer OutputBuffer {
     STORAGE_TYPE outputBuffer[];
 };
@@ -254,11 +274,11 @@ void main() {
     const uint localThreadIdx = gl_LocalInvocationID.x;
     const uint subgroupIdx = gl_WorkGroupID.x;
     const uint blockRowIdx = gl_LocalInvocationID.y;
-    const uint batchOffset = subgroupIdx * (M * N_BATCH / SMEM_FACTOR);
+    const uint batchOffset = subgroupIdx * (N * NUM_BATCHES / SMEM_FACTOR);
 
-    // Load inputs into shared memory (layout: NUM_CHANNELS_IN_PADDED rows, N_BATCH cols).
+    // Load inputs into shared memory (layout: NUM_CHANNELS_IN_PADDED rows, NUM_BATCHES cols).
 #ifdef FLOAT16_NO_PADDING
-    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_IN * M * N_BATCH; i += SUBGROUP_SIZE * N_ROWS) {
+    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_IN * N * NUM_BATCHES; i += SUBGROUP_SIZE * NUM_ROWS) {
         const uint channelIdx = i % NUM_CHANNELS_IN;
         const uint batchIdxLocal = i / NUM_CHANNELS_IN;
         const uint batchIdxGlobal = batchOffset + batchIdxLocal;
@@ -267,7 +287,7 @@ void main() {
         }
     }
 #else
-    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_IN_PADDED * M * N_BATCH / SMEM_FACTOR; i += SUBGROUP_SIZE * N_ROWS) {
+    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_IN_PADDED * N * NUM_BATCHES / SMEM_FACTOR; i += SUBGROUP_SIZE * NUM_ROWS) {
         if (i < inputBufferSizeTyped) {
             sharedMemory[i] = inputBuffer[i + batchOffset * NUM_CHANNELS_IN_PADDED];
         }
@@ -282,7 +302,7 @@ void main() {
 
     CoopMatA weightsMat; // row major
     CoopMatB inputMat; // column major
-    CoopMatAcc outputMat[N_BATCH];
+    CoopMatAcc outputMat[NUM_BATCHES];
 
     uint weightOffsetBase = 0;
     uint weightStride = 0;
@@ -294,23 +314,23 @@ void main() {
     [[unroll]] for (uint layerIdx = 0; layerIdx < NUM_LAYERS; layerIdx++) {
         const uint numChannelsInPadded = layerIdx == 0 ? NUM_CHANNELS_IN_PADDED : NUM_CHANNELS_HIDDEN;
         const uint numChannelsOutPadded = layerIdx == NUM_LAYERS - 1 ? NUM_CHANNELS_OUT_PADDED : NUM_CHANNELS_HIDDEN;
-        const uint nCols = numChannelsInPadded / M;
-        const uint nRows = numChannelsOutPadded / M; // May be less than N_ROWS for the last layer.
+        const uint numCols = numChannelsInPadded / K;
+        const uint numRows = numChannelsOutPadded / M; // May be less than NUM_ROWS for the last layer.
         weightStride = numChannelsInPadded;
         inputStride = numChannelsInPadded / SMEM_FACTOR;
         outputStride = numChannelsOutPadded / SMEM_FACTOR;
 
-        if (blockRowIdx < nRows) {
+        if (blockRowIdx < numRows) {
             // Clear the output matrices.
-            [[unroll]] for (uint b = 0; b < N_BATCH; b++) {
+            [[unroll]] for (uint b = 0; b < NUM_BATCHES; b++) {
                 outputMat[b] = CoopMatAcc(0.0);
             }
 
-            for (uint c = 0; c < nCols; c++) {
-                const uint weightOffset = weightOffsetBase + c * M + blockRowIdx * M * weightStride;
+            for (uint c = 0; c < numCols; c++) {
+                const uint weightOffset = weightOffsetBase + c * K + blockRowIdx * M * weightStride;
                 matLoad(weightsMat, parametersBuffer, weightOffset, weightStride, ROW_MAJOR);
-                [[unroll]] for (uint b = 0; b < N_BATCH; b++) {
-                    inputOffset = c * (M / SMEM_FACTOR) + b * M * inputStride;
+                [[unroll]] for (uint b = 0; b < NUM_BATCHES; b++) {
+                    inputOffset = c * (K / SMEM_FACTOR) + b * N * inputStride;
                     matLoad(inputMat, sharedMemory, inputOffset, inputStride, COL_MAJOR);
                     outputMat[b] = matMulAdd(weightsMat, inputMat, outputMat[b]);
                 }
@@ -320,7 +340,7 @@ void main() {
 #ifdef NO_OUTPUT_ACTIVATION
             if (layerIdx != NUM_LAYERS - 1) {
 #endif
-                [[unroll]] for (uint b = 0; b < N_BATCH; b++) {
+                [[unroll]] for (uint b = 0; b < NUM_BATCHES; b++) {
                     for (uint i = 0; i < outputMat[b].length(); ++i) {
                         outputMat[b][i] = ACTIVATION_FUNCTION(outputMat[b][i]);
                     }
@@ -332,10 +352,10 @@ void main() {
 
         barrier();
 
-        if (blockRowIdx < nRows) {
+        if (blockRowIdx < numRows) {
             // Store to shared memory.
-            [[unroll]] for (uint b = 0; b < N_BATCH; b++) {
-                outputOffset = blockRowIdx * (M / SMEM_FACTOR) + b * M * outputStride;
+            [[unroll]] for (uint b = 0; b < NUM_BATCHES; b++) {
+                outputOffset = blockRowIdx * (M / SMEM_FACTOR) + b * N * outputStride;
                 matStore(outputMat[b], sharedMemory, outputOffset, outputStride, COL_MAJOR);
             }
         }
@@ -349,7 +369,7 @@ void main() {
 
     // Write outputs into global memory
 #ifdef FLOAT16_NO_PADDING
-    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_OUT * M * N_BATCH; i += SUBGROUP_SIZE * N_ROWS) {
+    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_OUT * N * NUM_BATCHES; i += SUBGROUP_SIZE * NUM_ROWS) {
         const uint channelIdx = i % NUM_CHANNELS_OUT;
         const uint batchIdxLocal = i / NUM_CHANNELS_OUT;
         const uint batchIdxGlobal = batchOffset + batchIdxLocal;
@@ -358,7 +378,7 @@ void main() {
         }
     }
 #else
-    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_OUT_PADDED * M * N_BATCH / SMEM_FACTOR; i += SUBGROUP_SIZE * N_ROWS) {
+    for (uint i = localThreadIdx + blockRowIdx * SUBGROUP_SIZE; i < NUM_CHANNELS_OUT_PADDED * N * NUM_BATCHES / SMEM_FACTOR; i += SUBGROUP_SIZE * NUM_ROWS) {
         //if (i < outputBufferSizeTyped) {
         outputBuffer[i + batchOffset * NUM_CHANNELS_OUT_PADDED] = sharedMemory[i];
         //}

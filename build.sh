@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # BSD 2-Clause License
 #
@@ -48,16 +48,18 @@ os_arch="$(uname -m)"
 run_program=true
 debug=false
 glibcxx_debug=false
+clean=false
 build_dir_debug=".build_debug"
 build_dir_release=".build_release"
 use_vcpkg=false
 use_conda=false
 conda_env_name="correrender"
 link_dynamic=false
+use_custom_vcpkg_triplet=false
 custom_glslang=false
 build_with_zarr_support=true
 build_with_cuda_support=true
-build_with_skia_support=true
+build_with_skia_support=false
 skia_link_dynamically=true
 build_with_vkvg_support=false
 build_with_osqp_support=true
@@ -72,6 +74,13 @@ fi
 # Replicability Stamp (https://www.replicabilitystamp.org/) mode for replicating a figure from the corresponding paper.
 replicability=false
 
+# Check if a conda environment is already active.
+if $use_conda; then
+    if [ ! -z "${CONDA_DEFAULT_ENV+x}" ]; then
+        conda_env_name="$CONDA_DEFAULT_ENV"
+    fi
+fi
+
 # Process command line arguments.
 for ((i=1;i<=$#;i++));
 do
@@ -81,6 +90,8 @@ do
         debug=true
     elif [ ${!i} = "--glibcxx-debug" ]; then
         glibcxx_debug=true
+    elif [ ${!i} = "--clean" ] || [ ${!i} = "clean" ]; then
+        clean=true
     elif [ ${!i} = "--vcpkg" ] || [ ${!i} = "--use-vcpkg" ]; then
         use_vcpkg=true
     elif [ ${!i} = "--conda" ] || [ ${!i} = "--use-conda" ]; then
@@ -92,8 +103,16 @@ do
         link_dynamic=false
     elif [ ${!i} = "--link-dynamic" ]; then
         link_dynamic=true
+    elif [ ${!i} = "--vcpkg-triplet" ]; then
+        ((i++))
+        vcpkg_triplet=${!i}
+        use_custom_vcpkg_triplet=true
     elif [ ${!i} = "--custom-glslang" ]; then
         custom_glslang=true
+    elif [ ${!i} = "--vkvg" ] || [ ${!i} = "--use-vkvg" ]; then
+        build_with_vkvg_support=true
+    elif [ ${!i} = "--skia" ] || [ ${!i} = "--use-skia" ]; then
+        build_with_skia_support=true
     elif [ ${!i} = "--dlswap" ]; then
         use_download_swapchain=true
         build_with_vkvg_support=true
@@ -105,6 +124,19 @@ do
         replicability=true
     fi
 done
+
+if [ $clean = true ]; then
+    echo "------------------------"
+    echo " cleaning up old files  "
+    echo "------------------------"
+    rm -rf third_party/vcpkg/ .build_release/ .build_debug/ Shipping/
+    if grep -wq "sgl" .gitmodules; then
+        rm -rf third_party/sgl/install/ third_party/sgl/.build_release/ third_party/sgl/.build_debug/
+    else
+        rm -rf third_party/sgl/
+    fi
+    git submodule update --init --recursive
+fi
 
 if [ $debug = true ]; then
     cmake_config="Debug"
@@ -129,7 +161,21 @@ fi
 
 params_link=()
 params_vcpkg=()
-if [ $use_vcpkg = true ] && [ $use_macos = false ] && [ $link_dynamic = true ]; then
+build_sgl_release_only=false
+if [ $use_custom_vcpkg_triplet = true ]; then
+    params_link+=(-DVCPKG_TARGET_TRIPLET=$vcpkg_triplet)
+    if [ -f "$projectpath/third_party/vcpkg/triplets/$vcpkg_triplet.cmake" ]; then
+        triplet_file_path="$projectpath/third_party/vcpkg/triplets/$vcpkg_triplet.cmake"
+    elif [ -f "$projectpath/third_party/vcpkg/triplets/community/$vcpkg_triplet.cmake" ]; then
+        triplet_file_path="$projectpath/third_party/vcpkg/triplets/community/$vcpkg_triplet.cmake"
+    else
+        echo "Custom vcpkg triplet set, but file not found."
+        exit 1
+    fi
+    if grep -q "VCPKG_BUILD_TYPE release" "$triplet_file_path"; then
+        build_sgl_release_only=true
+    fi
+elif [ $use_vcpkg = true ] && [ $use_macos = false ] && [ $link_dynamic = true ]; then
     params_link+=(-DVCPKG_TARGET_TRIPLET=x64-linux-dynamic)
 fi
 if [ $use_vcpkg = true ] && [ $use_macos = false ]; then
@@ -204,42 +250,44 @@ list_contains() {
 
 if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_dir_release ]; then
     if ! command -v cmake &> /dev/null || ! command -v git &> /dev/null || ! command -v rsync &> /dev/null \
-            || ! command -v curl &> /dev/null || ! command -v wget &> /dev/null \
-            || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null; then
+            || ! command -v curl &> /dev/null || ! command -v wget &> /dev/null || ! command -v unzip &> /dev/null \
+            || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null \
+            || ! command -v ntldd &> /dev/null; then
         echo "------------------------"
         echo "installing build essentials"
         echo "------------------------"
-        pacman --noconfirm -S --needed make git rsync curl wget mingw64/mingw-w64-x86_64-cmake \
-        mingw64/mingw-w64-x86_64-gcc mingw64/mingw-w64-x86_64-gdb
+        pacman --noconfirm -S --needed make git rsync curl wget unzip mingw64/mingw-w64-x86_64-cmake \
+        mingw64/mingw-w64-x86_64-gcc mingw64/mingw-w64-x86_64-gdb mingw-w64-x86_64-ntldd
     fi
 
     # Dependencies of sgl and the application.
-    if ! is_installed_pacman "mingw-w64-x86_64-boost" || ! is_installed_pacman "mingw-w64-x86_64-glm" \
-            || ! is_installed_pacman "mingw-w64-x86_64-libarchive" || ! is_installed_pacman "mingw-w64-x86_64-tinyxml2" \
-            || ! is_installed_pacman "mingw-w64-x86_64-libpng" || ! is_installed_pacman "mingw-w64-x86_64-SDL2" \
-            || ! is_installed_pacman "mingw-w64-x86_64-SDL2_image" || ! is_installed_pacman "mingw-w64-x86_64-glew" \
-            || ! is_installed_pacman "mingw-w64-x86_64-vulkan-headers" \
+    if ! is_installed_pacman "mingw-w64-x86_64-boost" || ! is_installed_pacman "mingw-w64-x86_64-icu" \
+            || ! is_installed_pacman "mingw-w64-x86_64-glm" || ! is_installed_pacman "mingw-w64-x86_64-libarchive" \
+            || ! is_installed_pacman "mingw-w64-x86_64-tinyxml2" || ! is_installed_pacman "mingw-w64-x86_64-libpng" \
+            || ! is_installed_pacman "mingw-w64-x86_64-SDL2" || ! is_installed_pacman "mingw-w64-x86_64-SDL2_image" \
+            || ! is_installed_pacman "mingw-w64-x86_64-glew" || ! is_installed_pacman "mingw-w64-x86_64-vulkan-headers" \
             || ! is_installed_pacman "mingw-w64-x86_64-vulkan-loader" \
             || ! is_installed_pacman "mingw-w64-x86_64-vulkan-validation-layers" \
             || ! is_installed_pacman "mingw-w64-x86_64-shaderc" \
             || ! is_installed_pacman "mingw-w64-x86_64-opencl-headers" \
             || ! is_installed_pacman "mingw-w64-x86_64-opencl-icd" || ! is_installed_pacman "mingw-w64-x86_64-jsoncpp" \
             || ! is_installed_pacman "mingw-w64-x86_64-nlohmann-json" || ! is_installed_pacman "mingw-w64-x86_64-blosc" \
-            || ! is_installed_pacman "mingw-w64-x86_64-netcdf" || ! is_installed_pacman "mingw-w64-x86_64-eccodes" \
-            || ! is_installed_pacman "mingw-w64-x86_64-eigen3" || ! is_installed_pacman "mingw-w64-x86_64-libtiff" \
-            || ! is_installed_pacman "mingw-w64-x86_64-nlopt"; then
+            || ! is_installed_pacman "mingw-w64-x86_64-netcdf" || ! is_installed_pacman "mingw-w64-x86_64-hdf5" \
+            || ! is_installed_pacman "mingw-w64-x86_64-eccodes" || ! is_installed_pacman "mingw-w64-x86_64-eigen3" \
+            || ! is_installed_pacman "mingw-w64-x86_64-libtiff" || ! is_installed_pacman "mingw-w64-x86_64-nlopt" \
+            || ! is_installed_pacman "mingw-w64-x86_64-glfw"; then
         echo "------------------------"
         echo "installing dependencies "
         echo "------------------------"
-        pacman --noconfirm -S --needed mingw64/mingw-w64-x86_64-boost mingw64/mingw-w64-x86_64-glm \
-        mingw64/mingw-w64-x86_64-libarchive mingw64/mingw-w64-x86_64-tinyxml2 mingw64/mingw-w64-x86_64-libpng \
-        mingw64/mingw-w64-x86_64-SDL2 mingw64/mingw-w64-x86_64-SDL2_image mingw64/mingw-w64-x86_64-glew \
-        mingw64/mingw-w64-x86_64-vulkan-headers mingw64/mingw-w64-x86_64-vulkan-loader \
+        pacman --noconfirm -S --needed mingw64/mingw-w64-x86_64-boost mingw64/mingw-w64-x86_64-icu \
+        mingw64/mingw-w64-x86_64-glm mingw64/mingw-w64-x86_64-libarchive mingw64/mingw-w64-x86_64-tinyxml2 \
+        mingw64/mingw-w64-x86_64-libpng mingw64/mingw-w64-x86_64-SDL2 mingw64/mingw-w64-x86_64-SDL2_image \
+        mingw64/mingw-w64-x86_64-glew mingw64/mingw-w64-x86_64-vulkan-headers mingw64/mingw-w64-x86_64-vulkan-loader \
         mingw64/mingw-w64-x86_64-vulkan-validation-layers mingw64/mingw-w64-x86_64-shaderc \
         mingw64/mingw-w64-x86_64-opencl-headers mingw64/mingw-w64-x86_64-opencl-icd mingw64/mingw-w64-x86_64-jsoncpp \
         mingw64/mingw-w64-x86_64-nlohmann-json mingw64/mingw-w64-x86_64-blosc mingw64/mingw-w64-x86_64-netcdf \
-        mingw64/mingw-w64-x86_64-eccodes mingw64/mingw-w64-x86_64-eigen3 mingw64/mingw-w64-x86_64-libtiff \
-        mingw64/mingw-w64-x86_64-nlopt
+        mingw64/mingw-w64-x86_64-hdf5 mingw64/mingw-w64-x86_64-eccodes mingw64/mingw-w64-x86_64-eigen3 \
+        mingw64/mingw-w64-x86_64-libtiff mingw64/mingw-w64-x86_64-nlopt mingw64/mingw-w64-x86_64-glfw
     fi
     if ! (is_installed_pacman "mingw-w64-x86_64-curl" || is_installed_pacman "mingw-w64-x86_64-curl-gnutls" \
             || is_installed_pacman "mingw-w64-x86_64-curl-winssl"); then
@@ -247,6 +295,10 @@ if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [
     fi
 elif $use_msys && command -v pacman &> /dev/null; then
     :
+elif [ ! -z "${BUILD_USE_NIX+x}" ]; then
+    echo "------------------------"
+    echo "   building using Nix"
+    echo "------------------------"
 elif $use_macos && command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && [ ! -d $build_dir_release ]; then
     if ! is_installed_brew "git"; then
         brew install git
@@ -285,6 +337,9 @@ elif $use_macos && command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && 
     if [ $use_vcpkg = false ]; then
         if ! is_installed_brew "boost"; then
             brew install boost
+        fi
+        if ! is_installed_brew "icu4c"; then
+            brew install icu4c
         fi
         if ! is_installed_brew "glm"; then
             brew install glm
@@ -325,6 +380,9 @@ elif $use_macos && command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && 
         if ! is_installed_brew "netcdf"; then
             brew install netcdf
         fi
+        if ! is_installed_brew "hdf5"; then
+            brew install hdf5
+        fi
         if ! is_installed_brew "eigen"; then
             brew install eigen
         fi
@@ -356,34 +414,41 @@ elif command -v apt &> /dev/null && ! $use_conda; then
                 || ! is_installed_apt "libx11-dev" || ! is_installed_apt "libxft-dev" \
                 || ! is_installed_apt "libxext-dev" || ! is_installed_apt "libxrandr-dev" \
                 || ! is_installed_apt "libwayland-dev" || ! is_installed_apt "libxkbcommon-dev" \
-                || ! is_installed_apt "libegl1-mesa-dev" || ! is_installed_apt "libibus-1.0-dev" \
-                || ! is_installed_apt "autoconf" || ! is_installed_apt "automake" \
-                || ! is_installed_apt "autoconf-archive"; then
+                || ! is_installed_apt "libxxf86vm-dev" || ! is_installed_apt "libegl1-mesa-dev" \
+                || ! is_installed_apt "libglu1-mesa-dev" || ! is_installed_apt "mesa-common-dev" \
+                || ! is_installed_apt "libibus-1.0-dev" || ! is_installed_apt "autoconf" \
+                || ! is_installed_apt "automake" || ! is_installed_apt "autoconf-archive" \
+                || ! is_installed_apt "libxinerama-dev" || ! is_installed_apt "libxcursor-dev" \
+                || ! is_installed_apt "xorg-dev" || ! is_installed_apt "pkg-config" \
+                || ! is_installed_apt "wayland-protocols" || ! is_installed_apt "extra-cmake-modules"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo apt install -y libgl-dev libxmu-dev libxi-dev libx11-dev libxft-dev libxext-dev libxrandr-dev \
-            libwayland-dev libxkbcommon-dev libegl1-mesa-dev libibus-1.0-dev autoconf automake autoconf-archive
+            libwayland-dev libxkbcommon-dev libxxf86vm-dev libegl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
+            libibus-1.0-dev autoconf automake autoconf-archive libxinerama-dev libxcursor-dev xorg-dev pkg-config \
+            wayland-protocols extra-cmake-modules
         fi
     else
-        if ! is_installed_apt "libboost-filesystem-dev" || ! is_installed_apt "libglm-dev" \
-                || ! is_installed_apt "libarchive-dev" || ! is_installed_apt "libtinyxml2-dev" \
-                || ! is_installed_apt "libpng-dev" || ! is_installed_apt "libsdl2-dev" \
-                || ! is_installed_apt "libsdl2-image-dev" || ! is_installed_apt "libglew-dev" \
-                || ! is_installed_apt "opencl-c-headers" || ! is_installed_apt "ocl-icd-opencl-dev" \
-                || ! is_installed_apt "libjsoncpp-dev" || ! is_installed_apt "nlohmann-json3-dev" \
-                || ! is_installed_apt "libblosc-dev" || ! is_installed_apt "liblz4-dev" \
-                || ! is_installed_apt "libnetcdf-dev" || ! is_installed_apt "libeccodes-dev" \
+        if ! is_installed_apt "libboost-filesystem-dev" || ! is_installed_apt "libicu-dev" \
+                || ! is_installed_apt "libglm-dev" || ! is_installed_apt "libarchive-dev" \
+                || ! is_installed_apt "libtinyxml2-dev" || ! is_installed_apt "libpng-dev" \
+                || ! is_installed_apt "libsdl2-dev" || ! is_installed_apt "libsdl2-image-dev" \
+                || ! is_installed_apt "libglew-dev" || ! is_installed_apt "opencl-c-headers" \
+                || ! is_installed_apt "ocl-icd-opencl-dev" || ! is_installed_apt "libjsoncpp-dev" \
+                || ! is_installed_apt "nlohmann-json3-dev" || ! is_installed_apt "libblosc-dev" \
+                || ! is_installed_apt "liblz4-dev" || ! is_installed_apt "libnetcdf-dev" \
+                || ! is_installed_apt "libhdf5-dev" || ! is_installed_apt "libeccodes-dev" \
                 || ! is_installed_apt "libeccodes-tools" || ! is_installed_apt "libopenjp2-7-dev" \
                 || ! is_installed_apt "libeigen3-dev" || ! is_installed_apt "libtiff-dev" \
                 || ! is_installed_apt "libnlopt-cxx-dev"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo apt install -y libboost-filesystem-dev libglm-dev libarchive-dev libtinyxml2-dev libpng-dev libsdl2-dev \
-            libsdl2-image-dev libglew-dev opencl-c-headers ocl-icd-opencl-dev libjsoncpp-dev nlohmann-json3-dev \
-            libblosc-dev liblz4-dev libnetcdf-dev libeccodes-dev libeccodes-tools libopenjp2-7-dev libeigen3-dev \
-            libtiff-dev libnlopt-cxx-dev
+            sudo apt install -y libboost-filesystem-dev libicu-dev libglm-dev libarchive-dev libtinyxml2-dev libpng-dev \
+            libsdl2-dev libsdl2-image-dev libglew-dev opencl-c-headers ocl-icd-opencl-dev libjsoncpp-dev \
+            nlohmann-json3-dev libblosc-dev liblz4-dev libnetcdf-dev libhdf5-dev libeccodes-dev libeccodes-tools \
+            libopenjp2-7-dev libeigen3-dev libtiff-dev libnlopt-cxx-dev
         fi
         if ! (is_installed_apt "libcurl4-openssl-dev" || is_installed_apt "libcurl4-gnutls-dev" \
                 || is_installed_apt "libcurl4-nss-dev"); then
@@ -402,29 +467,35 @@ elif command -v pacman &> /dev/null && ! $use_conda; then
 
     # Dependencies of sgl and the application.
     if $use_vcpkg; then
-        if ! is_installed_pacman "libgl" || ! is_installed_pacman "vulkan-devel" || ! is_installed_pacman "shaderc" \
-                || ! is_installed_pacman "openssl" || ! is_installed_pacman "autoconf" \
-                || ! is_installed_pacman "automake" || ! is_installed_pacman "autoconf-archive"; then
+        if ! is_installed_pacman "libgl" || ! is_installed_pacman "glu" || ! is_installed_pacman "vulkan-devel" \
+                || ! is_installed_pacman "shaderc" || ! is_installed_pacman "openssl" \
+                || ! is_installed_pacman "autoconf" || ! is_installed_pacman "automake" \
+                || ! is_installed_pacman "autoconf-archive" || ! is_installed_pacman "libxinerama" \
+                || ! is_installed_pacman "libxcursor" || ! is_installed_pacman "pkgconf" \
+                || ! is_installed_pacman "libxkbcommon" || ! is_installed_pacman "wayland-protocols" \
+                || ! is_installed_pacman "wayland" || ! is_installed_pacman "extra-cmake-modules"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo pacman -S libgl vulkan-devel shaderc openssl autoconf automake autoconf-archive
+            sudo pacman -S libgl glu vulkan-devel shaderc openssl autoconf automake autoconf-archive libxinerama \
+            libxcursor pkgconf libxkbcommon wayland-protocols wayland extra-cmake-modules
         fi
     else
-        if ! is_installed_pacman "boost" || ! is_installed_pacman "glm" || ! is_installed_pacman "libarchive" \
-                || ! is_installed_pacman "tinyxml2" || ! is_installed_pacman "libpng" || ! is_installed_pacman "sdl2" \
-                || ! is_installed_pacman "sdl2_image" || ! is_installed_pacman "glew" \
-                || ! is_installed_pacman "vulkan-devel" || ! is_installed_pacman "shaderc" \
-                || ! is_installed_pacman "opencl-headers" || ! is_installed_pacman "ocl-icd" \
-                || ! is_installed_pacman "jsoncpp" || ! is_installed_pacman "nlohmann-json" \
-                || ! is_installed_pacman "blosc" || ! is_installed_pacman "netcdf" || ! is_installed_pacman "eigen" \
+        if ! is_installed_pacman "boost" || ! is_installed_pacman "icu" || ! is_installed_pacman "glm" \
+                || ! is_installed_pacman "libarchive" || ! is_installed_pacman "tinyxml2" \
+                || ! is_installed_pacman "libpng" || ! is_installed_pacman "sdl2" || ! is_installed_pacman "sdl2_image" \
+                || ! is_installed_pacman "glew" || ! is_installed_pacman "vulkan-devel" \
+                || ! is_installed_pacman "shaderc" || ! is_installed_pacman "opencl-headers" \
+                || ! is_installed_pacman "ocl-icd" || ! is_installed_pacman "jsoncpp" \
+                || ! is_installed_pacman "nlohmann-json" || ! is_installed_pacman "blosc" \
+                || ! is_installed_pacman "netcdf" || ! is_installed_pacman "hdf5" || ! is_installed_pacman "eigen" \
                 || ! is_installed_pacman "libtiff" || ! is_installed_pacman "curl" \
                 || ! is_installed_pacman "nlopt"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo pacman -S boost glm libarchive tinyxml2 libpng sdl2 sdl2_image glew vulkan-devel shaderc opencl-headers \
-            ocl-icd jsoncpp nlohmann-json blosc netcdf eigen libtiff curl nlopt
+            sudo pacman -S boost icu glm libarchive tinyxml2 libpng sdl2 sdl2_image glew vulkan-devel shaderc \
+            opencl-headers ocl-icd jsoncpp nlohmann-json blosc netcdf hdf5 eigen libtiff curl nlopt
         fi
         if ! command -v yay &> /dev/null && ! is_installed_yay "eccodes"; then
             echo "------------------------"
@@ -447,33 +518,43 @@ elif command -v yum &> /dev/null && ! $use_conda; then
     if $use_vcpkg; then
         if ! is_installed_rpm "perl" || ! is_installed_rpm "libstdc++-devel" || ! is_installed_rpm "libstdc++-static" \
                 || ! is_installed_rpm "autoconf" || ! is_installed_rpm "automake" \
-                || ! is_installed_rpm "autoconf-archive" || ! is_installed_rpm "glew-devel" \
-                || ! is_installed_rpm "libXext-devel" || ! is_installed_rpm "vulkan-headers" \
-                || ! is_installed_rpm "vulkan-loader" || ! is_installed_rpm "vulkan-tools" \
-                || ! is_installed_rpm "vulkan-validation-layers" || ! is_installed_rpm "libshaderc-devel"; then
+                || ! is_installed_rpm "autoconf-archive" || ! is_installed_rpm "mesa-libGLU-devel" \
+                || ! is_installed_rpm "glew-devel" || ! is_installed_rpm "libXext-devel" \
+                || ! is_installed_rpm "vulkan-headers" || ! is_installed_rpm "vulkan-loader" \
+                || ! is_installed_rpm "vulkan-tools" || ! is_installed_rpm "vulkan-validation-layers" \
+                || ! is_installed_rpm "libshaderc-devel" || ! is_installed_rpm "libXinerama-devel" \
+                || ! is_installed_rpm "libXrandr-devel" || ! is_installed_rpm "libXcursor-devel" \
+                || ! is_installed_rpm "libXi-devel" || ! is_installed_rpm "wayland-devel" \
+                || ! is_installed_rpm "libxkbcommon-devel" || ! is_installed_rpm "wayland-protocols-devel" \
+                || ! is_installed_rpm "extra-cmake-modules"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo yum install -y perl libstdc++-devel libstdc++-static autoconf automake autoconf-archive glew-devel \
-            libXext-devel vulkan-headers vulkan-loader vulkan-tools vulkan-validation-layers libshaderc-devel
+            sudo yum install -y perl libstdc++-devel libstdc++-static autoconf automake autoconf-archive \
+            mesa-libGLU-devel glew-devel libXext-devel vulkan-headers vulkan-loader vulkan-tools \
+            vulkan-validation-layers libshaderc-devel libXinerama-devel libXrandr-devel libXcursor-devel libXi-devel \
+            wayland-devel libxkbcommon-devel wayland-protocols-devel extra-cmake-modules
         fi
     else
-        if ! is_installed_rpm "boost-devel" || ! is_installed_rpm "glm-devel" || ! is_installed_rpm "libarchive-devel" \
-                || ! is_installed_rpm "tinyxml2-devel" || ! is_installed_rpm "libpng-devel" \
-                || ! is_installed_rpm "SDL2-devel" || ! is_installed_rpm "SDL2_image-devel" \
-                || ! is_installed_rpm "glew-devel" || ! is_installed_rpm "vulkan-headers" \
-                || ! is_installed_rpm "libshaderc-devel" || ! is_installed_rpm "opencl-headers" \
-                || ! is_installed_rpm "ocl-icd" || ! is_installed_rpm "jsoncpp-devel" || ! is_installed_rpm "json-devel" \
+        if ! is_installed_rpm "boost-devel" || ! is_installed_rpm "libicu-devel" || ! is_installed_rpm "glm-devel" \
+                || ! is_installed_rpm "libarchive-devel" || ! is_installed_rpm "tinyxml2-devel" \
+                || ! is_installed_rpm "libpng-devel" || ! is_installed_rpm "SDL2-devel" \
+                || ! is_installed_rpm "SDL2_image-devel" || ! is_installed_rpm "glew-devel" \
+                || ! is_installed_rpm "vulkan-headers" || ! is_installed_rpm "libshaderc-devel" \
+                || ! is_installed_rpm "opencl-headers" || ! is_installed_rpm "ocl-icd" \
+                || ! is_installed_rpm "jsoncpp-devel" || ! is_installed_rpm "json-devel" \
                 || ! is_installed_rpm "blosc-devel" || ! is_installed_rpm "netcdf-devel" \
-                || ! is_installed_rpm "eccodes-devel" || ! is_installed_rpm "eigen3-devel" \
-                || ! is_installed_rpm "libtiff-devel" || ! is_installed_rpm "libcurl-devel" \
-                || ! is_installed_rpm "NLopt-devel" || ! is_installed_rpm "expat-devel"; then
+                || ! is_installed_rpm "hdf5-devel" || ! is_installed_rpm "eccodes-devel" \
+                || ! is_installed_rpm "eigen3-devel" || ! is_installed_rpm "libtiff-devel" \
+                || ! is_installed_rpm "libcurl-devel" || ! is_installed_rpm "NLopt-devel" \
+                || ! is_installed_rpm "expat-devel"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo yum install -y boost-devel glm-devel libarchive-devel tinyxml2-devel libpng-devel SDL2-devel \
-            SDL2_image-devel glew-devel vulkan-headers libshaderc-devel opencl-headers ocl-icd jsoncpp-devel json-devel \
-            blosc-devel netcdf-devel eccodes-devel eigen3-devel libtiff-devel libcurl-devel NLopt-devel expat-devel
+            sudo yum install -y boost-devel libicu-devel glm-devel libarchive-devel tinyxml2-devel libpng-devel \
+            SDL2-devel SDL2_image-devel glew-devel vulkan-headers libshaderc-devel opencl-headers ocl-icd jsoncpp-devel \
+            json-devel blosc-devel netcdf-devel hdf5-devel eccodes-devel eigen3-devel libtiff-devel libcurl-devel \
+            NLopt-devel expat-devel
         fi
     fi
 elif $use_conda && ! $use_macos; then
@@ -516,13 +597,14 @@ elif $use_conda && ! $use_macos; then
     fi
 
     conda_pkg_list="$(conda list)"
-    if ! list_contains "$conda_pkg_list" "boost" || ! list_contains "$conda_pkg_list" "glm" \
-            || ! list_contains "$conda_pkg_list" "libarchive" || ! list_contains "$conda_pkg_list" "tinyxml2" \
-            || ! list_contains "$conda_pkg_list" "libpng" || ! list_contains "$conda_pkg_list" "sdl2" \
-            || ! list_contains "$conda_pkg_list" "sdl2" || ! list_contains "$conda_pkg_list" "glew" \
-            || ! list_contains "$conda_pkg_list" "cxx-compiler" || ! list_contains "$conda_pkg_list" "make" \
-            || ! list_contains "$conda_pkg_list" "cmake" || ! list_contains "$conda_pkg_list" "pkg-config" \
-            || ! list_contains "$conda_pkg_list" "gdb" || ! list_contains "$conda_pkg_list" "git" \
+    if ! list_contains "$conda_pkg_list" "boost" || ! list_contains "$conda_pkg_list" "conda-forge::icu" \
+            || ! list_contains "$conda_pkg_list" "glm" || ! list_contains "$conda_pkg_list" "libarchive" \
+            || ! list_contains "$conda_pkg_list" "tinyxml2" || ! list_contains "$conda_pkg_list" "libpng" \
+            || ! list_contains "$conda_pkg_list" "sdl2" || ! list_contains "$conda_pkg_list" "sdl2" \
+            || ! list_contains "$conda_pkg_list" "glew" || ! list_contains "$conda_pkg_list" "cxx-compiler" \
+            || ! list_contains "$conda_pkg_list" "make" || ! list_contains "$conda_pkg_list" "cmake" \
+            || ! list_contains "$conda_pkg_list" "pkg-config" || ! list_contains "$conda_pkg_list" "gdb" \
+            || ! list_contains "$conda_pkg_list" "git" \
             || ! list_contains "$conda_pkg_list" "mesa-libgl-devel-cos7-x86_64" \
             || ! list_contains "$conda_pkg_list" "libglvnd-glx-cos7-x86_64" \
             || ! list_contains "$conda_pkg_list" "mesa-dri-drivers-cos7-aarch64" \
@@ -536,17 +618,18 @@ elif $use_conda && ! $use_macos; then
             || ! list_contains "$conda_pkg_list" "libvulkan-headers" || ! list_contains "$conda_pkg_list" "shaderc" \
             || ! list_contains "$conda_pkg_list" "jsoncpp" || ! list_contains "$conda_pkg_list" "nlohmann_json" \
             || ! list_contains "$conda_pkg_list" "blosc" || ! list_contains "$conda_pkg_list" "netcdf4" \
-            || ! list_contains "$conda_pkg_list" "eccodes" || ! list_contains "$conda_pkg_list" "eigen" \
-            || ! list_contains "$conda_pkg_list" "libtiff" || ! list_contains "$conda_pkg_list" "libcurl" \
-            || ! list_contains "$conda_pkg_list" "nlopt"; then
+            || ! list_contains "$conda_pkg_list" "hdf5" || ! list_contains "$conda_pkg_list" "eccodes" \
+            || ! list_contains "$conda_pkg_list" "eigen" || ! list_contains "$conda_pkg_list" "libtiff" \
+            || ! list_contains "$conda_pkg_list" "libcurl" || ! list_contains "$conda_pkg_list" "nlopt"; then
         echo "------------------------"
         echo "installing dependencies "
         echo "------------------------"
-        conda install -y -c conda-forge boost glm libarchive tinyxml2 libpng sdl2 sdl2 glew cxx-compiler make cmake \
-        pkg-config gdb git mesa-libgl-devel-cos7-x86_64 libglvnd-glx-cos7-x86_64 mesa-dri-drivers-cos7-aarch64 \
-        libxau-devel-cos7-aarch64 libselinux-devel-cos7-aarch64 libxdamage-devel-cos7-aarch64 \
-        libxxf86vm-devel-cos7-aarch64 libxext-devel-cos7-aarch64 xorg-libxfixes xorg-libxau xorg-libxrandr patchelf \
-        libvulkan-headers shaderc jsoncpp nlohmann_json blosc netcdf4 eccodes eigen libtiff libcurl nlopt
+        conda install -y -c conda-forge boost conda-forge::icu glm libarchive tinyxml2 libpng sdl2 sdl2 glew \
+        cxx-compiler make cmake pkg-config gdb git mesa-libgl-devel-cos7-x86_64 libglvnd-glx-cos7-x86_64 \
+        mesa-dri-drivers-cos7-aarch64 libxau-devel-cos7-aarch64 libselinux-devel-cos7-aarch64 \
+        libxdamage-devel-cos7-aarch64 libxxf86vm-devel-cos7-aarch64 libxext-devel-cos7-aarch64 xorg-libxfixes \
+        xorg-libxau xorg-libxrandr patchelf libvulkan-headers shaderc jsoncpp nlohmann_json blosc netcdf4 hdf5 eccodes \
+        eigen libtiff libcurl nlopt
     fi
 else
     echo "Warning: Unsupported system package manager detected." >&2
@@ -670,11 +753,14 @@ if [ $search_for_vulkan_sdk = true ]; then
         if ! $found_vulkan && (lsb_release -a 2> /dev/null | grep -q 'Ubuntu' || lsb_release -a 2> /dev/null | grep -q 'Mint') && ! $use_conda; then
             if lsb_release -a 2> /dev/null | grep -q 'Ubuntu'; then
                 distro_code_name=$(lsb_release -cs)
+                distro_release=$(lsb_release -rs)
             else
                 distro_code_name=$(cat /etc/upstream-release/lsb-release | grep "DISTRIB_CODENAME=" | sed 's/^.*=//')
+                distro_release=$(cat /etc/upstream-release/lsb-release | grep "DISTRIB_RELEASE=" | sed 's/^.*=//')
             fi
             if ! compgen -G "/etc/apt/sources.list.d/lunarg-vulkan-*" > /dev/null \
-                  && ! curl -s -I "https://packages.lunarg.com/vulkan/dists/${distro_code_name}/" | grep "2 404" > /dev/null; then
+                    && ! curl -s -I "https://packages.lunarg.com/vulkan/dists/${distro_code_name}/" | grep "2 404" > /dev/null \
+                    && [ "$os_arch" = "x86_64" ]; then
                 echo "Setting up Vulkan SDK for $(lsb_release -ds)..."
                 wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
                 sudo curl --silent --show-error --fail \
@@ -682,6 +768,12 @@ if [ $search_for_vulkan_sdk = true ]; then
                 --output /etc/apt/sources.list.d/lunarg-vulkan-${distro_code_name}.list
                 sudo apt update
                 sudo apt install -y vulkan-sdk shaderc glslang-dev
+            elif dpkg --compare-versions "$distro_release" "ge" "24.04"; then
+                if ! is_installed_apt "libvulkan-dev" || ! is_installed_apt "libshaderc-dev" \
+                        || ! is_installed_apt "glslang-dev" || ! is_installed_apt "glslang-tools"; then
+                    # Optional: vulkan-validationlayers
+                    sudo apt install -y libvulkan-dev libshaderc-dev glslang-dev glslang-tools
+                fi
             fi
         fi
 
@@ -721,18 +813,22 @@ if [ $search_for_vulkan_sdk = true ]; then
             source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
             found_vulkan=true
         else
-            vulkansdk_filename=$(curl -sIkL https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg | sed -r '/filename=/!d;s/.*filename=(.*)$/\1/')
-            VULKAN_SDK_VERSION=$(echo $vulkansdk_filename | sed -r 's/^.*vulkansdk-macos-(.*)\.dmg.*$/\1/')
-            curl -O https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg
-            sudo hdiutil attach vulkan-sdk.dmg
-            # The directory was changed from '/Volumes/VulkanSDK' to, e.g., 'vulkansdk-macos-1.3.261.0'.
-            vulkan_dir=$(find /Volumes -maxdepth 1 -name '[Vv]ulkan*' -not -path "/Volumes/VMware*" || true)
-            sudo "${vulkan_dir}/InstallVulkan.app/Contents/MacOS/InstallVulkan" \
-            --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
+            vulkansdk_filename=$(curl -sIkL https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.zip | sed -r '/filename=/!d;s/.*filename=(.*)$/\1/')
+            VULKAN_SDK_VERSION=$(echo $vulkansdk_filename | sed -r 's/^.*vulkansdk-macos-(.*)\.zip.*$/\1/')
+            curl -O https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.zip
+            unzip vulkan-sdk.zip -d vulkan-sdk/
+            vulkan_dir="$(pwd)/vulkan-sdk"
+            if [ -d "${vulkan_dir}/InstallVulkan-${VULKAN_SDK_VERSION}.app" ]; then
+                # For some reason, this convention was introduced in version 1.4.304.1...
+                sudo "${vulkan_dir}/InstallVulkan-${VULKAN_SDK_VERSION}.app/Contents/MacOS/InstallVulkan-${VULKAN_SDK_VERSION}" \
+                --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
+            else
+                sudo "${vulkan_dir}/InstallVulkan.app/Contents/MacOS/InstallVulkan" \
+                --root ~/VulkanSDK/$VULKAN_SDK_VERSION --accept-licenses --default-answer --confirm-command install
+            fi
             pushd ~/VulkanSDK/$VULKAN_SDK_VERSION
             sudo python3 ./install_vulkan.py || true
             popd
-            sudo hdiutil unmount "${vulkan_dir}"
             source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
             found_vulkan=true
         fi
@@ -797,9 +893,8 @@ if [ $use_vcpkg = true ] && [ ! -d "./vcpkg" ]; then
         echo "The environment variable VULKAN_SDK is not set but is required in the installation process."
         exit 1
     fi
-    git clone --depth 1 -b fix-libarchive-rpath https://github.com/chrismile/vcpkg.git
+    git clone --depth 1 https://github.com/microsoft/vcpkg.git
     vcpkg/bootstrap-vcpkg.sh -disableMetrics
-    vcpkg/vcpkg install
 fi
 
 if [ $use_vcpkg = true ] && [ $use_macos = false ] && [ $link_dynamic = false ]; then
@@ -814,12 +909,16 @@ if [ ! -d "./sgl" ]; then
 fi
 
 if [ -f "./sgl/$build_dir/CMakeCache.txt" ]; then
+    remove_build_cache_sgl=false
     if grep -q vcpkg_installed "./sgl/$build_dir/CMakeCache.txt"; then
         cache_uses_vcpkg=true
     else
         cache_uses_vcpkg=false
     fi
     if ([ $use_vcpkg = true ] && [ $cache_uses_vcpkg = false ]) || ([ $use_vcpkg = false ] && [ $cache_uses_vcpkg = true ]); then
+        remove_build_cache_sgl=true
+    fi
+    if [ $remove_build_cache_sgl = true ]; then
         echo "Removing old sgl build cache..."
         if [ -d "./sgl/$build_dir_debug" ]; then
             rm -rf "./sgl/$build_dir_debug"
@@ -839,20 +938,24 @@ if [ ! -d "./sgl/install" ]; then
     echo "------------------------"
 
     pushd "./sgl" >/dev/null
-    mkdir -p $build_dir_debug
+    if ! $build_sgl_release_only; then
+        mkdir -p $build_dir_debug
+    fi
     mkdir -p $build_dir_release
 
-    pushd "$build_dir_debug" >/dev/null
-    cmake .. \
-         -DCMAKE_BUILD_TYPE=Debug \
-         -DCMAKE_INSTALL_PREFIX="../install" \
-         ${params_gen[@]+"${params_gen[@]}"} ${params_link[@]+"${params_link[@]}"} \
-         ${params_vcpkg[@]+"${params_vcpkg[@]}"} ${params_sgl[@]+"${params_sgl[@]}"}
-    if [ $use_vcpkg = false ] && [ $use_macos = false ]; then
-        make -j $(nproc)
-        make install
+    if ! $build_sgl_release_only; then
+        pushd "$build_dir_debug" >/dev/null
+        cmake .. \
+             -DCMAKE_BUILD_TYPE=Debug \
+             -DCMAKE_INSTALL_PREFIX="../install" \
+             ${params_gen[@]+"${params_gen[@]}"} ${params_link[@]+"${params_link[@]}"} \
+             ${params_vcpkg[@]+"${params_vcpkg[@]}"} ${params_sgl[@]+"${params_sgl[@]}"}
+        if [ $use_vcpkg = false ] && [ $use_macos = false ]; then
+            make -j $(nproc)
+            make install
+        fi
+        popd >/dev/null
     fi
-    popd >/dev/null
 
     pushd $build_dir_release >/dev/null
     cmake .. \
@@ -867,16 +970,20 @@ if [ ! -d "./sgl/install" ]; then
     popd >/dev/null
 
     if [ $use_macos = true ]; then
-        cmake --build $build_dir_debug --parallel $(sysctl -n hw.ncpu)
-        cmake --build $build_dir_debug --target install
+        if ! $build_sgl_release_only; then
+            cmake --build $build_dir_debug --parallel $(sysctl -n hw.ncpu)
+            cmake --build $build_dir_debug --target install
+        fi
 
         cmake --build $build_dir_release --parallel $(sysctl -n hw.ncpu)
         cmake --build $build_dir_release --target install
     elif [ $use_vcpkg = true ]; then
-        cmake --build $build_dir_debug --parallel $(nproc)
-        cmake --build $build_dir_debug --target install
-        if [ $link_dynamic = true ]; then
-            cp $build_dir_debug/libsgld.so install/lib/libsgld.so
+        if ! $build_sgl_release_only; then
+            cmake --build $build_dir_debug --parallel $(nproc)
+            cmake --build $build_dir_debug --target install
+            if [ $link_dynamic = true ]; then
+                cp $build_dir_debug/libsgld.so install/lib/libsgld.so
+            fi
         fi
 
         cmake --build $build_dir_release --parallel $(nproc)
@@ -889,6 +996,20 @@ if [ ! -d "./sgl/install" ]; then
     popd >/dev/null
 fi
 
+# xtl and other dependencies broke compatibility with medium-old versions of CMake (< 3.29).
+is_old_cmake=false
+cmake_version=($(cmake --version))
+cmake_version=${cmake_version[2]}
+if [[ $cmake_version == "3."* ]]; then
+    # We will only check for 3.* here, as older versions (2.x) are not supported and newer CMake versions might break
+    # the versioning scheme.
+    cmake_version_medium_minor="${cmake_version#*.}"
+    cmake_version_medium="${cmake_version_medium_minor%%.*}"
+    if [ "$cmake_version_medium" -lt "29" ]; then
+        is_old_cmake=true
+    fi
+fi
+
 if $build_with_zarr_support; then
     if [ ! -d "./xtl" ]; then
         echo "------------------------"
@@ -899,6 +1020,11 @@ if $build_with_zarr_support; then
             rm -rf "./xtl-src"
         fi
         git clone https://github.com/xtensor-stack/xtl.git xtl-src
+        if $is_old_cmake; then
+            pushd xtl-src >/dev/null
+            git checkout 5566caa124a74c21104faef6e445376c5c113d53
+            popd >/dev/null
+        fi
         mkdir -p xtl-src/build
         pushd xtl-src/build >/dev/null
         cmake ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xtl" ..
@@ -914,6 +1040,11 @@ if $build_with_zarr_support; then
             rm -rf "./xtensor-src"
         fi
         git clone https://github.com/xtensor-stack/xtensor.git xtensor-src
+        if $is_old_cmake; then
+            pushd xtensor-src >/dev/null
+            git checkout c2e9b7b189b5ac9b383f6e8acb86566142c7bf9a
+            popd >/dev/null
+        fi
         mkdir -p xtensor-src/build
         pushd xtensor-src/build >/dev/null
         cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
@@ -930,6 +1061,11 @@ if $build_with_zarr_support; then
             rm -rf "./xsimd-src"
         fi
         git clone https://github.com/xtensor-stack/xsimd.git xsimd-src
+        if $is_old_cmake; then
+            pushd xsimd-src >/dev/null
+            git checkout a507f83ead608fffc558b615b61b20f44f2f4672
+            popd >/dev/null
+        fi
         mkdir -p xsimd-src/build
         pushd xsimd-src/build >/dev/null
         cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
@@ -954,7 +1090,7 @@ if $build_with_zarr_support; then
         if [ -d "./z5-src" ]; then
             rm -rf "./z5-src"
         fi
-        git clone https://github.com/constantinpape/z5.git z5-src
+        git clone https://github.com/chrismile/z5.git z5-src
         if [ $use_macos = true ]; then
             sed -i -e 's/SET(Boost_NO_SYSTEM_PATHS ON)/#SET(Boost_NO_SYSTEM_PATHS ON)/g' z5-src/CMakeLists.txt
         else
@@ -1065,6 +1201,9 @@ if $build_with_osqp_support; then
             rm -rf "./osqp-src"
         fi
         git clone https://github.com/osqp/osqp osqp-src
+        pushd osqp-src >/dev/null
+        git checkout f45ceedea3a5dd4d85890e70012fb6c6fceea5af
+        popd >/dev/null
         mkdir -p osqp-src/build
         pushd osqp-src/build >/dev/null
         cmake .. ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/osqp"
@@ -1135,12 +1274,16 @@ else
 fi
 
 if [ -f "./$build_dir/CMakeCache.txt" ]; then
+    remove_build_cache=false
     if grep -q vcpkg_installed "./$build_dir/CMakeCache.txt"; then
         cache_uses_vcpkg=true
     else
         cache_uses_vcpkg=false
     fi
     if ([ $use_vcpkg = true ] && [ $cache_uses_vcpkg = false ]) || ([ $use_vcpkg = false ] && [ $cache_uses_vcpkg = true ]); then
+        remove_build_cache=true
+    fi
+    if [ remove_build_cache = true ]; then
         echo "Removing old application build cache..."
         if [ -d "./$build_dir_debug" ]; then
             rm -rf "./$build_dir_debug"
@@ -1207,6 +1350,26 @@ startswith() {
 }
 
 if $use_msys; then
+    if [[ -z "${PATH+x}" ]]; then
+        export PATH="${projectpath}/third_party/sgl/install/bin"
+    elif [[ ! "${PATH}" == *"${projectpath}/third_party/sgl/install/bin"* ]]; then
+        export PATH="${projectpath}/third_party/sgl/install/bin:$PATH"
+    fi
+elif $use_macos; then
+    if [ -z "${DYLD_LIBRARY_PATH+x}" ]; then
+        export DYLD_LIBRARY_PATH="${projectpath}/third_party/sgl/install/lib"
+    elif contains "${DYLD_LIBRARY_PATH}" "${projectpath}/third_party/sgl/install/lib"; then
+        export DYLD_LIBRARY_PATH="DYLD_LIBRARY_PATH:${projectpath}/third_party/sgl/install/lib"
+    fi
+else
+  if [[ -z "${LD_LIBRARY_PATH+x}" ]]; then
+      export LD_LIBRARY_PATH="${projectpath}/third_party/sgl/install/lib"
+  elif [[ ! "${LD_LIBRARY_PATH}" == *"${projectpath}/third_party/sgl/install/lib"* ]]; then
+      export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/sgl/install/lib"
+  fi
+fi
+
+if $use_msys; then
     mkdir -p $destination_dir/bin
 
     # Copy sgl to the destination directory.
@@ -1220,14 +1383,20 @@ if $use_msys; then
     cp "$build_dir/Correrender.exe" "$destination_dir/bin"
 
     # Copy all dependencies of the application to the destination directory.
-    ldd_output="$(ldd $destination_dir/bin/Correrender.exe)"
-    for library in $ldd_output
+    ldd_output="$(ntldd -R $build_dir/Correrender.exe)"
+    for library_abs in $ldd_output
     do
-        if [[ $library == "$MSYSTEM_PREFIX"* ]] ;
+        if [[ $library_abs == "not found"* ]] || [[ $library_abs == "ext-ms-win"* ]] || [[ $library_abs == "=>" ]] \
+                || [[ $library_abs == "(0x"* ]] || [[ $library_abs == "C:\\WINDOWS"* ]] \
+                || [[ $library_abs == "not" ]] || [[ $library_abs == "found"* ]]; then
+            continue
+        fi
+        library="$(cygpath "$library_abs")"
+        if [[ $library == "$MSYSTEM_PREFIX"* ]] || [[ $library == "$projectpath"* ]];
         then
             cp "$library" "$destination_dir/bin"
         fi
-        if [[ $library == libpython* ]] ;
+        if [[ $library == libpython* ]];
         then
             tmp=${library#*lib}
             Python3_VERSION=${tmp%.dll}
@@ -1325,7 +1494,6 @@ elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
             codesign --force -s - "$filename" &> /dev/null
         fi
     done
-${copy_dependencies_macos_post}
 else
     mkdir -p $destination_dir/bin
 
@@ -1426,26 +1594,6 @@ fi
 echo ""
 echo "All done!"
 pushd $build_dir >/dev/null
-
-if $use_msys; then
-    if [[ -z "${PATH+x}" ]]; then
-        export PATH="${projectpath}/third_party/sgl/install/bin"
-    elif [[ ! "${PATH}" == *"${projectpath}/third_party/sgl/install/bin"* ]]; then
-        export PATH="${projectpath}/third_party/sgl/install/bin:$PATH"
-    fi
-elif $use_macos; then
-    if [ -z "${DYLD_LIBRARY_PATH+x}" ]; then
-        export DYLD_LIBRARY_PATH="${projectpath}/third_party/sgl/install/lib"
-    elif contains "${DYLD_LIBRARY_PATH}" "${projectpath}/third_party/sgl/install/lib"; then
-        export DYLD_LIBRARY_PATH="DYLD_LIBRARY_PATH:${projectpath}/third_party/sgl/install/lib"
-    fi
-else
-  if [[ -z "${LD_LIBRARY_PATH+x}" ]]; then
-      export LD_LIBRARY_PATH="${projectpath}/third_party/sgl/install/lib"
-  elif [[ ! "${LD_LIBRARY_PATH}" == *"${projectpath}/third_party/sgl/install/lib"* ]]; then
-      export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/sgl/install/lib"
-  fi
-fi
 
 if [ $run_program = true ] && [ $use_macos = false ]; then
     ./Correrender ${params_run[@]+"${params_run[@]}"}

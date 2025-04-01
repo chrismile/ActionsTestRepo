@@ -73,6 +73,12 @@ ScalarDataFormat DeviceCacheEntryType::getScalarDataFormat() const {
     }
 }
 
+bool DeviceCacheEntryType::getIsRGBA() const {
+    auto format = vulkanImage->getImageSettings().format;
+    return format == VK_FORMAT_R32G32B32A32_SFLOAT || format == VK_FORMAT_R8G8B8A8_UNORM
+            || format == VK_FORMAT_R16G16B16A16_UNORM || format == VK_FORMAT_R16G16B16A16_SFLOAT;
+}
+
 std::string DeviceCacheEntryType::getImageFormatGlslString() const {
     return ::getImageFormatGlslString(vulkanImage);
 }
@@ -90,6 +96,13 @@ const sgl::vk::TexturePtr& DeviceCacheEntryType::getVulkanTexture() {
         vulkanTexture = std::make_shared<sgl::vk::Texture>(getVulkanImageView(), vulkanSampler);
     }
     return vulkanTexture;
+}
+
+void DeviceCacheEntryType::setImageSampler(const sgl::vk::ImageSamplerPtr& _vulkanSampler) {
+    if (vulkanTexture) {
+        vulkanTexture = {};
+    }
+    vulkanSampler = _vulkanSampler;
 }
 
 #ifdef SUPPORT_CUDA_INTEROP
