@@ -473,6 +473,11 @@ endif()
 if (osqp_FOUND)
     target_link_libraries(Correrender PRIVATE osqp::osqpstatic) # osqp::osqp
     target_compile_definitions(Correrender PRIVATE SUPPORT_OSQP)
+
+    get_target_property(OSQP_INCLUDE_DIRECTORIES osqp::osqpstatic INTERFACE_INCLUDE_DIRECTORIES)
+    if (EXISTS "${OSQP_INCLUDE_DIRECTORIES}/osqp_api_utils.h")
+        target_compile_definitions(Correrender PRIVATE OSQP_LEGACY_API)
+    endif()
 endif()
 
 if(VCPKG_TOOLCHAIN)

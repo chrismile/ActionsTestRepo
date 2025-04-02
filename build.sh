@@ -318,6 +318,9 @@ elif $use_macos && command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && 
     if ! is_installed_brew "libomp"; then
         brew install libomp
     fi
+    if ! is_installed_brew "make"; then
+        brew install make
+    fi
     if ! is_installed_brew "autoconf"; then
         brew install autoconf
     fi
@@ -702,14 +705,17 @@ if [ $use_msys = true ]; then
 fi
 
 if [ $use_vcpkg = false ] && [ $use_macos = true ]; then
+    brew_prefix="$(brew --prefix)"
     params_gen+=(-DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False)
     params_gen+=(-DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False)
     params_gen+=(-DCMAKE_FIND_FRAMEWORK=LAST)
     params_gen+=(-DCMAKE_FIND_APPBUNDLE=NEVER)
-    params_gen+=(-DCMAKE_PREFIX_PATH="$(brew --prefix)")
+    params_gen+=(-DCMAKE_PREFIX_PATH="${brew_prefix}")
+    params_gen+=(-DCMAKE_C_COMPILER="${brew_prefix}/opt/llvm/bin/clang")
+    params_gen+=(-DCMAKE_CXX_COMPILER="${brew_prefix}/opt/llvm/bin/clang++")
     params_sgl+=(-DCMAKE_INSTALL_PREFIX="../install")
-    params_sgl+=(-DZLIB_ROOT="$(brew --prefix)/opt/zlib")
-    params+=(-DZLIB_ROOT="$(brew --prefix)/opt/zlib")
+    params_sgl+=(-DZLIB_ROOT="${brew_prefix}/opt/zlib")
+    params+=(-DZLIB_ROOT="${brew_prefix}/opt/zlib")
 fi
 
 if $glibcxx_debug; then
@@ -940,6 +946,8 @@ if [ ! -d "./sgl/install" ]; then
     echo "------------------------"
     echo "     building sgl       "
     echo "------------------------"
+    cmake --version
+    which cmake
 
     pushd "./sgl" >/dev/null
     if ! $build_sgl_release_only; then
@@ -1197,9 +1205,6 @@ if $build_with_osqp_support; then
             rm -rf "./osqp-src"
         fi
         git clone https://github.com/osqp/osqp osqp-src
-        pushd osqp-src >/dev/null
-        git checkout f45ceedea3a5dd4d85890e70012fb6c6fceea5af
-        popd >/dev/null
         mkdir -p osqp-src/build
         pushd osqp-src/build >/dev/null
         cmake .. ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/osqp"
@@ -1402,7 +1407,6 @@ elif [ $use_macos = true ] && [ $use_vcpkg = true ]; then
     [ -d $destination_dir ] || mkdir $destination_dir
     rsync -a "$build_dir/Correrender.app/Contents/MacOS/Correrender" $destination_dir
 elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
-    brew_prefix="$(brew --prefix)"
     mkdir -p $destination_dir
 
     if [ -d "$destination_dir/Correrender.app" ]; then
