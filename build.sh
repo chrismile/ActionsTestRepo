@@ -733,7 +733,7 @@ if [[ $cmake_version_major < 3 || ($cmake_version_major == 3 && $cmake_version_m
     cmake_version_major=$(echo $cmake_version | cut -d. -f1)
     cmake_version_minor=$(echo $cmake_version | cut -d. -f2)
 fi
-if [ $use_msys = false ] && [ $use_macos = false ] && [ $use_conda = false ] && [ $use_vcpkg = false ] && [[ $cmake_version_major >= 4 ]]; then
+if [ $use_msys = false ] && [ $use_macos = false ] && [ $use_conda = false ] && [ $use_vcpkg = false ] && [[ $cmake_version_major -ge 4 ]]; then
     # Ubuntu 22.04 ships packages, such as libjsoncpp-dev, that are incompatible with CMake 4.0.
     if (lsb_release -a 2> /dev/null | grep -q 'Ubuntu' || lsb_release -a 2> /dev/null | grep -q 'Mint'); then
         if lsb_release -a 2> /dev/null | grep -q 'Ubuntu'; then
