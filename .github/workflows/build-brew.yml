@@ -164,6 +164,7 @@ jobs:
           source "$HOME/VulkanSDK/$(ls $HOME/VulkanSDK)/setup-env.sh"
           params+=(-DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=False -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=False -DCMAKE_FIND_FRAMEWORK=LAST -DCMAKE_FIND_APPBUNDLE=NEVER -DZLIB_ROOT="$(brew --prefix)/opt/zlib")
           params+=(-DCMAKE_C_COMPILER="$(brew --prefix)/opt/llvm/bin/clang" -DCMAKE_CXX_COMPILER="$(brew --prefix)/opt/llvm/bin/clang++")
+          params+=(-DCMAKE_LINKER="$(brew --prefix)/opt/llvm/bin/llvm-ld" -DCMAKE_AR="$(brew --prefix)/opt/llvm/bin/llvm-ar")
         fi
         cmake -B "${{github.workspace}}/build" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -Dsgl_DIR=${{env.sgl_DIR}}/lib/cmake/sgl -DCMAKE_PREFIX_PATH="$(brew --prefix)" "${params[@]}"
 
