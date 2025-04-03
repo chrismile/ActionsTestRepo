@@ -42,4 +42,12 @@ jobs:
           # conda-forge::openexr-python pytorch torchvision torchaudio cpuonly -c pytorch
           pip install numpy sympy numba matplotlib tqdm scikit-image tensorboard opencv-python openexr
           pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+          echo "python:"
+          which python
+          echo "python3:"
+          which python3
+          echo "pip:"
+          which pip
+          echo "pip3:"
+          which pip3
           python test.py
