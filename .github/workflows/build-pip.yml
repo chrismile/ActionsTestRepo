@@ -25,6 +25,10 @@ jobs:
         with:
           submodules: true
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13' 
+
       # On 2025-03-10, this action resulted in "System.IO.IOException: No space left on device".
       - name: Clean up unused files
         if: runner.os == 'Linux'
