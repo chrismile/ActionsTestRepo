@@ -78,22 +78,16 @@ cmake-build-*/
 *.vtk
 *.mesh
 
-Data/VolumeDataSets
-Data/VolumeDataSets/*
+Data/LineDataSets
+Data/LineDataSets/*
 Data/CameraPaths/*
 Data/Checkpoints/*
 Data/Screenshots/*
-Data/PyTorch/*
-Data/tiny-cuda-nn/*
-Data/QuickMLP/*
 Data/Videos/*
 Data/TransferFunctions/*
 Data/Texture/*
-Data/Maps/*
-Data/States/*
 Data/ReplayScripts/__pycache__/*
 Data/ReplayScripts/modules/__pycache__/*
-Data/__cudacache__/*
 
 Data/ControlPoints.txt
 imgui.ini

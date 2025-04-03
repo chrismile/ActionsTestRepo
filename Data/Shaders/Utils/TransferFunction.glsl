@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2020 - 2022, Christoph Neuhauser
+ * Copyright (c) 2020 - 2021, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,7 +30,7 @@
 #define TRANSFER_FUNCTION_GLSL
 
 // Transfer function color lookup table.
-#if defined(USE_MULTI_VAR_TRANSFER_FUNCTION)
+#if defined(USE_MULTI_VAR_TRANSFER_FUNCTION) || defined(USE_PRINCIPAL_STRESS_DIRECTION_INDEX)
 
 layout (std430, binding = MIN_MAX_BUFFER_BINDING) readonly buffer MinMaxBuffer {
     vec2 minMaxValues[];
@@ -38,17 +38,6 @@ layout (std430, binding = MIN_MAX_BUFFER_BINDING) readonly buffer MinMaxBuffer {
 layout(binding = TRANSFER_FUNCTION_TEXTURE_BINDING) uniform sampler1DArray transferFunctionTexture;
 
 vec4 transferFunction(float attr, uint variableIndex) {
-#ifdef NAN_YELLOW
-    if (isnan(attr)) {
-        return vec4(1.0, 1.0, 0.0, 1.0);
-    }
-#endif
-#ifdef IGNORE_NAN
-    if (isnan(attr)) {
-        return vec4(0.0, 0.0, 0.0, 0.0);
-    }
-#endif
-
     vec2 minMaxValue = minMaxValues[variableIndex];
     float minAttributeValue = minMaxValue.x;
     float maxAttributeValue = minMaxValue.y;
@@ -56,32 +45,25 @@ vec4 transferFunction(float attr, uint variableIndex) {
     // Transfer to range [0,1].
     float posFloat = clamp((attr - minAttributeValue) / (maxAttributeValue - minAttributeValue), 0.0, 1.0);
 
+#ifdef IS_MULTIVAR_DATA
+    if (useColorIntensity == 0) {
+        posFloat = 1.0;
+    }
+#endif
+
     // Look up the color value.
     return texture(transferFunctionTexture, vec2(posFloat, variableIndex));
 }
 
 #else
 
-#ifndef TRANSFER_FUNCTION_MIN_MAX_PUSH_CONSTANTS
 layout (binding = MIN_MAX_BUFFER_BINDING) uniform MinMaxUniformBuffer {
     float minAttributeValue;
     float maxAttributeValue;
 };
-#endif
 layout(binding = TRANSFER_FUNCTION_TEXTURE_BINDING) uniform sampler1D transferFunctionTexture;
 
 vec4 transferFunction(float attr) {
-#ifdef NAN_YELLOW
-    if (isnan(attr)) {
-        return vec4(1.0, 1.0, 0.0, 1.0);
-    }
-#endif
-#ifdef IGNORE_NAN
-    if (isnan(attr)) {
-        return vec4(0.0, 0.0, 0.0, 0.0);
-    }
-#endif
-
     // Transfer to range [0,1].
     float posFloat = clamp((attr - minAttributeValue) / (maxAttributeValue - minAttributeValue), 0.0, 1.0);
     // Look up the color value.

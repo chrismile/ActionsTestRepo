@@ -36,9 +36,10 @@ set clean=false
 set build_dir=.build
 set destination_dir=Shipping
 set vcpkg_triplet="x64-windows"
-set build_with_cuda_support=true
-set build_with_zarr_support=true
-set build_with_osqp_support=true
+:: Leave empty to let cmake try to find the correct paths
+set optix_install_dir=""
+:: Optionally, the program can be built with Direct3D 12 support for some renderers.
+set use_d3d=false
 
 :loop
 IF NOT "%1"=="" (
@@ -57,6 +58,9 @@ IF NOT "%1"=="" (
     IF "%1"=="--vcpkg-triplet" (
         SET vcpkg_triplet=%2
         SHIFT
+    )
+    IF "%1"=="--d3d" (
+        SET use_d3d=true
     )
     SHIFT
     GOTO :loop
@@ -148,6 +152,9 @@ IF "%VULKAN_SDK%"=="" (
   )
 )
 :vulkan_finished
+if %use_d3d% == true (
+    set cmake_args_sgl=%cmake_args_sgl% -DSUPPORT_D3D12=ON -DVCPKG_MANIFEST_FEATURES=d3d12
+)
 
 IF "%toolchain_file%"=="" (
     SET use_vcpkg=true
@@ -157,6 +164,7 @@ IF "%toolchain_file%"=="" (
 IF "%toolchain_file%"=="" SET toolchain_file="vcpkg/scripts/buildsystems/vcpkg.cmake"
 
 set cmake_args=%cmake_args% -DCMAKE_TOOLCHAIN_FILE="third_party/%toolchain_file%" ^
+-DPYTHONHOME="./python3" ^
                -Dsgl_DIR="third_party/sgl/install/lib/cmake/sgl/"
 
 set cmake_args_general=%cmake_args_general% -DCMAKE_TOOLCHAIN_FILE="%third_party_dir%/%toolchain_file%"
@@ -206,6 +214,26 @@ if not exist .\sgl\install (
 
     popd
 )
+
+set embree_version=3.13.3
+if not exist ".\embree-%embree_version%.x64.vc14.windows" (
+    echo ------------------------
+    echo    downloading Embree
+    echo ------------------------
+    curl.exe -L "https://github.com/embree/embree/releases/download/v%embree_version%/embree-%embree_version%.x64.vc14.windows.zip" --output embree-%embree_version%.x64.vc14.windows.zip
+    tar -xvzf "embree-%embree_version%.x64.vc14.windows.zip"
+)
+set cmake_args=%cmake_args% -Dembree_DIR="third_party/embree-%embree_version%.x64.vc14.windows/lib/cmake/embree-%embree_version%"
+
+set ospray_version=2.9.0
+if not exist ".\ospray-%ospray_version%.x86_64.windows" (
+    echo ------------------------
+    echo   downloading OSPRay
+    echo ------------------------
+    curl.exe -L "https://github.com/ospray/OSPRay/releases/download/v%ospray_version%/ospray-%ospray_version%.x86_64.windows.zip" --output ospray-%ospray_version%.x86_64.windows.zip
+    tar -xvzf "ospray-%ospray_version%.x86_64.windows.zip"
+)
+set cmake_args=%cmake_args% -Dospray_DIR="third_party/ospray-%ospray_version%.x86_64.windows/lib/cmake/ospray-%ospray_version%"
 
 set eccodes_version=2.26.0
 if not exist ".\eccodes-%eccodes_version%-Source" (
@@ -266,156 +294,25 @@ if %use_eccodes% == true if not exist ".\eccodes-%eccodes_version%" (
     if not exist .\build\ mkdir .\build\
     pushd build
     cmake .. %cmake_generator% -DCMAKE_INSTALL_PREFIX=../../eccodes-%eccodes_version% -DCMAKE_CXX_FLAGS="/MP" || exit /b 1
-    if x%vcpkg_triplet:release=%==x%str1% (
-        cmake --build . --config Debug   -- /m            || exit /b 1
-        cmake --build . --config Debug   --target install || exit /b 1
-    )
-    if x%vcpkg_triplet:debug=%==x%str1% (
-        cmake --build . --config Release -- /m            || exit /b 1
-        cmake --build . --config Release --target install || exit /b 1
-    )
+    cmake --build . --config Debug   -- /m            || exit /b 1
+    cmake --build . --config Debug   --target install || exit /b 1
+    cmake --build . --config Release -- /m            || exit /b 1
+    cmake --build . --config Release --target install || exit /b 1
     popd
     popd
 )
 set cmake_args=%cmake_args% -Deccodes_DIR="third_party/eccodes-%eccodes_version%/lib/cmake/eccodes-%eccodes_version%"
 
-if %build_with_zarr_support% == true (
-    if not exist ".\xtl" (
-        echo ------------------------
-        echo     downloading xtl
-        echo ------------------------
-        :: Make sure we have no leftovers from a failed build attempt.
-        if exist ".\xtl-src" (
-            rmdir /s /q ".\xtl-src"
-        )
-        git clone https://github.com/xtensor-stack/xtl.git xtl-src
-        if not exist .\xtl-src\build\ mkdir .\xtl-src\build\
-        pushd "xtl-src\build"
-        cmake %cmake_generator% %cmake_args_general% ^
-        -DCMAKE_INSTALL_PREFIX="%third_party_dir%/xtl" ..
-        cmake --build . --config Release --target install || exit /b 1
-        popd
-    )
-    if not exist ".\xtensor" (
-        echo ------------------------
-        echo   downloading xtensor
-        echo ------------------------
-        :: Make sure we have no leftovers from a failed build attempt.
-        if exist ".\xtensor-src" (
-            rmdir /s /q ".\xtensor-src"
-        )
-        git clone https://github.com/xtensor-stack/xtensor.git xtensor-src
-        if not exist .\xtensor-src\build\ mkdir .\xtensor-src\build\
-        pushd "xtensor-src\build"
-        cmake %cmake_generator% %cmake_args_general% ^
-        -Dxtl_DIR="%third_party_dir%/xtl/share/cmake/xtl" ^
-        -DCMAKE_INSTALL_PREFIX="%third_party_dir%/xtensor" ..
-        cmake --build . --config Release --target install || exit /b 1
-        popd
-    )
-    if not exist ".\xsimd" (
-        echo ------------------------
-        echo    downloading xsimd
-        echo ------------------------
-        :: Make sure we have no leftovers from a failed build attempt.
-        if exist ".\xsimd-src" (
-            rmdir /s /q ".\xsimd-src"
-        )
-        git clone https://github.com/xtensor-stack/xsimd.git xsimd-src
-        if not exist .\xsimd-src\build\ mkdir .\xsimd-src\build\
-        pushd "xsimd-src\build"
-        cmake %cmake_generator% %cmake_args_general% ^
-        -Dxtl_DIR="%third_party_dir%/xtl/share/cmake/xtl" ^
-        -DENABLE_XTL_COMPLEX=ON ^
-        -DCMAKE_INSTALL_PREFIX="%third_party_dir%/xsimd" ..
-        cmake --build . --config Release --target install || exit /b 1
-        popd
-    )
-    if not exist ".\z5" (
-        echo ------------------------
-        echo      downloading z5
-        echo ------------------------
-        :: Make sure we have no leftovers from a failed build attempt.
-        if exist ".\z5-src" (
-            rmdir /s /q ".\z5-src"
-        )
-        git clone https://github.com/chrismile/z5.git z5-src
-        :: sed -i '/^SET(Boost_NO_SYSTEM_PATHS ON)$/s/^/#/' z5-src/CMakeLists.txt
-        powershell -Command "(gc z5-src/CMakeLists.txt) -replace 'SET\(Boost_NO_SYSTEM_PATHS ON\)', '#SET(Boost_NO_SYSTEM_PATHS ON)' | Out-File -encoding ASCII z5-src/CMakeLists.txt"
-        powershell -Command "(gc z5-src/CMakeLists.txt) -replace 'SET\(BOOST_ROOT \"\$\{CMAKE_PREFIX_PATH\}\/Library\"\)', '#SET(BOOST_ROOT \"${CMAKE_PREFIX_PATH}/Library\")' | Out-File -encoding ASCII z5-src/CMakeLists.txt"
-        powershell -Command "(gc z5-src/CMakeLists.txt) -replace 'SET\(BOOST_LIBRARYDIR \"\$\{CMAKE_PREFIX_PATH\}\/Library\/lib\"\)', '#SET(BOOST_LIBRARYDIR \"${CMAKE_PREFIX_PATH}/Library/lib\")' | Out-File -encoding ASCII z5-src/CMakeLists.txt"
-        :: powershell -Command "(gc z5-src/CMakeLists.txt) -replace 'find_package\(Boost 1.63.0 COMPONENTS system filesystem REQUIRED\)', 'find_package(Boost COMPONENTS system filesystem REQUIRED)' | Out-File -encoding ASCII z5-src/CMakeLists.txt"
-        :: powershell -Command "(gc z5-src/CMakeLists.txt) -replace 'find_package\(Boost 1.63.0 REQUIRED\)', 'find_package(Boost REQUIRED)' | Out-File -encoding ASCII z5-src/CMakeLists.txt"
-        powershell -Command "(gc z5-src/CMakeLists.txt) -replace 'set\(CMAKE_MODULE_PATH \$\{CMAKE_CURRENT_SOURCE_DIR\}\/cmake\)', 'list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)' | Out-File -encoding ASCII z5-src/CMakeLists.txt"
-        powershell -Command "(gc z5-src/CMakeLists.txt) -replace 'set\(CMAKE_PREFIX_PATH \$\{CMAKE_PREFIX_PATH\} CACHE PATH \"\"\)', '#set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} CACHE PATH "")' | Out-File -encoding ASCII z5-src/CMakeLists.txt"
-        powershell -Command "(gc z5-src/CMakeLists.txt) -replace 'if\(NOT WITHIN_TRAVIS\)', 'if(FALSE)' | Out-File -encoding ASCII z5-src/CMakeLists.txt"
-        echo {> %third_party_dir%/z5-src/vcpkg.json
-        echo "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",>> %third_party_dir%/z5-src/vcpkg.json
-        echo "name": "z5",>> %third_party_dir%/z5-src/vcpkg.json
-        echo "version": "0.1.0",>> %third_party_dir%/z5-src/vcpkg.json
-        echo "dependencies": [ "boost-core", "boost-filesystem", "nlohmann-json", "blosc" ]>> %third_party_dir%/z5-src/vcpkg.json
-        echo }>> %third_party_dir%/z5-src/vcpkg.json
-        if not exist .\z5-src\build\ mkdir .\z5-src\build\
-        pushd "z5-src\build"
-        cmake %cmake_generator% %cmake_args_general% ^
-        -Dxtl_DIR="%third_party_dir%/xtl/share/cmake/xtl" ^
-        -Dxtensor_DIR="%third_party_dir%/xtensor/share/cmake/xtensor" ^
-        -Dxsimd_DIR="%third_party_dir%/xsimd/lib/cmake/xsimd" ^
-        -DBUILD_Z5PY=OFF -DWITH_ZLIB=ON -DWITH_LZ4=ON -DWITH_BLOSC=ON ^
-        -DCMAKE_INSTALL_PREFIX="%third_party_dir%/z5" ..
-        cmake --build . --config Release --target install || exit /b 1
-        popd
-    )
-)
-set cmake_args=%cmake_args% -Dxtl_DIR="third_party/xtl/share/cmake/xtl" ^
--Dxtensor_DIR="third_party/xtensor/share/cmake/xtensor" ^
--Dxsimd_DIR="third_party/xsimd/lib/cmake/xsimd" ^
--Dz5_DIR="third_party/z5/lib/cmake/z5"
-
-if %build_with_cuda_support% == true (
-    if not exist ".\tiny-cuda-nn" (
-        echo ------------------------
-        echo downloading tiny-cuda-nn
-        echo ------------------------
-        git clone https://github.com/chrismile/tiny-cuda-nn.git tiny-cuda-nn --recurse-submodules
-        pushd "tiny-cuda-nn"
-        git checkout activations
-        popd
-    )
-    if not exist ".\quick-mlp" (
-        echo ------------------------
-        echo   downloading QuickMLP
-        echo ------------------------
-        git clone https://github.com/chrismile/quick-mlp.git quick-mlp --recurse-submodules
-    )
-)
-
-if %build_with_osqp_support% == true (
-    if not exist ".\osqp" (
-        echo ------------------------
-        echo    downloading OSQP
-        echo ------------------------
-        :: Make sure we have no leftovers from a failed build attempt.
-        if exist ".\osqp-src" (
-            rmdir /s /q ".\osqp-src"
-        )
-        git clone https://github.com/osqp/osqp osqp-src
-        if not exist .\osqp-src\build\ mkdir .\osqp-src\build\
-        pushd "osqp-src\build"
-        cmake %cmake_generator% %cmake_args_general% ^
-        -DCMAKE_INSTALL_PREFIX="%third_party_dir%/osqp" ..
-        cmake --build . --config Release --target install || exit /b 1
-        popd
-    )
-)
-set cmake_args=%cmake_args% -Dosqp_DIR="third_party/osqp/lib/cmake/osqp"
-
-if not exist ".\limbo" (
+set oidn_version=2.3.2
+if not exist ".\oidn-%oidn_version%.x64.windows" (
     echo ------------------------
-    echo     downloading limbo
+    echo downloading OpenImageDenoise
     echo ------------------------
-    git clone --recursive https://github.com/resibots/limbo.git limbo
+    curl.exe -L "https://github.com/OpenImageDenoise/oidn/releases/download/v%oidn_version%/oidn-%oidn_version%.x64.windows.zip" --output oidn-%oidn_version%.x64.windows.zip
+    tar -xvzf "oidn-%oidn_version%.x64.windows.zip"
+    del "oidn-%oidn_version%.x64.windows.zip"
 )
+set cmake_args=%cmake_args% -DOpenImageDenoise_DIR="third_party/oidn-%oidn_version%.x64.windows/lib/cmake/OpenImageDenoise-%oidn_version%"
 
 popd
 
@@ -433,6 +330,10 @@ echo ------------------------
 echo       generating
 echo ------------------------
 
+if not %optix_install_dir% == "" (
+   echo Using custom OptiX path
+   set cmake_args=%cmake_args% -DOptiX_INSTALL_DIR=%optix_install_dir%
+)
 
 cmake %cmake_generator% %cmake_args% -S . -B %build_dir%
 
@@ -448,6 +349,9 @@ if %use_vcpkg% == true (
 echo ------------------------
 echo    copying new files
 echo ------------------------
+robocopy .build\vcpkg_installed\x64-windows\tools\python3 ^
+         %destination_dir%\python3 /e >NUL
+robocopy third_party\ospray-%ospray_version%.x86_64.windows\bin %destination_dir% *.dll >NUL
 if %debug% == true (
     if not exist %destination_dir%\*.pdb (
         del %destination_dir%\*.dll
@@ -483,7 +387,7 @@ echo All done!
 pushd %destination_dir%
 
 if %run_program% == true (
-    Correrender.exe
+    LineVis.exe
 ) else (
     echo Build finished.
 )

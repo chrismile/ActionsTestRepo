@@ -26,8 +26,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef CORRERENDER_VECSTRINGCONVERSION_HPP
-#define CORRERENDER_VECSTRINGCONVERSION_HPP
+#ifndef LINEVIS_VECSTRINGCONVERSION_HPP
+#define LINEVIS_VECSTRINGCONVERSION_HPP
 
 #include <string>
 #include <glm/glm.hpp>
@@ -42,4 +42,4 @@ glm::vec3 stringToVec3(const std::string& s);
 glm::vec4 stringToVec4(const std::string& s);
 glm::quat stringToQuat(const std::string& s);
 
-#endif //CORRERENDER_VECSTRINGCONVERSION_HPP
+#endif //LINEVIS_VECSTRINGCONVERSION_HPP

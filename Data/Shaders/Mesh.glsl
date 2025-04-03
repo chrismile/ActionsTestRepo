@@ -42,13 +42,9 @@ void main() {
 
 layout(location = 0) out vec4 fragColor;
 
-#ifdef VULKAN
 layout(push_constant) uniform PushConstants {
     vec4 color;
 };
-#else
-uniform vec4 color;
-#endif
 
 void main() {
     fragColor = color;
@@ -77,13 +73,9 @@ layout(location = 0) out vec4 fragColor;
 
 layout(binding = 0) uniform sampler2D albedoTexture;
 
-#ifdef VULKAN
 layout(push_constant) uniform PushConstants {
     vec4 color;
 };
-#else
-uniform vec4 color;
-#endif
 
 void main() {
     fragColor = color * texture(albedoTexture, fragTexCoord);

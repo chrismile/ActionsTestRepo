@@ -53,26 +53,21 @@ build_dir_debug=".build_debug"
 build_dir_release=".build_release"
 use_vcpkg=false
 use_conda=false
-conda_env_name="correrender"
+conda_env_name="linevis"
 link_dynamic=false
 use_custom_vcpkg_triplet=false
 custom_glslang=false
-build_with_zarr_support=true
-build_with_cuda_support=true
-build_with_skia_support=false
-skia_link_dynamically=true
-build_with_vkvg_support=false
-build_with_osqp_support=true
-build_with_zink_support=false
+use_open_image_denoise=true
 use_download_swapchain=false
-use_additional_linker_flags=false
-if $use_msys; then
-    build_with_cuda_support=false
-    # VKVG support is disabled due to: https://github.com/jpbruyere/vkvg/issues/140
-    build_with_vkvg_support=false
+if [ $use_msys = false ] && command -v pacman &> /dev/null; then
+    is_embree_installed=true
+    is_ospray_installed=true
+else
+    is_embree_installed=false
+    is_ospray_installed=false
 fi
-# Replicability Stamp (https://www.replicabilitystamp.org/) mode for replicating a figure from the corresponding paper.
-replicability=false
+# Optionally, the program can be built on Windows with MSYS2 with Direct3D 12 support for some renderers.
+use_d3d=false
 
 # Check if a conda environment is already active.
 if $use_conda; then
@@ -109,19 +104,11 @@ do
         use_custom_vcpkg_triplet=true
     elif [ ${!i} = "--custom-glslang" ]; then
         custom_glslang=true
-    elif [ ${!i} = "--vkvg" ] || [ ${!i} = "--use-vkvg" ]; then
-        build_with_vkvg_support=true
-    elif [ ${!i} = "--skia" ] || [ ${!i} = "--use-skia" ]; then
-        build_with_skia_support=true
     elif [ ${!i} = "--dlswap" ]; then
         use_download_swapchain=true
         build_with_vkvg_support=true
-    elif [ ${!i} = "--linker-flags" ]; then
-        use_additional_linker_flags=true
-        ((i++))
-        linker_flags=${!i}
-    elif [ ${!i} = "--replicability" ]; then
-        replicability=true
+    elif [ ${!i} = "--d3d" ]; then
+        use_d3d=true
     fi
 done
 
@@ -147,7 +134,7 @@ else
 fi
 destination_dir="Shipping"
 if $use_macos; then
-    binaries_dest_dir="$destination_dir/Correrender.app/Contents/MacOS"
+    binaries_dest_dir="$destination_dir/LineVis.app/Contents/MacOS"
     if ! command -v brew &> /dev/null; then
         if [ ! -d "/opt/homebrew/bin" ]; then
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -269,13 +256,13 @@ if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [
             || ! is_installed_pacman "mingw-w64-x86_64-vulkan-loader" \
             || ! is_installed_pacman "mingw-w64-x86_64-vulkan-validation-layers" \
             || ! is_installed_pacman "mingw-w64-x86_64-shaderc" \
+            || ! is_installed_pacman "mingw-w64-x86_64-directx-headers" \
             || ! is_installed_pacman "mingw-w64-x86_64-opencl-headers" \
             || ! is_installed_pacman "mingw-w64-x86_64-opencl-icd" || ! is_installed_pacman "mingw-w64-x86_64-jsoncpp" \
-            || ! is_installed_pacman "mingw-w64-x86_64-nlohmann-json" || ! is_installed_pacman "mingw-w64-x86_64-blosc" \
-            || ! is_installed_pacman "mingw-w64-x86_64-netcdf" || ! is_installed_pacman "mingw-w64-x86_64-hdf5" \
-            || ! is_installed_pacman "mingw-w64-x86_64-eccodes" || ! is_installed_pacman "mingw-w64-x86_64-eigen3" \
-            || ! is_installed_pacman "mingw-w64-x86_64-libtiff" || ! is_installed_pacman "mingw-w64-x86_64-nlopt" \
-            || ! is_installed_pacman "mingw-w64-x86_64-glfw"; then
+            || ! is_installed_pacman "mingw-w64-x86_64-eigen3" || ! is_installed_pacman "mingw-w64-x86_64-python" \
+            || ! is_installed_pacman "mingw-w64-x86_64-zeromq" || ! is_installed_pacman "mingw-w64-x86_64-cppzmq" \
+            || ! is_installed_pacman "mingw-w64-x86_64-netcdf" || ! is_installed_pacman "mingw-w64-x86_64-openexr" \
+            || ! is_installed_pacman "mingw-w64-x86_64-eccodes"; then
         echo "------------------------"
         echo "installing dependencies "
         echo "------------------------"
@@ -284,14 +271,10 @@ if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [
         mingw64/mingw-w64-x86_64-libpng mingw64/mingw-w64-x86_64-SDL2 mingw64/mingw-w64-x86_64-SDL2_image \
         mingw64/mingw-w64-x86_64-glew mingw64/mingw-w64-x86_64-vulkan-headers mingw64/mingw-w64-x86_64-vulkan-loader \
         mingw64/mingw-w64-x86_64-vulkan-validation-layers mingw64/mingw-w64-x86_64-shaderc \
-        mingw64/mingw-w64-x86_64-opencl-headers mingw64/mingw-w64-x86_64-opencl-icd mingw64/mingw-w64-x86_64-jsoncpp \
-        mingw64/mingw-w64-x86_64-nlohmann-json mingw64/mingw-w64-x86_64-blosc mingw64/mingw-w64-x86_64-netcdf \
-        mingw64/mingw-w64-x86_64-hdf5 mingw64/mingw-w64-x86_64-eccodes mingw64/mingw-w64-x86_64-eigen3 \
-        mingw64/mingw-w64-x86_64-libtiff mingw64/mingw-w64-x86_64-nlopt mingw64/mingw-w64-x86_64-glfw
-    fi
-    if ! (is_installed_pacman "mingw-w64-x86_64-curl" || is_installed_pacman "mingw-w64-x86_64-curl-gnutls" \
-            || is_installed_pacman "mingw-w64-x86_64-curl-winssl"); then
-        pacman --noconfirm -S --needed mingw64/mingw-w64-x86_64-curl
+        mingw64/mingw-w64-x86_64-directx-headers mingw64/mingw-w64-x86_64-opencl-headers \
+        mingw64/mingw-w64-x86_64-opencl-icd mingw64/mingw-w64-x86_64-jsoncpp mingw64/mingw-w64-x86_64-eigen3 \
+        mingw64/mingw-w64-x86_64-python mingw64/mingw-w64-x86_64-zeromq mingw64/mingw-w64-x86_64-cppzmq \
+        mingw64/mingw-w64-x86_64-netcdf mingw64/mingw-w64-x86_64-openexr mingw64/mingw-w64-x86_64-eccodes
     fi
 elif $use_msys && command -v pacman &> /dev/null; then
     :
@@ -374,29 +357,23 @@ elif $use_macos && command -v brew &> /dev/null && [ ! -d $build_dir_debug ] && 
         if ! is_installed_brew "jsoncpp"; then
             brew install jsoncpp
         fi
-        if ! is_installed_brew "nlohmann-json"; then
-            brew install nlohmann-json
+        if ! is_installed_brew "eigen"; then
+            brew install eigen
         fi
-        if ! is_installed_brew "c-blosc"; then
-            brew install c-blosc
+        if ! is_installed_brew "python@3.12"; then
+            brew install python@3.12
+        fi
+        if ! is_installed_brew "zeromq"; then
+            brew install zeromq
+        fi
+        if ! is_installed_brew "cppzmq"; then
+            brew install cppzmq
         fi
         if ! is_installed_brew "netcdf"; then
             brew install netcdf
         fi
-        if ! is_installed_brew "hdf5"; then
-            brew install hdf5
-        fi
-        if ! is_installed_brew "eigen"; then
-            brew install eigen
-        fi
-        if ! is_installed_brew "libtiff"; then
-            brew install libtiff
-        fi
-        if ! is_installed_brew "curl"; then
-            brew install curl
-        fi
-        if ! is_installed_brew "nlopt"; then
-            brew install nlopt
+        if ! is_installed_brew "openexr"; then
+            brew install openexr
         fi
     fi
 elif $use_macos && command -v brew &> /dev/null; then
@@ -439,23 +416,16 @@ elif command -v apt &> /dev/null && ! $use_conda; then
                 || ! is_installed_apt "libsdl2-dev" || ! is_installed_apt "libsdl2-image-dev" \
                 || ! is_installed_apt "libglew-dev" || ! is_installed_apt "opencl-c-headers" \
                 || ! is_installed_apt "ocl-icd-opencl-dev" || ! is_installed_apt "libjsoncpp-dev" \
-                || ! is_installed_apt "nlohmann-json3-dev" || ! is_installed_apt "libblosc-dev" \
-                || ! is_installed_apt "liblz4-dev" || ! is_installed_apt "libnetcdf-dev" \
-                || ! is_installed_apt "libhdf5-dev" || ! is_installed_apt "libeccodes-dev" \
-                || ! is_installed_apt "libeccodes-tools" || ! is_installed_apt "libopenjp2-7-dev" \
-                || ! is_installed_apt "libeigen3-dev" || ! is_installed_apt "libtiff-dev" \
-                || ! is_installed_apt "libnlopt-cxx-dev"; then
+                || ! is_installed_apt "libeigen3-dev" || ! is_installed_apt "python3-dev" \
+                || ! is_installed_apt "libzmq3-dev" || ! is_installed_apt "libnetcdf-dev" \
+                || ! is_installed_apt "libopenexr-dev" || ! is_installed_apt "libeccodes-dev" \
+                || ! is_installed_apt "libeccodes-tools" || ! is_installed_apt "libopenjp2-7-dev"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo apt install -y libboost-filesystem-dev libicu-dev libglm-dev libarchive-dev libtinyxml2-dev libpng-dev \
-            libsdl2-dev libsdl2-image-dev libglew-dev opencl-c-headers ocl-icd-opencl-dev libjsoncpp-dev \
-            nlohmann-json3-dev libblosc-dev liblz4-dev libnetcdf-dev libhdf5-dev libeccodes-dev libeccodes-tools \
-            libopenjp2-7-dev libeigen3-dev libtiff-dev libnlopt-cxx-dev
-        fi
-        if ! (is_installed_apt "libcurl4-openssl-dev" || is_installed_apt "libcurl4-gnutls-dev" \
-                || is_installed_apt "libcurl4-nss-dev"); then
-            sudo apt install -y libcurl4-openssl-dev
+            libsdl2-dev libsdl2-image-dev libglew-dev opencl-c-headers ocl-icd-opencl-dev libjsoncpp-dev libeigen3-dev \
+            python3-dev libzmq3-dev libnetcdf-dev libopenexr-dev libeccodes-dev libeccodes-tools libopenjp2-7-dev
         fi
     fi
 elif command -v pacman &> /dev/null && ! $use_conda; then
@@ -489,16 +459,15 @@ elif command -v pacman &> /dev/null && ! $use_conda; then
                 || ! is_installed_pacman "libpng" || ! is_installed_pacman "sdl2" || ! is_installed_pacman "sdl2_image" \
                 || ! is_installed_pacman "glew" || ! is_installed_pacman "vulkan-devel" \
                 || ! is_installed_pacman "shaderc" || ! is_installed_pacman "opencl-headers" \
-                || ! is_installed_pacman "ocl-icd" || ! is_installed_pacman "jsoncpp" \
-                || ! is_installed_pacman "nlohmann-json" || ! is_installed_pacman "blosc" \
-                || ! is_installed_pacman "netcdf" || ! is_installed_pacman "hdf5" || ! is_installed_pacman "eigen" \
-                || ! is_installed_pacman "libtiff" || ! is_installed_pacman "curl" \
-                || ! is_installed_pacman "nlopt"; then
+                || ! is_installed_pacman "ocl-icd" || ! is_installed_pacman "jsoncpp" || ! is_installed_pacman "eigen" \
+                || ! is_installed_pacman "python3" || ! is_installed_pacman "zeromq" || ! is_installed_pacman "cppzmq" \
+                || ! is_installed_pacman "netcdf" || ! is_installed_pacman "openexr" \
+                || ! is_installed_pacman "ospray"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo pacman -S boost icu glm libarchive tinyxml2 libpng sdl2 sdl2_image glew vulkan-devel shaderc \
-            opencl-headers ocl-icd jsoncpp nlohmann-json blosc netcdf hdf5 eigen libtiff curl nlopt
+            opencl-headers ocl-icd jsoncpp eigen python3 zeromq cppzmq netcdf openexr ospray
         fi
         if ! command -v yay &> /dev/null && ! is_installed_yay "eccodes"; then
             echo "------------------------"
@@ -545,19 +514,16 @@ elif command -v yum &> /dev/null && ! $use_conda; then
                 || ! is_installed_rpm "SDL2_image-devel" || ! is_installed_rpm "glew-devel" \
                 || ! is_installed_rpm "vulkan-headers" || ! is_installed_rpm "libshaderc-devel" \
                 || ! is_installed_rpm "opencl-headers" || ! is_installed_rpm "ocl-icd" \
-                || ! is_installed_rpm "jsoncpp-devel" || ! is_installed_rpm "json-devel" \
-                || ! is_installed_rpm "blosc-devel" || ! is_installed_rpm "netcdf-devel" \
-                || ! is_installed_rpm "hdf5-devel" || ! is_installed_rpm "eccodes-devel" \
-                || ! is_installed_rpm "eigen3-devel" || ! is_installed_rpm "libtiff-devel" \
-                || ! is_installed_rpm "libcurl-devel" || ! is_installed_rpm "NLopt-devel" \
-                || ! is_installed_rpm "expat-devel"; then
+                || ! is_installed_rpm "jsoncpp-devel" || ! is_installed_rpm "eigen3-devel" \
+                || ! is_installed_rpm "python3-devel" || ! is_installed_rpm "zeromq-devel" \
+                || ! is_installed_rpm "cppzmq-devel" || ! is_installed_rpm "netcdf-devel" \
+                || ! is_installed_rpm "openexr-devel" || ! is_installed_rpm "eccodes-devel"; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
             sudo yum install -y boost-devel libicu-devel glm-devel libarchive-devel tinyxml2-devel libpng-devel \
             SDL2-devel SDL2_image-devel glew-devel vulkan-headers libshaderc-devel opencl-headers ocl-icd jsoncpp-devel \
-            json-devel blosc-devel netcdf-devel hdf5-devel eccodes-devel eigen3-devel libtiff-devel libcurl-devel \
-            NLopt-devel expat-devel
+            eigen3-devel python3-devel zeromq-devel cppzmq-devel netcdf-devel openexr-devel eccodes-devel
         fi
     fi
 elif $use_conda && ! $use_macos; then
@@ -619,11 +585,10 @@ elif $use_conda && ! $use_macos; then
             || ! list_contains "$conda_pkg_list" "xorg-libxfixes" || ! list_contains "$conda_pkg_list" "xorg-libxau" \
             || ! list_contains "$conda_pkg_list" "xorg-libxrandr" || ! list_contains "$conda_pkg_list" "patchelf" \
             || ! list_contains "$conda_pkg_list" "libvulkan-headers" || ! list_contains "$conda_pkg_list" "shaderc" \
-            || ! list_contains "$conda_pkg_list" "jsoncpp" || ! list_contains "$conda_pkg_list" "nlohmann_json" \
-            || ! list_contains "$conda_pkg_list" "blosc" || ! list_contains "$conda_pkg_list" "netcdf4" \
-            || ! list_contains "$conda_pkg_list" "hdf5" || ! list_contains "$conda_pkg_list" "eccodes" \
-            || ! list_contains "$conda_pkg_list" "eigen" || ! list_contains "$conda_pkg_list" "libtiff" \
-            || ! list_contains "$conda_pkg_list" "libcurl" || ! list_contains "$conda_pkg_list" "nlopt"; then
+            || ! list_contains "$conda_pkg_list" "jsoncpp" || ! list_contains "$conda_pkg_list" "eigen" \
+            || ! list_contains "$conda_pkg_list" "zeromq" || ! list_contains "$conda_pkg_list" "cppzmq" \
+            || ! list_contains "$conda_pkg_list" "netcdf4" || ! list_contains "$conda_pkg_list" "openexr" \
+            || ! list_contains "$conda_pkg_list" "eccodes"; then
         echo "------------------------"
         echo "installing dependencies "
         echo "------------------------"
@@ -631,8 +596,8 @@ elif $use_conda && ! $use_macos; then
         cxx-compiler make cmake pkg-config gdb git mesa-libgl-devel-cos7-x86_64 libglvnd-glx-cos7-x86_64 \
         mesa-dri-drivers-cos7-aarch64 libxau-devel-cos7-aarch64 libselinux-devel-cos7-aarch64 \
         libxdamage-devel-cos7-aarch64 libxxf86vm-devel-cos7-aarch64 libxext-devel-cos7-aarch64 xorg-libxfixes \
-        xorg-libxau xorg-libxrandr patchelf libvulkan-headers shaderc jsoncpp nlohmann_json blosc netcdf4 hdf5 eccodes \
-        eigen libtiff libcurl nlopt
+        xorg-libxau xorg-libxrandr patchelf libvulkan-headers shaderc jsoncpp eigen zeromq cppzmq netcdf4 openexr \
+        eccodes
     fi
 else
     echo "Warning: Unsupported system package manager detected." >&2
@@ -653,14 +618,6 @@ fi
 if [ $use_macos = false ] && ! command -v pkg-config &> /dev/null; then
     echo "pkg-config was not found, but is required to build the program."
     exit 1
-fi
-
-if [ ! -f nvcc ] && [ -d /usr/local/cuda ]; then
-    if [ -d /usr/local/cuda/targets/x86_64-linux ]; then
-        export CPATH=/usr/local/cuda/targets/x86_64-linux/include:$CPATH
-        export LD_LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib:$LD_LIBRARY_PATH
-    fi
-    export PATH=$PATH:/usr/local/cuda/bin
 fi
 
 if [ ! -d "submodules/IsosurfaceCpp/src" ]; then
@@ -704,35 +661,9 @@ if $glibcxx_debug; then
     params+=(-DUSE_GLIBCXX_DEBUG=On)
 fi
 
-if [ $use_additional_linker_flags = true ]; then
-    params+=(-DCMAKE_EXE_LINKER_FLAGS="$linker_flags")
-fi
-
-if [ $use_download_swapchain = true ]; then
-    params_run+=(--dlswap)
-fi
-
 cmake_version=$(cmake --version | head -n 1 | awk '{print $NF}')
 cmake_version_major=$(echo $cmake_version | cut -d. -f1)
 cmake_version_minor=$(echo $cmake_version | cut -d. -f2)
-if [[ $cmake_version_major < 3 || ($cmake_version_major == 3 && $cmake_version_minor < 18) ]]; then
-    os_arch_cmake=${os_arch}
-    if [ "$os_arch" = "arm64" ]; then
-        os_arch_cmake="aarch64"
-    fi
-    cmake_download_version="4.0.0"
-    if [ ! -d "cmake-${cmake_download_version}-linux-x86_64" ]; then
-        echo "------------------------"
-        echo "    downloading cmake   "
-        echo "------------------------"
-        curl --silent --show-error --fail -OL "https://github.com/Kitware/CMake/releases/download/v${cmake_download_version}/cmake-${cmake_download_version}-linux-${os_arch_cmake}.tar.gz"
-        tar -xf cmake-${cmake_download_version}-linux-x86_64.tar.gz -C .
-    fi
-    PATH="${projectpath}/third_party/cmake-${cmake_download_version}-linux-x86_64/bin:$PATH"
-    cmake_version=$(cmake --version | head -n 1 | awk '{print $NF}')
-    cmake_version_major=$(echo $cmake_version | cut -d. -f1)
-    cmake_version_minor=$(echo $cmake_version | cut -d. -f2)
-fi
 if [ $use_msys = false ] && [ $use_macos = false ] && [ $use_conda = false ] && [ $use_vcpkg = false ] && [[ $cmake_version_major -ge 4 ]]; then
     # Ubuntu 22.04 ships packages, such as libjsoncpp-dev, that are incompatible with CMake 4.0.
     if (lsb_release -a 2> /dev/null | grep -q 'Ubuntu' || lsb_release -a 2> /dev/null | grep -q 'Mint'); then
@@ -912,6 +843,41 @@ fi
 if [ $use_msys = false ] && [ -z "${VULKAN_SDK+1}" ]; then
     vulkan_sdk_env_set=true
 fi
+if [ $use_d3d = true ] && [ $use_msys = true ]; then
+    # As of 2024-08-18, MSYS2 does not have a package for the DirectX Shader Compiler yet.
+    # For progress, see issue at: https://github.com/msys2/MINGW-packages/issues/20670
+    # As a fix, we will use the pre-compiled binaries for now.
+    if [ ! -d "./dxc" ]; then
+        echo "------------------------"
+        echo "downloading DX Shader Compiler"
+        echo "------------------------"
+        dxc_version="v1.8.2407"
+        dxc_dir_name="dxc_2024_07_31"
+        wget "https://github.com/microsoft/DirectXShaderCompiler/releases/download/${dxc_version}/${dxc_dir_name}.zip"
+        unzip "${dxc_dir_name}.zip" -d "${dxc_dir_name}"
+        rm "${dxc_dir_name}.zip"
+        mkdir dxc
+        mkdir dxc/tools
+        mkdir dxc/bin
+        mkdir dxc/lib
+        mkdir dxc/include
+        mkdir dxc/share
+        pushd dxc/share >/dev/null
+        wget "https://raw.githubusercontent.com/chrismile/CMakeSnippets/main/directx-dxc-config.cmake"
+        popd >/dev/null
+        os_arch="$(uname -m)"
+        os_arch_win=${os_arch}
+        if [ "$os_arch" = "x86_64" ]; then
+            os_arch_win="x64"
+        fi
+        find "${dxc_dir_name}/bin/${os_arch_win}" -name "*.dll" -exec cp {} dxc/bin/ \;
+        find "${dxc_dir_name}/bin/${os_arch_win}" -name "*.exe" -exec cp {} dxc/tools/ \;
+        find "${dxc_dir_name}/lib/${os_arch_win}" -name "*.lib" -exec cp {} dxc/lib/ \;
+        find "${dxc_dir_name}/inc" -name "*.h" -exec cp {} dxc/include/ \;
+    fi
+
+    params_sgl+=(-DSUPPORT_D3D12=ON -Ddirectx-dxc_DIR="${projectpath}/third_party/dxc/share")
+fi
 
 if [ $use_vcpkg = true ] && [ ! -d "./vcpkg" ]; then
     echo "------------------------"
@@ -1024,258 +990,132 @@ if [ ! -d "./sgl/install" ]; then
     popd >/dev/null
 fi
 
-# xtl and other dependencies broke compatibility with medium-old versions of CMake (< 3.29).
-is_old_cmake=false
-if [[ $cmake_version_major < 3 || ($cmake_version_major == 3 && $cmake_version_minor < 29) ]]; then
-    is_old_cmake=true
+if [ $use_vcpkg = true ]; then
+    params+=(-DPYTHONHOME="./python3")
 fi
 
-if $build_with_zarr_support; then
-    if [ ! -d "./xtl" ]; then
-        echo "------------------------"
-        echo "    downloading xtl     "
-        echo "------------------------"
-        # Make sure we have no leftovers from a failed build attempt.
-        if [ -d "./xtl-src" ]; then
-            rm -rf "./xtl-src"
+if $use_msys; then
+    Python3_VERSION="$(find "$MSYSTEM_PREFIX/lib/" -maxdepth 1 -type d -name 'python*' -printf "%f" -quit)"
+    params+=(-DPython3_FIND_REGISTRY=NEVER -DPYTHONHOME="./python3" -DPYTHONPATH="./python3/lib/$Python3_VERSION")
+fi
+embree_version="3.13.3"
+ospray_version="2.9.0"
+
+if [ $use_macos = false ] && [ $use_msys = false ]; then
+    if ! $is_embree_installed && [ $os_arch = "x86_64" ]; then
+        if [ ! -d "./embree-${embree_version}.x86_64.linux" ]; then
+            echo "------------------------"
+            echo "   downloading Embree   "
+            echo "------------------------"
+            wget "https://github.com/embree/embree/releases/download/v${embree_version}/embree-${embree_version}.x86_64.linux.tar.gz"
+            tar -xvzf "embree-${embree_version}.x86_64.linux.tar.gz"
         fi
-        git clone https://github.com/xtensor-stack/xtl.git xtl-src
-        if $is_old_cmake; then
-            pushd xtl-src >/dev/null
-            git checkout 5566caa124a74c21104faef6e445376c5c113d53
-            popd >/dev/null
-        fi
-        mkdir -p xtl-src/build
-        pushd xtl-src/build >/dev/null
-        cmake ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xtl" ..
-        make install
-        popd >/dev/null
+        params+=(-Dembree_DIR="${projectpath}/third_party/embree-${embree_version}.x86_64.linux/lib/cmake/embree-${embree_version}")
     fi
-    if [ ! -d "./xtensor" ]; then
-        echo "------------------------"
-        echo "  downloading xtensor   "
-        echo "------------------------"
-        # Make sure we have no leftovers from a failed build attempt.
-        if [ -d "./xtensor-src" ]; then
-            rm -rf "./xtensor-src"
+
+    if ! $is_ospray_installed && [ $os_arch = "x86_64" ]; then
+        if [ ! -d "./ospray-${ospray_version}.x86_64.linux" ]; then
+            echo "------------------------"
+            echo "   downloading OSPRay   "
+            echo "------------------------"
+            wget "https://github.com/ospray/OSPRay/releases/download/v${ospray_version}/ospray-${ospray_version}.x86_64.linux.tar.gz"
+            tar -xvzf "ospray-${ospray_version}.x86_64.linux.tar.gz"
         fi
-        git clone https://github.com/xtensor-stack/xtensor.git xtensor-src
-        if $is_old_cmake; then
-            pushd xtensor-src >/dev/null
-            git checkout c2e9b7b189b5ac9b383f6e8acb86566142c7bf9a
-            popd >/dev/null
-        fi
-        mkdir -p xtensor-src/build
-        pushd xtensor-src/build >/dev/null
-        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
-        -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xtensor" ..
-        make install
-        popd >/dev/null
+        params+=(-Dospray_DIR="${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/cmake/ospray-${ospray_version}")
     fi
-    if [ ! -d "./xsimd" ]; then
-        echo "------------------------"
-        echo "   downloading xsimd    "
-        echo "------------------------"
+elif [ $use_macos = true ]; then
+    if [ ! -d "./ospray/ospray/lib/cmake" ]; then
         # Make sure we have no leftovers from a failed build attempt.
-        if [ -d "./xsimd-src" ]; then
-            rm -rf "./xsimd-src"
+        if [ -d "./ospray-repo" ]; then
+            rm -rf "./ospray-repo"
         fi
-        git clone https://github.com/xtensor-stack/xsimd.git xsimd-src
-        if $is_old_cmake; then
-            pushd xsimd-src >/dev/null
-            git checkout a507f83ead608fffc558b615b61b20f44f2f4672
-            popd >/dev/null
+        if [ -d "./ospray-build" ]; then
+            rm -rf "./ospray-build"
         fi
-        mkdir -p xsimd-src/build
-        pushd xsimd-src/build >/dev/null
-        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
-        -DENABLE_XTL_COMPLEX=ON \
-        -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/xsimd" ..
-        make install
+        if [ -d "./ospray" ]; then
+            rm -rf "./ospray"
+        fi
+
+        params_ospray=()
+        if [[ $(uname -m) == 'arm64' ]]; then
+            params_ospray+=(-DBUILD_TBB_FROM_SOURCE=On)
+        fi
+
+        # Build OSPRay and its dependencies.
+        git clone https://github.com/ospray/ospray.git ospray-repo
+        mkdir ospray-build
+        pushd "./ospray-build" >/dev/null
+        cmake ../ospray-repo/scripts/superbuild -DCMAKE_INSTALL_PREFIX="$projectpath/third_party/ospray" \
+        -DBUILD_JOBS=$(sysctl -n hw.ncpu) -DBUILD_OSPRAY_APPS=Off ${params_ospray[@]+"${params_ospray[@]}"}
+        cmake --build . --parallel $(sysctl -n hw.ncpu)
+        cmake --build . --parallel $(sysctl -n hw.ncpu)
         popd >/dev/null
     fi
 
-    # Seems like xtensor can install its CMake config either to the share or lib folder.
-    if [ -d "${projectpath}/third_party/xtensor/share/cmake/xtensor" ]; then
-        xtensor_CMAKE_DIR="${projectpath}/third_party/xtensor/share/cmake/xtensor"
+    params+=(-Dembree_DIR="${projectpath}/third_party/ospray/embree/lib/cmake/$(ls "${projectpath}/third_party/ospray/embree/lib/cmake")")
+    params+=(-Dospray_DIR="${projectpath}/third_party/ospray/ospray/lib/cmake/$(ls "${projectpath}/third_party/ospray/ospray/lib/cmake")")
+fi
+
+#if [ -d "./ospray/ospray/lib/cmake" ]; then
+#    is_ospray_installed=true
+#else
+#    is_ospray_installed=false
+#
+#    # Make sure we have no leftovers from a failed build attempt.
+#    if [ -d "./ospray-repo" ]; then
+#        rm -rf "./ospray-repo"
+#    fi
+#    if [ -d "./ospray-build" ]; then
+#        rm -rf "./ospray-build"
+#    fi
+#    if [ -d "./ospray" ]; then
+#        rm -rf "./ospray"
+#    fi
+#
+#    # Build OSPRay and its dependencies.
+#    git clone https://github.com/ospray/ospray.git ospray-repo
+#    mkdir ospray-build
+#    pushd "./ospray-build" >/dev/null
+#    cmake ../ospray-repo/scripts/superbuild -G "MSYS Makefiles" \
+#    -DCMAKE_INSTALL_PREFIX="$projectpath/third_party/ospray" \
+#    -DBUILD_JOBS=$(nproc) -DBUILD_OSPRAY_APPS=Off
+#    cmake --build . --parallel $(nproc)
+#    cmake --build . --parallel $(nproc)
+#    popd >/dev/null
+#
+#    is_ospray_installed=true
+#fi
+#
+#if $is_ospray_installed; then
+#    params+=(-Dembree_DIR="${projectpath}/third_party/ospray/embree/lib/cmake/$(ls "${projectpath}/third_party/ospray/embree/lib/cmake")")
+#    params+=(-Dospray_DIR="${projectpath}/third_party/ospray/ospray/lib/cmake/$(ls "${projectpath}/third_party/ospray/ospray/lib/cmake")")
+#fi
+
+if $use_open_image_denoise; then
+    oidn_version="2.3.2"
+    if $use_msys; then
+        oidn_folder_name="oidn-${oidn_version}.x64.windows"
+        oidn_archive_name="${oidn_folder_name}.zip"
+    elif $use_macos; then
+        oidn_folder_name="oidn-${oidn_version}.${os_arch}.macos"
+        oidn_archive_name="${oidn_folder_name}.tar.gz"
     else
-        xtensor_CMAKE_DIR="${projectpath}/third_party/xtensor/lib/cmake/xtensor"
+        oidn_folder_name="oidn-${oidn_version}.${os_arch}.linux"
+        oidn_archive_name="${oidn_folder_name}.tar.gz"
     fi
-
-    if [ ! -d "./z5" ]; then
+    if [ ! -d "./${oidn_folder_name}" ]; then
         echo "------------------------"
-        echo "     downloading z5     "
+        echo "downloading OpenImageDenoise"
         echo "------------------------"
-        # Make sure we have no leftovers from a failed build attempt.
-        if [ -d "./z5-src" ]; then
-            rm -rf "./z5-src"
-        fi
-        git clone https://github.com/chrismile/z5.git z5-src
-        if [ $use_macos = true ]; then
-            sed -i -e 's/SET(Boost_NO_SYSTEM_PATHS ON)/#SET(Boost_NO_SYSTEM_PATHS ON)/g' z5-src/CMakeLists.txt
+        wget "https://github.com/OpenImageDenoise/oidn/releases/download/v${oidn_version}/${oidn_archive_name}"
+        if $use_msys; then
+            unzip "${oidn_archive_name}"
         else
-            sed -i '/^SET(Boost_NO_SYSTEM_PATHS ON)$/s/^/#/' z5-src/CMakeLists.txt
+            tar -xvzf "${oidn_archive_name}"
         fi
-        if [ $use_vcpkg = true ]; then
-            cat > z5-src/vcpkg.json <<EOF
-{
-    "\$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
-    "name": "z5",
-    "version": "0.1.0",
-    "dependencies": [ "boost-core", "boost-filesystem", "nlohmann-json", "blosc" ]
-}
-EOF
-        fi
-        mkdir -p z5-src/build
-        pushd z5-src/build >/dev/null
-        cmake ${params_gen[@]+"${params_gen[@]}"} -Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
-        -Dxtensor_DIR="${xtensor_CMAKE_DIR}" \
-        -Dxsimd_DIR="${projectpath}/third_party/xsimd/lib/cmake/xsimd" \
-        -DBUILD_Z5PY=OFF -DWITH_ZLIB=ON -DWITH_LZ4=ON -DWITH_BLOSC=ON \
-        -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/z5" ${params_vcpkg[@]+"${params_vcpkg[@]}"} ..
-        make install
-        popd >/dev/null
+        rm "${oidn_archive_name}"
     fi
-    params+=(-Dxtl_DIR="${projectpath}/third_party/xtl/share/cmake/xtl" \
-    -Dxtensor_DIR="${xtensor_CMAKE_DIR}" \
-    -Dxsimd_DIR="${projectpath}/third_party/xsimd/lib/cmake/xsimd" \
-    -Dz5_DIR="${projectpath}/third_party/z5/lib/cmake/z5")
-fi
-
-if $build_with_cuda_support; then
-    if [ ! -d "./tiny-cuda-nn" ]; then
-        echo "------------------------"
-        echo "downloading tiny-cuda-nn"
-        echo "------------------------"
-        git clone https://github.com/chrismile/tiny-cuda-nn.git tiny-cuda-nn --recurse-submodules
-        pushd tiny-cuda-nn >/dev/null
-        git checkout activations
-        popd >/dev/null
-    fi
-    if [ ! -d "./quick-mlp" ]; then
-        echo "------------------------"
-        echo "  downloading QuickMLP  "
-        echo "------------------------"
-        git clone https://github.com/chrismile/quick-mlp.git quick-mlp --recurse-submodules
-    fi
-fi
-
-if $build_with_skia_support; then
-    if $skia_link_dynamically; then
-        out_dir="out/Shared"
-    else
-        out_dir="out/Static"
-    fi
-    if [ ! -d "./skia/$out_dir" ]; then
-        echo "------------------------"
-        echo "    downloading Skia    "
-        echo "------------------------"
-        if [ ! -d "./skia" ]; then
-            git clone https://skia.googlesource.com/skia.git
-            pushd skia >/dev/null
-            python3 tools/git-sync-deps
-            bin/fetch-ninja
-        else
-            pushd skia >/dev/null
-        fi
-        if $skia_link_dynamically; then
-            bin/gn gen out/Shared --args='is_official_build=true is_component_build=true is_debug=false skia_use_vulkan=true skia_use_system_harfbuzz=false skia_use_fontconfig=false'
-            third_party/ninja/ninja -C out/Shared
-            params+=(-DSkia_DIR="${projectpath}/third_party/skia" -DSkia_BUILD_TYPE=Shared)
-        else
-            bin/gn gen out/Static --args='is_official_build=true is_debug=false skia_use_vulkan=true skia_use_system_harfbuzz=false skia_use_fontconfig=false'
-            third_party/ninja/ninja -C out/Static
-            params+=(-DSkia_DIR="${projectpath}/third_party/skia" -DSkia_BUILD_TYPE=Static)
-        fi
-        popd >/dev/null
-    fi
-fi
-
-if $build_with_vkvg_support; then
-    if [ ! -d "./vkvg" ]; then
-        echo "------------------------"
-        echo "    downloading VKVG    "
-        echo "------------------------"
-        if [ -d "./vkvg-src" ]; then
-            rm -rf "./vkvg-src"
-        fi
-        git clone --recursive https://github.com/chrismile/vkvg vkvg-src
-        mkdir -p vkvg-src/build
-        pushd vkvg-src/build >/dev/null
-        cmake .. ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/vkvg" \
-        -DVKVG_ENABLE_VK_SCALAR_BLOCK_LAYOUT=ON -DVKVG_ENABLE_VK_TIMELINE_SEMAPHORE=ON \
-        -DVKVG_USE_FONTCONFIG=OFF -DVKVG_USE_HARFBUZZ=OFF -DVKVG_BUILD_TESTS=OFF
-        make -j $(nproc)
-        make install
-        popd >/dev/null
-    fi
-    params+=(-Dvkvg_DIR="${projectpath}/third_party/vkvg")
-fi
-
-if $build_with_osqp_support; then
-    if [ ! -d "./osqp" ]; then
-        echo "------------------------"
-        echo "    downloading OSQP    "
-        echo "------------------------"
-        if [ -d "./osqp-src" ]; then
-            rm -rf "./osqp-src"
-        fi
-        git clone https://github.com/osqp/osqp osqp-src
-        mkdir -p osqp-src/build
-        pushd osqp-src/build >/dev/null
-        cmake .. ${params_gen[@]+"${params_gen[@]}"} -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${projectpath}/third_party/osqp"
-        make -j $(nproc)
-        make install
-        popd >/dev/null
-    fi
-    params+=(-Dosqp_DIR="${projectpath}/third_party/osqp/lib/cmake/osqp")
-fi
-
-if [ ! -d "${projectpath}/third_party/limbo" ]; then
-    echo "------------------------"
-    echo "    downloading limbo   "
-    echo "------------------------"
-    git clone --recursive https://github.com/resibots/limbo.git "${projectpath}/third_party/limbo"
-fi
-
-if $build_with_zink_support; then
-    if [ ! -d "./mesa" ]; then
-        # Download libdrm and Mesa.
-        LIBDRM_VERSION=libdrm-2.4.115
-        MESA_VERSION=mesa-23.1.3
-        wget https://dri.freedesktop.org/libdrm/${LIBDRM_VERSION}.tar.xz
-        wget https://archive.mesa3d.org/${MESA_VERSION}.tar.xz
-        tar -xvf ${LIBDRM_VERSION}.tar.xz
-        tar -xvf ${MESA_VERSION}.tar.xz
-
-        # Install all dependencies.
-        pip3 install --user meson mako
-        # TODO: Add support for other operating systems.
-        sudo apt-get -y build-dep mesa
-        sudo apt install -y ninja libxcb-dri3-dev libxcb-present-dev libxshmfence-dev
-
-        pushd ${LIBDRM_VERSION} >/dev/null
-        meson builddir/ --prefix="${projectpath}/third_party/mesa"
-        ninja -C builddir/ install
-        popd >/dev/null
-
-        pushd ${MESA_VERSION} >/dev/null
-        PKG_CONFIG_PATH="${projectpath}/third_party/mesa/lib/x86_64-linux-gnu/pkgconfig" \
-        meson setup builddir/ -Dprefix="${projectpath}/third_party/mesa" \
-        -Dgallium-drivers=zink,swrast -Dvulkan-drivers= -Dbuildtype=release \
-        -Dgallium-va=disabled -Dglx=dri -Dplatforms=x11 -Degl=enabled -Dglvnd=true
-        meson install -C builddir/
-        popd >/dev/null
-    fi
-    if [[ -z "${LD_LIBRARY_PATH+x}" ]]; then
-        export LD_LIBRARY_PATH="${projectpath}/third_party/mesa/lib/x86_64-linux-gnu"
-    else
-        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/mesa/lib/x86_64-linux-gnu"
-    fi
-    export __GLX_VENDOR_LIBRARY_NAME=mesa
-    export MESA_LOADER_DRIVER_OVERRIDE=zink
-    export GALLIUM_DRIVER=zink
-    params+=(-DUSE_ZINK=ON)
+    params+=(-DOpenImageDenoise_DIR="${projectpath}/third_party/${oidn_folder_name}/lib/cmake/OpenImageDenoise-${oidn_version}")
 fi
 
 popd >/dev/null # back to project root
@@ -1325,6 +1165,9 @@ cmake .. \
     -Dsgl_DIR="$projectpath/third_party/sgl/install/lib/cmake/sgl/" \
     ${params_gen[@]+"${params_gen[@]}"} ${params_link[@]+"${params_link[@]}"} \
     ${params_vcpkg[@]+"${params_vcpkg[@]}"} ${params[@]+"${params[@]}"}
+if [ $use_vcpkg = true ] || [ $use_msys = true ] || [ $use_macos = true ]; then
+    Python3_VERSION=$(cat pythonversion.txt)
+fi
 popd >/dev/null
 
 echo "------------------------"
@@ -1385,6 +1228,43 @@ else
       export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/sgl/install/lib"
   fi
 fi
+if [ $use_macos = true ] && [ $use_vcpkg = true ]; then
+    export PYTHONHOME="$PYTHONHOME_global"
+elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
+    export PYTHONHOME="../$destination_dir/python3"
+elif $use_msys; then
+    export PYTHONHOME="/mingw64"
+else
+    if [ $use_vcpkg = true ]; then
+        export PYTHONHOME="../Shipping/bin/python3"
+    fi
+fi
+if [ $use_macos = false ] && [ $use_msys = false ]; then
+    if ! $is_ospray_installed && [ $os_arch = "x86_64" ]; then
+        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib"
+    fi
+fi
+if $use_open_image_denoise; then
+    if $use_msys; then
+        if [[ -z "${PATH+x}" ]]; then
+            export PATH="${projectpath}/third_party/${oidn_folder_name}/bin"
+        elif [[ ! "${PATH}" == *"${projectpath}/third_party/${oidn_folder_name}/bin"* ]]; then
+            export PATH="${projectpath}/third_party/${oidn_folder_name}/bin:$PATH"
+        fi
+    elif $use_macos; then
+        if [ -z "${DYLD_LIBRARY_PATH+x}" ]; then
+            export DYLD_LIBRARY_PATH="${projectpath}/third_party/${oidn_folder_name}/lib"
+        elif contains "${DYLD_LIBRARY_PATH}" "${projectpath}/third_party/${oidn_folder_name}/lib"; then
+            export DYLD_LIBRARY_PATH="DYLD_LIBRARY_PATH:${projectpath}/third_party/${oidn_folder_name}/lib"
+        fi
+    else
+      if [[ -z "${LD_LIBRARY_PATH+x}" ]]; then
+          export LD_LIBRARY_PATH="${projectpath}/third_party/${oidn_folder_name}/lib"
+      elif [[ ! "${LD_LIBRARY_PATH}" == *"${projectpath}/third_party/${oidn_folder_name}/lib"* ]]; then
+          export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${projectpath}/third_party/${oidn_folder_name}/lib"
+      fi
+    fi
+fi
 
 if $use_msys; then
     mkdir -p $destination_dir/bin
@@ -1397,10 +1277,23 @@ if $use_msys; then
     fi
 
     # Copy the application to the destination directory.
-    cp "$build_dir/Correrender.exe" "$destination_dir/bin"
+    cp "$build_dir/LineVis.exe" "$destination_dir/bin"
 
     # Copy all dependencies of the application to the destination directory.
-    ldd_output="$(ntldd -R $build_dir/Correrender.exe)"
+    ldd_output="$(ntldd -R $build_dir/LineVis.exe)"
+    if $use_open_image_denoise; then
+        # Copy OpenImageDenoise device libraries.
+        for oidn_lib_file in "${projectpath}/third_party/${oidn_folder_name}/bin/OpenImageDenoise_device_"*; do
+            ldd_output="$ldd_output ${oidn_lib_file}"
+        done
+        # Copy other dependencies.
+        for oidn_lib_file in "${projectpath}/third_party/${oidn_folder_name}/bin/"*.dll; do
+            oidn_lib_file_basename="$(basename ${oidn_lib_file})"
+            if [[ ${oidn_lib_file_basename} != "OpenImageDenoise"* ]]; then
+                ldd_output="$ldd_output ${oidn_lib_file}"
+            fi
+        done
+    fi
     for library_abs in $ldd_output
     do
         if [[ $library_abs == "not found"* ]] || [[ $library_abs == "ext-ms-win"* ]] || [[ $library_abs == "=>" ]] \
@@ -1421,16 +1314,16 @@ if $use_msys; then
     done
 elif [ $use_macos = true ] && [ $use_vcpkg = true ]; then
     [ -d $destination_dir ] || mkdir $destination_dir
-    rsync -a "$build_dir/Correrender.app/Contents/MacOS/Correrender" $destination_dir
+    rsync -a "$build_dir/LineVis.app/Contents/MacOS/LineVis" $destination_dir
 elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
     mkdir -p $destination_dir
 
-    if [ -d "$destination_dir/Correrender.app" ]; then
-        rm -rf "$destination_dir/Correrender.app"
+    if [ -d "$destination_dir/LineVis.app" ]; then
+        rm -rf "$destination_dir/LineVis.app"
     fi
 
     # Copy the application to the destination directory.
-    cp -a "$build_dir/Correrender.app" "$destination_dir"
+    cp -a "$build_dir/LineVis.app" "$destination_dir"
 
     # Copy sgl to the destination directory.
     if [ $debug = true ] ; then
@@ -1496,12 +1389,28 @@ elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
             fi
         done < <(echo "$otool_output")
     }
-    copy_dependencies_recursive "$build_dir/Correrender.app/Contents/MacOS/Correrender"
+    copy_dependencies_recursive "$build_dir/LineVis.app/Contents/MacOS/LineVis"
     if [ $debug = true ]; then
         copy_dependencies_recursive "./third_party/sgl/install/lib/libsgld.dylib"
     else
         copy_dependencies_recursive "./third_party/sgl/install/lib/libsgl.dylib"
     fi
+    copy_ospray_lib_symlinked() {
+        local lib_name="$1"
+        local lib_path_1="./third_party/ospray/ospray/lib/$lib_name"
+        local lib_path_2="./third_party/ospray/ospray/lib/$(readlink $lib_path_1)"
+        local lib_path_3="./third_party/ospray/ospray/lib/$(readlink $lib_path_2)"
+        cp "$lib_path_1" "$binaries_dest_dir"
+        cp "$lib_path_2" "$binaries_dest_dir"
+        cp "$lib_path_3" "$binaries_dest_dir"
+        copy_dependencies_recursive "$lib_path_1"
+        copy_dependencies_recursive "$lib_path_2"
+        copy_dependencies_recursive "$lib_path_3"
+    }
+    copy_ospray_lib_symlinked "libopenvkl.dylib"
+    copy_ospray_lib_symlinked "libopenvkl_module_cpu_device.dylib"
+    copy_ospray_lib_symlinked "libopenvkl_module_cpu_device_4.dylib"
+    copy_ospray_lib_symlinked "libospray_module_cpu.dylib"
 
     # Fix code signing for arm64.
     for filename in $binaries_dest_dir/*
@@ -1514,11 +1423,35 @@ else
     mkdir -p $destination_dir/bin
 
     # Copy the application to the destination directory.
-    rsync -a "$build_dir/Correrender" "$destination_dir/bin"
+    rsync -a "$build_dir/LineVis" "$destination_dir/bin"
 
     # Copy all dependencies of the application to the destination directory.
-    ldd_output="$(ldd $build_dir/Correrender)"
+    ldd_output="$(ldd $build_dir/LineVis)"
 
+    if ! $is_ospray_installed && [ $os_arch = "x86_64" ]; then
+        libembree3_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libembree3.so")"
+        libospray_module_cpu_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libospray_module_cpu.so")"
+        libopenvkl_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl.so")"
+        libopenvkl_module_cpu_device_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device.so")"
+        libopenvkl_module_cpu_device_4_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device_4.so")"
+        libopenvkl_module_cpu_device_8_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device_8.so")"
+        libopenvkl_module_cpu_device_16_so="$(readlink -f "${projectpath}/third_party/ospray-${ospray_version}.x86_64.linux/lib/libopenvkl_module_cpu_device_16.so")"
+        ldd_output="$ldd_output $libembree3_so $libospray_module_cpu_so $libopenvkl_so $libopenvkl_module_cpu_device_so"
+        ldd_output="$ldd_output $libopenvkl_module_cpu_device_4_so $libopenvkl_module_cpu_device_8_so $libopenvkl_module_cpu_device_16_so"
+    fi
+    if $use_open_image_denoise; then
+        # Copy OpenImageDenoise device libraries.
+        for oidn_lib_file in "${projectpath}/third_party/${oidn_folder_name}/lib/libOpenImageDenoise_device_"*; do
+            ldd_output="$ldd_output ${oidn_lib_file}"
+        done
+        # Copy other dependencies.
+        for oidn_lib_file in "${projectpath}/third_party/${oidn_folder_name}/lib/lib"*; do
+            oidn_lib_file_basename="$(basename ${oidn_lib_file})"
+            if [[ ${oidn_lib_file_basename} != "libOpenImageDenoise"* ]]; then
+                ldd_output="$ldd_output ${oidn_lib_file}"
+            fi
+        done
+    fi
     library_blacklist=(
         "libOpenGL" "libGLdispatch" "libGL.so" "libGLX.so"
         "libwayland" "libffi." "libX" "libxcb" "libxkbcommon"
@@ -1556,16 +1489,77 @@ else
             patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/$(basename "$library")"
         fi
     done
-    patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/Correrender"
+    patchelf --set-rpath '$ORIGIN' "$destination_dir/bin/LineVis"
+    if ! $is_ospray_installed; then
+        ln -sf "./$(basename "$libembree3_so")" "$destination_dir/bin/libembree3.so"
+        ln -sf "./$(basename "$libospray_module_cpu_so")" "$destination_dir/bin/libospray_module_cpu.so"
+        ln -sf "./$(basename "$libopenvkl_so")" "$destination_dir/bin/libopenvkl.so"
+        ln -sf "./$(basename "$libopenvkl_so")" "$destination_dir/bin/libopenvkl.so.1"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_so")" "$destination_dir/bin/libopenvkl_module_cpu_device.so"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_so")" "$destination_dir/bin/libopenvkl_module_cpu_device.so.1"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_4_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_4.so"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_4_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_4.so.1"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_8_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_8.so"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_8_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_8.so.1"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_16_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_16.so"
+        ln -sf "./$(basename "$libopenvkl_module_cpu_device_16_so")" "$destination_dir/bin/libopenvkl_module_cpu_device_16.so.1"
+    fi
 fi
 
+# 2023-11-11: It seems like for LineVis, vcpkg_installed is in the root directory, but for HexVolumeRenderer
+# it is in the build folder.
+if [ $use_vcpkg = true ]; then
+    if [ -d "vcpkg_installed" ]; then
+        vcpkg_installed_dir="vcpkg_installed"
+    elif [ -d "$build_dir/vcpkg_installed" ]; then
+        vcpkg_installed_dir="$build_dir/vcpkg_installed"
+    fi
+    if [ $use_macos = true ]; then
+        vcpkg_installed_dir_triplet="vcpkg_installed/$(ls $vcpkg_installed_dir | grep -Ewv 'vcpkg')"
+    else
+        if [ $use_custom_vcpkg_triplet = true ]; then
+            vcpkg_installed_dir_triplet="$vcpkg_installed_dir/$vcpkg_triplet"
+        else
+            vcpkg_installed_dir_triplet="$vcpkg_installed_dir/$(ls --ignore=vcpkg $vcpkg_installed_dir)"
+        fi
+    fi
+fi
+# Copy python3 to the destination directory.
+if $use_msys; then
+    if [ ! -d "$destination_dir/bin/python3" ]; then
+        mkdir -p "$destination_dir/bin/python3/lib"
+        #cp -r "$MSYSTEM_PREFIX/lib/$Python3_VERSION" "$destination_dir/bin/python3/lib"
+        rsync -qav "$MSYSTEM_PREFIX/lib/$Python3_VERSION" "$destination_dir/bin/python3/lib" --exclude site-packages --exclude dist-packages
+    fi
+elif [ $use_macos = true ] && [ $use_vcpkg = true ]; then
+    [ -d $destination_dir/python3 ]     || mkdir $destination_dir/python3
+    [ -d $destination_dir/python3/lib ] || mkdir $destination_dir/python3/lib
+    rsync -a "$vcpkg_installed_dir_triplet/lib/$Python3_VERSION" $destination_dir/python3/lib
+    #rsync -a "$(eval echo "$vcpkg_installed_dir_triplet/lib/python*")" $destination_dir/python3/lib
+elif [ $use_macos = true ] && [ $use_vcpkg = false ]; then
+    python_version=${Python3_VERSION#python}
+    python_subdir="$brew_prefix/Cellar/python@${Python3_VERSION#python}"
+    PYTHONHOME_global="$python_subdir/$(ls "$python_subdir")/Frameworks/Python.framework/Versions/$python_version"
+    if [ ! -d "$binaries_dest_dir/python3" ]; then
+        mkdir -p "$binaries_dest_dir/python3/lib"
+        rsync -a "$PYTHONHOME_global/lib/$Python3_VERSION" "$binaries_dest_dir/python3/lib"
+        rsync -a "$brew_prefix/lib/$Python3_VERSION" "$binaries_dest_dir/python3/lib"
+        #rsync -a "$(eval echo "$brew_prefix/lib/python*")" $binaries_dest_dir/python3/lib
+    fi
+elif [ $use_vcpkg = true ]; then
+    [ -d $destination_dir/bin/python3 ]     || mkdir $destination_dir/bin/python3
+    [ -d $destination_dir/bin/python3/lib ] || mkdir $destination_dir/bin/python3/lib
+    python_lib_dir="$vcpkg_installed_dir_triplet/lib/$Python3_VERSION"
+    rsync -a "$python_lib_dir" $destination_dir/bin/python3/lib
+    #rsync -a "$(eval echo "$vcpkg_installed_dir_triplet/lib/python*")" $destination_dir/python3/lib
+fi
 
 # Copy the docs to the destination directory.
 cp "README.md" "$destination_dir"
 if [ ! -d "$destination_dir/LICENSE" ]; then
     mkdir -p "$destination_dir/LICENSE"
     cp -r "docs/license-libraries/." "$destination_dir/LICENSE/"
-    cp -r "LICENSE" "$destination_dir/LICENSE/LICENSE-correrender.txt"
+    cp -r "LICENSE" "$destination_dir/LICENSE/LICENSE-linevis.txt"
     cp -r "submodules/IsosurfaceCpp/LICENSE" "$destination_dir/LICENSE/graphics/LICENSE-isosurfacecpp.txt"
 fi
 if [ ! -d "$destination_dir/docs" ]; then
@@ -1574,36 +1568,15 @@ fi
 
 # Create a run script.
 if $use_msys; then
-    printf "@echo off\npushd %%~dp0\npushd bin\nstart \"\" Correrender.exe\n" > "$destination_dir/run.bat"
+    printf "@echo off\npushd %%~dp0\npushd bin\nstart \"\" LineVis.exe\n" > "$destination_dir/run.bat"
 elif $use_macos; then
-    printf "#!/bin/sh\npushd \"\$(dirname \"\$0\")\" >/dev/null\n./Correrender.app/Contents/MacOS/Correrender\npopd\n" > "$destination_dir/run.sh"
+    printf "#!/bin/sh\npushd \"\$(dirname \"\$0\")\" >/dev/null\n./LineVis.app/Contents/MacOS/LineVis\npopd\n" > "$destination_dir/run.sh"
     chmod +x "$destination_dir/run.sh"
 else
-    printf "#!/bin/bash\npushd \"\$(dirname \"\$0\")/bin\" >/dev/null\n./Correrender\npopd\n" > "$destination_dir/run.sh"
+    printf "#!/bin/bash\npushd \"\$(dirname \"\$0\")/bin\" >/dev/null\n./LineVis\npopd\n" > "$destination_dir/run.sh"
     chmod +x "$destination_dir/run.sh"
 fi
 
-# Replicability Stamp mode.
-if $replicability; then
-    mkdir -p "./Data/VolumeDataSets"
-    if [ ! -f "./Data/VolumeDataSets/linear_4x4.nc" ]; then
-        #echo "------------------------"
-        #echo "generating synthetic data"
-        #echo "------------------------"
-        #pushd scripts >/dev/null
-        #python3 generate_synth_box_ensembles.py
-        #popd >/dev/null
-        echo "------------------------"
-        echo "downloading synthetic data"
-        echo "------------------------"
-        curl --show-error --fail \
-        https://zenodo.org/records/10018860/files/linear_4x4.nc --output "./Data/VolumeDataSets/linear_4x4.nc"
-    fi
-    if [ ! -f "./Data/VolumeDataSets/datasets.json" ]; then
-        printf "{ \"datasets\": [ { \"name\": \"linear_4x4\", \"filename\": \"linear_4x4.nc\" } ] }" >> ./Data/VolumeDataSets/datasets.json
-    fi
-    params_run+=(--replicability)
-fi
 
 
 # Run the program as the last step.
@@ -1612,9 +1585,9 @@ echo "All done!"
 pushd $build_dir >/dev/null
 
 if [ $run_program = true ] && [ $use_macos = false ]; then
-    ./Correrender ${params_run[@]+"${params_run[@]}"}
+    ./LineVis ${params_run[@]+"${params_run[@]}"}
 elif [ $run_program = true ] && [ $use_macos = true ]; then
-    #open ./Correrender.app
-    #open ./Correrender.app --args --perf
-    ./Correrender.app/Contents/MacOS/Correrender ${params_run[@]+"${params_run[@]}"}
+    #open ./LineVis.app
+    #open ./LineVis.app --args --perf
+    ./LineVis.app/Contents/MacOS/LineVis ${params_run[@]+"${params_run[@]}"}
 fi

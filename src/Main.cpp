@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2022, Christoph Neuhauser
+ * Copyright (c) 2020-2022, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,71 +28,48 @@
 
 #include <unordered_map>
 
-#include <Utils/StringUtils.hpp>
-#include <Utils/AppSettings.hpp>
-#include <Utils/AppLogic.hpp>
-#include <Utils/RemoteUtils.hpp>
+#ifdef USE_PYTHON
+#include <Utils/Python/PythonInit.hpp>
+#endif
+
+#ifdef USE_OSPRAY
+#include <ospray/ospray.h>
+#include "Renderers/Ospray/OsprayRenderer.hpp"
+#endif
+
+#ifdef SUPPORT_D3D12
+#include <Graphics/D3D12/DXGIFactory.hpp>
+#include <Graphics/D3D12/Device.hpp>
+#endif
+
 #include <Utils/File/FileUtils.hpp>
 #include <Utils/File/Logfile.hpp>
+#include <Utils/AppSettings.hpp>
+#include <Utils/AppLogic.hpp>
 #include <Graphics/Window.hpp>
-#include <Graphics/Vulkan/Utils/Instance.hpp>
 #include <Graphics/Vulkan/Utils/Device.hpp>
 #include <Graphics/Vulkan/Utils/Swapchain.hpp>
 #include <Graphics/Vulkan/Shader/ShaderManager.hpp>
 
-#ifdef SUPPORT_OPENGL
-#include <Graphics/OpenGL/Context/OffscreenContextEGL.hpp>
-#include <Graphics/OpenGL/Context/OffscreenContextGlfw.hpp>
-#endif
-
-#include "Renderers/Diagram/SamplingTest.hpp"
 #include "MainApp.hpp"
-
-void vulkanErrorCallbackHeadless() {
-#ifdef SGL_INPUT_API_V2
-    sgl::AppSettings::get()->captureMouse(false);
-#else
-    SDL_CaptureMouse(SDL_FALSE);
-#endif
-    std::cerr << "Application callback" << std::endl;
-}
-
-#ifdef __linux__
-#include <sys/resource.h>
-// Some systems have 1024 open file descriptors as the maximum. Increase the soft limit of the process to the maximum.
-void setFileDescriptorLimit() {
-    rlimit lim{};
-    getrlimit(RLIMIT_NOFILE, &lim);
-    size_t rlimOld = lim.rlim_cur;
-    if (lim.rlim_cur < lim.rlim_max) {
-        lim.rlim_cur = lim.rlim_max;
-        if (setrlimit(RLIMIT_NOFILE, &lim) == -1) {
-            sgl::Logfile::get()->writeError("Error in setFileDescriptorLimit: setrlimit failed.");
-            return;
-        }
-        getrlimit(RLIMIT_NOFILE, &lim);
-        sgl::Logfile::get()->write(
-                "File descriptor limit: " + std::to_string(lim.rlim_cur)
-                + " (old: " + std::to_string(rlimOld) + ")", sgl::BLUE);
-    } else {
-        sgl::Logfile::get()->write("File descriptor limit: " + std::to_string(lim.rlim_cur), sgl::BLUE);
-    }
-}
-#endif
 
 int main(int argc, char *argv[]) {
     // Initialize the filesystem utilities.
-#ifdef __APPLE__
-    setlocale(LC_ALL, "en_US.UTF-8"); // For font rendering with VKVG.
-#else
-    std::setlocale(LC_ALL, "en_US.UTF-8"); // For font rendering with VKVG.
+    sgl::FileUtils::get()->initialize("LineVis", argc, argv);
+
+#ifdef DATA_PATH
+    if (!sgl::FileUtils::get()->directoryExists("Data") && !sgl::FileUtils::get()->directoryExists("../Data")) {
+        sgl::AppSettings::get()->setDataDirectory(DATA_PATH);
+    }
 #endif
-    sgl::FileUtils::get()->initialize("Correrender", argc, argv);
+    sgl::AppSettings::get()->initializeDataDirectory();
+
+    std::string iconPath = sgl::AppSettings::get()->getDataDirectory() + "Fonts/icon_256.png";
+    sgl::AppSettings::get()->setApplicationDescription("A visualization tool for rendering dense sets of 3D lines");
+    sgl::AppSettings::get()->loadApplicationIconFromFile(iconPath);
 
     // Parse the arguments.
-    bool usePerfMode = false, useSamplingMode = false, useReplicabilityStampMode = false;
-    std::string dataSetPath;
-    int testIdx = -1;
+    bool usePerfMode = false;
     bool useCustomShaderCompilerBackend = false;
     sgl::vk::ShaderCompilerBackend shaderCompilerBackend = sgl::vk::ShaderCompilerBackend::SHADERC;
     bool useDownloadSwapchain = false;
@@ -100,18 +77,6 @@ int main(int argc, char *argv[]) {
         std::string command = argv[i];
         if (command == "--perf") {
             usePerfMode = true;
-        } else if (command == "--sampling") {
-            useSamplingMode = true;
-            if (i + 1 < argc && !sgl::startsWith(argv[i + 1], "-")) {
-                i++;
-                dataSetPath = argv[i];
-            }
-            if (i + 1 < argc && !sgl::startsWith(argv[i + 1], "-")) {
-                i++;
-                testIdx = sgl::fromString<int>(argv[i]);
-            }
-        } else if (command == "--replicability") {
-            useReplicabilityStampMode = true;
         } else if (command == "--shader-backend") {
             i++;
             if (i >= argc) {
@@ -124,222 +89,140 @@ int main(int argc, char *argv[]) {
                 shaderCompilerBackend = sgl::vk::ShaderCompilerBackend::SHADERC;
             } else if (backendName == "glslang") {
                 shaderCompilerBackend = sgl::vk::ShaderCompilerBackend::GLSLANG;
+            } else if (command == "--dlswap") {
+                useDownloadSwapchain = true;
             }
-        } else if (command == "--dlswap") {
-            useDownloadSwapchain = true;
         }
     }
-    bool isHeadlessMode = useSamplingMode;
-
-#ifdef DATA_PATH
-    if (!sgl::FileUtils::get()->directoryExists("Data") && !sgl::FileUtils::get()->directoryExists("../Data")) {
-        sgl::AppSettings::get()->setDataDirectory(DATA_PATH);
-    }
-#endif
-    sgl::AppSettings::get()->initializeDataDirectory();
-
-    std::string iconPath = sgl::AppSettings::get()->getDataDirectory() + "Fonts/icon_256.png";
-    sgl::AppSettings::get()->setApplicationDescription("A visualization tool for correlation fields");
-    sgl::AppSettings::get()->loadApplicationIconFromFile(iconPath);
-
-#ifdef __linux__
-    setFileDescriptorLimit();
-#endif
 
     // Load the file containing the app settings
-    ImVector<ImWchar> fontRanges;
-    if (isHeadlessMode) {
-        sgl::AppSettings::get()->setSaveSettings(false);
-        sgl::AppSettings::get()->getSettings().addKeyValue("window-debugContext", true);
+    std::string settingsFile = sgl::FileUtils::get()->getConfigDirectory() + "settings.txt";
+    sgl::AppSettings::get()->loadSettings(settingsFile.c_str());
+    sgl::AppSettings::get()->getSettings().addKeyValue("window-multisamples", 0);
+    sgl::AppSettings::get()->getSettings().addKeyValue("window-debugContext", true);
+    if (usePerfMode) {
+        sgl::AppSettings::get()->getSettings().addKeyValue("window-vSync", false);
     } else {
-        std::string settingsFile = sgl::FileUtils::get()->getConfigDirectory() + "settings.txt";
-        sgl::AppSettings::get()->loadSettings(settingsFile.c_str());
-        sgl::AppSettings::get()->getSettings().addKeyValue("window-multisamples", 0);
-        sgl::AppSettings::get()->getSettings().addKeyValue("window-debugContext", true);
-        if (usePerfMode) {
-            sgl::AppSettings::get()->getSettings().addKeyValue("window-vSync", false);
-        } else {
-            sgl::AppSettings::get()->getSettings().addKeyValue("window-vSync", true);
-        }
-        sgl::AppSettings::get()->getSettings().addKeyValue("window-resizable", true);
-        sgl::AppSettings::get()->getSettings().addKeyValue("window-savePosition", true);
-        //sgl::AppSettings::get()->setVulkanDebugPrintfEnabled();
-
-#ifdef __linux__
-        /*
-         * guessUseDownloadSwapchain might be harder to implement than initially thought. Findings:
-         * - TightVNC seems to work out-of-the-box.
-         * - xrdp needed the download swapchain, but is hard to detect.
-         * - x11vnc also works out-of-the-box.
-         */
-        //useDownloadSwapchain = guessUseDownloadSwapchain();
-        sgl::AppSettings::get()->getSettings().addKeyValue("window-useDownloadSwapchain", useDownloadSwapchain);
-#endif
-
-        ImFontGlyphRangesBuilder builder;
-        builder.AddChar(L'\u03BB'); // lambda
-        builder.AddChar(L'\u03C3'); // sigma
-        builder.BuildRanges(&fontRanges);
-        bool useMultiViewport = false;
-        if (sgl::AppSettings::get()->getSettings().getValueOpt("useDockSpaceMode", useMultiViewport)) {
-            useMultiViewport = !useMultiViewport;
-        }
-        sgl::AppSettings::get()->setLoadGUI(fontRanges.Data, true, useMultiViewport);
+        sgl::AppSettings::get()->getSettings().addKeyValue("window-vSync", true);
     }
+    sgl::AppSettings::get()->getSettings().addKeyValue("window-resizable", true);
+    sgl::AppSettings::get()->getSettings().addKeyValue("window-savePosition", true);
+#ifdef __linux__
+    sgl::AppSettings::get()->getSettings().addKeyValue("window-useDownloadSwapchain", useDownloadSwapchain);
+#endif
+    //sgl::AppSettings::get()->setVulkanDebugPrintfEnabled();
+
+    ImVector<ImWchar> fontRanges;
+    ImFontGlyphRangesBuilder builder;
+    builder.AddChar(L'\u03BB'); // lambda
+    builder.BuildRanges(&fontRanges);
+    bool useMultiViewport = false;
+    if (sgl::AppSettings::get()->getSettings().getValueOpt("useDockSpaceMode", useMultiViewport)) {
+        useMultiViewport = !useMultiViewport;
+    }
+    sgl::AppSettings::get()->setLoadGUI(fontRanges.Data, true, useMultiViewport);
 
     sgl::AppSettings::get()->setRenderSystem(sgl::RenderSystem::VULKAN);
+    sgl::Window* window = sgl::AppSettings::get()->createWindow();
 
-    sgl::Window* window = nullptr;
     std::vector<const char*> optionalDeviceExtensions;
-    if (isHeadlessMode) {
-        sgl::AppSettings::get()->createHeadless();
-    } else {
-#ifdef SUPPORT_OPENGL
-        /*
-         * OpenGL interop is optionally supported for rendering with NanoVG.
-         * For this, we need to enable a few instance and device extensions.
-         * We need to do this before we know whether we were able to successfully create the OpenGL context,
-         * as we need a Vulkan device for matching an OpenGL context if EGL is supported.
-         */
-        sgl::AppSettings::get()->enableVulkanOffscreenOpenGLContextInteropSupport();
+#if defined(SUPPORT_CUDA_INTEROP) || defined(SUPPORT_OPEN_IMAGE_DENOISE)
+    optionalDeviceExtensions = sgl::vk::Device::getVulkanInteropDeviceExtensions();
 #endif
-
-        window = sgl::AppSettings::get()->createWindow();
-
-#ifdef SUPPORT_CUDA_INTEROP
-        optionalDeviceExtensions = sgl::vk::Device::getCudaInteropDeviceExtensions();
-#endif
-#ifdef SUPPORT_OPENGL
-        if (sgl::AppSettings::get()->getInstanceSupportsVulkanOpenGLInterop()) {
-            std::vector<const char*> interopDeviceExtensions =
-                    sgl::AppSettings::get()->getVulkanOpenGLInteropDeviceExtensions();
-            for (const char* extensionName : interopDeviceExtensions) {
-                bool foundExtension = false;
-                for (size_t i = 0; i < optionalDeviceExtensions.size(); i++) {
-                    if (strcmp(extensionName, optionalDeviceExtensions.at(i)) == 0) {
-                        foundExtension = true;
-                        break;
-                    }
-                }
-                if (!foundExtension) {
-                    optionalDeviceExtensions.push_back(extensionName);
-                }
-            }
-        }
-#endif
-        //optionalDeviceExtensions.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
-    }
+    std::vector<const char*> raytracingDeviceExtensions = {
+            VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+            VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+            VK_KHR_MAINTENANCE3_EXTENSION_NAME,
+            VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
+            VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+            VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+            VK_KHR_RAY_QUERY_EXTENSION_NAME
+    };
+    optionalDeviceExtensions.insert(
+            optionalDeviceExtensions.end(),
+            raytracingDeviceExtensions.begin(), raytracingDeviceExtensions.end());
+    optionalDeviceExtensions.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+    optionalDeviceExtensions.push_back(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
+    optionalDeviceExtensions.push_back(VK_NV_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
+    optionalDeviceExtensions.push_back(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
+    optionalDeviceExtensions.push_back(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME);
+    optionalDeviceExtensions.push_back(VK_KHR_8BIT_STORAGE_EXTENSION_NAME);
+    //optionalDeviceExtensions.push_back(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME);
     optionalDeviceExtensions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
+    optionalDeviceExtensions.push_back(VK_NV_MESH_SHADER_EXTENSION_NAME);
+#ifdef VK_EXT_mesh_shader
+    optionalDeviceExtensions.push_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+#endif
 
     sgl::vk::Instance* instance = sgl::AppSettings::get()->getVulkanInstance();
-    if (isHeadlessMode) {
-        sgl::AppSettings::get()->getVulkanInstance()->setDebugCallback(&vulkanErrorCallbackHeadless);
-    }
     auto* device = new sgl::vk::Device;
-
     sgl::vk::DeviceFeatures requestedDeviceFeatures{};
-    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.sampleRateShading = VK_TRUE; // For MSAA.
-    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.geometryShader = VK_TRUE; // For Skia (if enabled).
-    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.dualSrcBlend = VK_TRUE; // For Skia (if enabled).
-    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.logicOp = VK_TRUE; // For VKVG (if enabled).
-    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.fillModeNonSolid = VK_TRUE; // For VKVG (if enabled).
-    requestedDeviceFeatures.optionalEnableShaderDrawParametersFeatures = true; // For deferred shading.
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.geometryShader = VK_TRUE; // For a rasterizer mode.
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.sampleRateShading = VK_TRUE; // For OpaqueLineRenderer.
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.independentBlend = VK_TRUE; // For WBOITRenderer.
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.samplerAnisotropy = VK_TRUE; // For LineDataFlow textures.
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.multiDrawIndirect = VK_TRUE; // For DeferredRenderer.
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.shaderInt64 = VK_TRUE; // For AtomicLoop64Renderer.
+    requestedDeviceFeatures.optionalEnableShaderDrawParametersFeatures = VK_TRUE; // For DeferredRenderer.
+    requestedDeviceFeatures.optionalVulkan12Features.drawIndirectCount = VK_TRUE; // For DeferredRenderer.
+    requestedDeviceFeatures.optionalVulkan12Features.shaderBufferInt64Atomics = VK_TRUE; // For AtomicLoop64Renderer.
+    // For PerPixelLinkedListRenderer, OpacityOptimizationRenderer, DepthComplexityRenderer, ...
     requestedDeviceFeatures.requestedPhysicalDeviceFeatures.fragmentStoresAndAtomics = VK_TRUE;
-    // For transfer function optimization with 64-bit accuracy.
-    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.shaderInt64 = VK_TRUE;
-    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.shaderFloat64 = VK_TRUE;
-    // For ensemble combination when using Vulkan-CUDA interop with PyTorch.
-    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
+    // For > 4GiB modes in per-pixel linked list renderer.
     requestedDeviceFeatures.optionalPhysicalDeviceFeatures.shaderStorageBufferArrayDynamicIndexing = VK_TRUE;
+    requestedDeviceFeatures.optionalPhysicalDeviceFeatures.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
+    //requestedDeviceFeatures.optionalPhysicalDeviceFeatures.shaderInt64 = VK_TRUE;
     requestedDeviceFeatures.optionalVulkan12Features.descriptorIndexing = VK_TRUE;
     requestedDeviceFeatures.optionalVulkan12Features.descriptorBindingVariableDescriptorCount = VK_TRUE;
     requestedDeviceFeatures.optionalVulkan12Features.runtimeDescriptorArray = VK_TRUE;
-    requestedDeviceFeatures.optionalVulkan12Features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
     requestedDeviceFeatures.optionalVulkan12Features.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
-    // For VMLP.
-    requestedDeviceFeatures.optionalVulkan12Features.shaderFloat16 = VK_TRUE;
-    requestedDeviceFeatures.optionalVulkan11Features.storageBuffer16BitAccess = VK_TRUE;
-    requestedDeviceFeatures.optionalVulkan12Features.vulkanMemoryModel = VK_TRUE; // For cooperative matrices.
-    requestedDeviceFeatures.optionalVulkan12Features.vulkanMemoryModelDeviceScope = VK_TRUE; // For cooperative matrices.
-#ifdef VK_VERSION_1_3
-    requestedDeviceFeatures.optionalVulkan13Features.subgroupSizeControl = VK_TRUE;
-#endif
-#ifdef VK_NV_cooperative_matrix
-    optionalDeviceExtensions.push_back(VK_NV_COOPERATIVE_MATRIX_EXTENSION_NAME);
-#endif
-#ifdef VK_KHR_cooperative_matrix
-    optionalDeviceExtensions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
-#endif
-
-    if (isHeadlessMode) {
-        device->createDeviceHeadless(
-                instance, {
-                        VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME
-                },
-                optionalDeviceExtensions, requestedDeviceFeatures);
-    } else {
-        device->createDeviceSwapchain(
-                instance, window, {
-                        VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME
-                },
-                optionalDeviceExtensions, requestedDeviceFeatures);
+    device->createDeviceSwapchain(
+            instance, window,
+            {
+                    VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME
+            },
+            optionalDeviceExtensions, requestedDeviceFeatures);
+#ifdef SUPPORT_D3D12
+    // Direct3D 12 test code. This will be extended in the future.
+    sgl::d3d12::DXGIFactoryPtr dxgiFactory = std::make_shared<sgl::d3d12::DXGIFactory>(true);
+    dxgiFactory->enumerateDevices();
+    /*
+     * We use D3D12 for testing Rasterizer Ordered Views (ROVs) performance. According to:
+     * https://learn.microsoft.com/en-us/windows/win32/direct3d12/hardware-feature-levels
+     * ... ROVs were added in feature level 11_1, and became non-optional in 12_1.
+     * Thus, we will just require minimum level 11_1 for now.
+     */
+    sgl::d3d12::DevicePtr d3d12Device = dxgiFactory->createMatchingDevice(device, D3D_FEATURE_LEVEL_11_1);
+    if (d3d12Device) {
+        sgl::Logfile::get()->writeInfo("D3D12 device supports ROVs: " + std::to_string(d3d12Device->getSupportsROVs()));
     }
-
-    sgl::OffscreenContext* offscreenContext = nullptr;
-    if (!isHeadlessMode && !sgl::AppSettings::get()->getMainWindow()->getUseDownloadSwapchain()) {
-#ifdef SUPPORT_OPENGL
-        sgl::OffscreenContextParams params{};
-#ifdef USE_ZINK
-        params.tryUseZinkIfAvailable = true;
-        setenv("__GLX_VENDOR_LIBRARY_NAME", "mesa", 0);
-        setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 0);
-        setenv("GALLIUM_DRIVER", "zink", 0);
 #endif
-        offscreenContext = sgl::createOffscreenContext(device, params, false);
-        if (offscreenContext && offscreenContext->getIsInitialized()) {
-            //offscreenContext->makeCurrent(); //< This is called by createOffscreenContext to check interop extensions.
-            sgl::AppSettings::get()->setOffscreenContext(offscreenContext);
-        }
-#endif
-    }
-    if (!isHeadlessMode) {
-        auto* swapchain = new sgl::vk::Swapchain(device);
-        swapchain->create(window);
-        sgl::AppSettings::get()->setSwapchain(swapchain);
-    }
-
+    sgl::vk::Swapchain* swapchain = new sgl::vk::Swapchain(device);
+    swapchain->create(window);
     sgl::AppSettings::get()->setPrimaryDevice(device);
+    sgl::AppSettings::get()->setSwapchain(swapchain);
     sgl::AppSettings::get()->initializeSubsystems();
     if (useCustomShaderCompilerBackend) {
         sgl::vk::ShaderManager->setShaderCompilerBackend(shaderCompilerBackend);
     }
 
-    if (!isHeadlessMode) {
-        auto app = new MainApp();
-        if (useReplicabilityStampMode) {
-            app->setUseReplicabilityStampMode();
-        }
-        app->run();
-        delete app;
-    }
+#ifdef USE_PYTHON
+    sgl::pythonInit(argc, argv);
+#endif
 
-    if (useSamplingMode) {
-        if (dataSetPath.empty()) {
-            dataSetPath = sgl::FileUtils::get()->getUserDirectory() + "datasets/Necker/nc/necker_t5_tk_u.nc";
-            //dataSetPath = sgl::FileUtils::get()->getUserDirectory() + "datasets/Necker/nc/necker_t5_e100_tk.nc";
-        }
-        if (testIdx < 0) {
-            testIdx = 0;
-        }
-        runSamplingTests(dataSetPath, testIdx);
-    }
+    auto app = new MainApp();
+    app->run();
+    delete app;
 
     sgl::AppSettings::get()->release();
 
-#ifdef SUPPORT_OPENGL
-    if (offscreenContext) {
-        sgl::destroyOffscreenContext(offscreenContext);
-        offscreenContext = nullptr;
+#ifdef USE_PYTHON
+    Py_Finalize();
+#endif
+
+#ifdef USE_OSPRAY
+    if (OsprayRenderer::getIsOsprayInitialized()) {
+        ospShutdown();
     }
 #endif
 

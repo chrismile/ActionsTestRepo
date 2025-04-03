@@ -26,14 +26,13 @@ pkgs.mkShell {
     opencl-headers
     ocl-icd
     jsoncpp
-    nlohmann_json
-    c-blosc
-    netcdf
-    hdf5
-    eccodes
     eigen
-    libtiff
-    nlopt
+    python3
+    zeromq
+    cppzmq
+    netcdf
+    openexr_3
+    eccodes
   ];
 
   BUILD_USE_NIX = "ON";

@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2022, Christoph Neuhauser
+ * Copyright (c) 2020, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,31 +26,29 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef CORRERENDER_MAINAPP_HPP
-#define CORRERENDER_MAINAPP_HPP
+#ifndef MAINAPP_HPP
+#define MAINAPP_HPP
 
 #include <string>
 #include <vector>
 #include <map>
 
-#include <Utils/File/PathWatch.hpp>
 #include <Utils/SciVis/SciVisApp.hpp>
+#include <ImGui/Widgets/TransferFunctionWindow.hpp>
 
 #ifdef SUPPORT_CUDA_INTEROP
 #include <Graphics/Vulkan/Utils/InteropCuda.hpp>
 #endif
 
-#ifdef SUPPORT_RENDERDOC_DEBUGGER
-#include "Utils/RenderDocDebugger.hpp"
-#endif
-
-#include "Utils/InternalState.hpp"
 #include "Loaders/DataSetList.hpp"
-#include "Calculators/CorrelationDefines.hpp"
+#include "Utils/AutomaticPerformanceMeasurer.hpp"
+#include "LineData/LineDataRequester.hpp"
+#include "LineData/Filters/LineFilter.hpp"
 #include "Renderers/SceneData.hpp"
+#include "Renderers/AmbientOcclusion/AmbientOcclusionBaker.hpp"
 
 #ifdef USE_PYTHON
-//#include "Widgets/ReplayWidget.hpp"
+#include "Widgets/ReplayWidget.hpp"
 #endif
 
 namespace sgl { namespace dialog {
@@ -63,18 +61,14 @@ class FileDialog;
 }
 typedef IGFD::FileDialog ImGuiFileDialog;
 
-namespace Json {
-class Value;
-}
-
-class Renderer;
-typedef std::shared_ptr<Renderer> RendererPtr;
-class VolumeData;
-typedef std::shared_ptr<VolumeData> VolumeDataPtr;
+class LineRenderer;
+class LineData;
+typedef std::shared_ptr<LineData> LineDataPtr;
 class DataView;
 typedef std::shared_ptr<DataView> DataViewPtr;
-class ViewManager;
-class TFOptimization;
+class StreamlineTracingRequester;
+class StressLineTracingRequester;
+class ScatteringLineTracingRequester;
 
 class MainApp : public sgl::SciVisApp {
 public:
@@ -87,13 +81,8 @@ public:
     /// For changing performance measurement modes.
     void setNewState(const InternalState& newState);
 
-    /// Replicability stamp mode.
-    void setUseReplicabilityStampMode();
-
 protected:
     void renderGuiGeneralSettingsPropertyEditor() override;
-    void beginFrameMarker() override;
-    void endFrameMarker() override;
 
 private:
     /// Renders the GUI of the scene settings and all filters and renderers.
@@ -106,7 +95,7 @@ private:
     void onCameraReset() override;
     /// Callback when a file has been dropped on the program.
     void onFileDropped(const std::string& droppedFileName) override;
-    bool checkHasValidExtension(const std::string& filenameLower);
+    void loadDataFromFile(const std::string& filename);
 
     void scheduleRecreateSceneFramebuffer();
     bool scheduledRecreateSceneFramebuffer = false;
@@ -127,11 +116,8 @@ private:
     bool isFirstFrame = true;
 
     /// Scene data (e.g., camera, main framebuffer, ...).
-    int32_t viewportPositionX = 0;
-    int32_t viewportPositionY = 0;
     uint32_t viewportWidth = 0;
     uint32_t viewportHeight = 0;
-    int supersamplingFactor = 1;
     SceneData sceneData;
 
     // This setting lets all data views use the same viewport resolution.
@@ -139,9 +125,13 @@ private:
     glm::ivec2 fixedViewportSizeEdit{ 2186, 1358 };
     glm::ivec2 fixedViewportSize{ 2186, 1358 };
 
+    /// Scene data used in user interface.
+    RenderingMode renderingMode = RENDERING_MODE_OPAQUE;
+    RenderingMode oldRenderingMode = RENDERING_MODE_OPAQUE;
+
     // Data set GUI information.
     void loadAvailableDataSetInformation();
-    std::vector<std::string> getSelectedDataSetFilenames();
+    std::vector<std::string> getSelectedLineDataSetFilenames();
     void openFileDialog();
     DataSetInformationPtr dataSetInformationRoot;
     std::vector<DataSetInformationPtr> dataSetInformationList; //< List of all leaves.
@@ -149,35 +139,15 @@ private:
     int selectedDataSetIndex = 0; //< Contains "Local file..." at beginning, thus starts actually at 1.
     int currentlyLoadedDataSetIndex = -1;
     std::string customDataSetFileName;
-    std::vector<std::string> customDataSetFileNames;
-    bool isProgramStart = true, isFileWatchReload = false;
-#ifdef __linux__
-    sgl::PathWatch datasetsWatch;
-#endif
+    DataSetType dataSetType = DATA_SET_TYPE_NONE;
+    bool visualizeSeedingProcess = false; ///< Only for stress line data.
+    const float TIME_PER_SEED_POINT = 0.25f;
     ImGuiFileDialog* fileDialogInstance = nullptr;
     std::string fileDialogDirectory;
     std::vector<sgl::dialog::MsgBoxHandlePtr> nonBlockingMsgBoxHandles;
-    // For volume export dialog.
-    void openExportFieldFileDialog();
-    int selectedFieldIndexExport = 0;
-    std::string exportFieldFileDialogDirectory;
-    // For loading and saving the application state.
-    void openSelectStateDialog();
-    void saveStateToFile(const std::string& stateFilePath);
-    void loadStateFromFile(const std::string& stateFilePath);
-    void loadStateFromJsonObject(Json::Value root);
-    void loadReplicabilityStampState();
-    bool useReplicabilityStampMode = false;
-    int replicabilityFrameNumber = 0;
-    bool stateModeSave = false;
-    std::string stateFileDirectory;
-    // For field similarity computation.
-    CorrelationMeasureType correlationMeasureFieldSimilarity = CorrelationMeasureType::PEARSON;
-    int useFieldAccuracyDouble = 1;
-    int similarityFieldIdx0 = 0, similarityFieldIdx1 = 0;
-    float similarityMetricNumber = 0.0f;
-    float maxCorrelationValue = 0.0f;
-    TFOptimization* tfOptimization = nullptr;
+
+    // Coloring & filtering dependent on importance criteria.
+    sgl::TransferFunctionWindow transferFunctionWindow;
 
     // For making performance measurements.
     AutomaticPerformanceMeasurer* performanceMeasurer = nullptr;
@@ -186,11 +156,11 @@ private:
     bool usesNewState = true;
 
 #ifdef USE_PYTHON
-    /*ReplayWidget replayWidget;
+    ReplayWidget replayWidget;
     bool replayWidgetRunning = false;
     bool realTimeReplayUpdates = false;
     bool updateTransferFunctionRange = false;
-    glm::vec2 transferFunctionRange{};*/
+    glm::vec2 transferFunctionRange{};
 #endif
 
 #ifdef SUPPORT_CUDA_INTEROP
@@ -198,36 +168,44 @@ private:
     CUdevice cuDevice = 0;
 #endif
     bool cudaInteropInitialized = false;
-    bool nvrtcInitialized = false;
+    bool optixInitialized = false;
     bool openclInteropInitialized = false;
-
-#ifdef SUPPORT_RENDERDOC_DEBUGGER
-    RenderDocDebugger renderDocDebugger;
-#endif
 
 
     /// --- Visualization pipeline ---
 
-    /// Loads volume data from a file.
-    void loadVolumeDataSet(const std::vector<std::string>& fileName);
+    /// Loads line data from a file.
+    void loadLineDataSet(const std::vector<std::string>& fileName, bool blockingDataLoading = false);
+    /// Checks if an asynchronous loading request was finished.
+    void checkLoadingRequestFinished();
     /// Reload the currently loaded data set.
     void reloadDataSet() override;
     /// Prepares the visualization pipeline for rendering.
     void prepareVisualizationPipeline();
+    /// Returns the filtered mesh that is passed to the renderers.
+    void filterData(bool& isDirty);
     /// Sets the used renderers.
-    void addNewRenderer(RenderingMode renderingMode);
-    void setRenderer(RenderingMode newRenderingMode, RendererPtr& newVolumeRenderer);
-    void onUnsupportedRendererSelected(const std::string& warningText, RendererPtr& newVolumeRenderer);
+    void setRenderer(
+            SceneData& sceneDataRef, RenderingMode& oldRenderingMode, RenderingMode& newRenderingMode,
+            LineRenderer*& newLineRenderer, int dataViewIndex);
+    void onUnsupportedRendererSelected(
+            const std::string& warningText,
+            SceneData& sceneDataRef, RenderingMode& newRenderingMode, LineRenderer*& newLineRenderer);
 
     /// A list of filters that are applied sequentially on the data.
-    ViewManager* viewManager = nullptr;
-    std::vector<RendererPtr> volumeRenderers;
-    size_t rendererCreationCounter = 0;
-    VolumeDataPtr volumeData;
-    DataSetType dataSetType = DataSetType::NONE;
-    bool newDataLoaded = true;
-    sgl::AABB3 boundingBox;
-    const int NUM_MANUAL_LOADERS = 1;
+    std::vector<LineFilter*> dataFilters;
+
+    LineRenderer* lineRenderer = nullptr;
+    LineDataPtr lineData;
+    LineDataRequester lineDataRequester;
+    bool newMeshLoaded = true;
+    sgl::AABB3 modelBoundingBox;
+    void* zeromqContext = nullptr;
+    StreamlineTracingRequester* streamlineTracingRequester = nullptr;
+    StressLineTracingRequester* stressLineTracingRequester = nullptr;
+    ScatteringLineTracingRequester* scatteringLineTracingRequester = nullptr;
+    const int NUM_MANUAL_LOADERS = 4;
+    DataSetInformation stressLineTracerDataSetInformation;
 };
 
-#endif //CORRERENDER_MAINAPP_HPP
+#endif // MAINAPP_HPP

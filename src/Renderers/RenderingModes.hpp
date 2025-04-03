@@ -1,7 +1,7 @@
 /*
  * BSD 2-Clause License
  *
- * Copyright (c) 2022, Christoph Neuhauser
+ * Copyright (c) 2021, Christoph Neuhauser
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,54 +26,55 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef CORRERENDER_RENDERINGMODES_HPP
-#define CORRERENDER_RENDERINGMODES_HPP
-
-#include <cstdint>
+#ifndef LINEVIS_RENDERINGMODES_HPP
+#define LINEVIS_RENDERINGMODES_HPP
 
 enum RenderingMode : int32_t {
     RENDERING_MODE_NONE = -1,
-    RENDERING_MODE_DIRECT_VOLUME_RENDERING = 0,
-    RENDERING_MODE_ISOSURFACE_RAYCASTER = 1,
-    RENDERING_MODE_ISOSURFACE_RASTERIZER = 2,
-    RENDERING_MODE_DOMAIN_OUTLINE_RENDERER = 3,
-    RENDERING_MODE_SLICE_RENDERER = 4,
-    RENDERING_MODE_WORLD_MAP_RENDERER = 5,
-    RENDERING_MODE_DIAGRAM_RENDERER = 6,
-    RENDERING_MODE_SCATTER_PLOT = 7,
-    RENDERING_MODE_CORRELATION_MATRIX = 8,
-    RENDERING_MODE_TIME_SERIES_CORRELATION = 9,
-    RENDERING_MODE_DISTRIBUTION_SIMILARITY = 10,
-    RENDERING_MODE_CUSTOM = 11 // e.g., reference point selection renderer; cannot be chosen in UI.
+    RENDERING_MODE_OPAQUE = 0,
+    RENDERING_MODE_DEFERRED_SHADING = 1,
+    RENDERING_MODE_PER_PIXEL_LINKED_LIST = 2,
+    RENDERING_MODE_MLAB = 3,
+    RENDERING_MODE_OPACITY_OPTIMIZATION = 4,
+    RENDERING_MODE_DEPTH_COMPLEXITY = 5,
+    RENDERING_MODE_MBOIT = 6,
+    RENDERING_MODE_MLAB_BUCKETS = 7,
+    RENDERING_MODE_WBOIT = 8,
+    RENDERING_MODE_DEPTH_PEELING = 9,
+    RENDERING_MODE_ATOMIC_LOOP_64 = 10,
+    RENDERING_MODE_VULKAN_RAY_TRACER = 11,
+    RENDERING_MODE_VOXEL_RAY_CASTING = 12,
+    RENDERING_MODE_OSPRAY_RAY_TRACER = 13,
+
+    // For LineDataScattering:
+    RENDERING_MODE_LINE_DENSITY_MAP_RENDERER = 14,
+    RENDERING_MODE_VOLUMETRIC_PATH_TRACER = 15,
+    RENDERING_MODE_SPHERICAL_HEAT_MAP_RENDERER = 16
 };
 const char* const RENDERING_MODE_NAMES[] = {
-        "Direct Volume Renderer",
-        "Iso Surface Raycaster",
-        "Iso Surface Rasterizer",
-        "Domain Outline Renderer",
-        "Slice Renderer",
-        "World Map Renderer",
-        "Diagram Renderer",
-        "Scatter Plot",
-        "Correlation Matrix",
-        "Time Series Correlation",
-        "Distribution Similarity"
-};
-const char* const RENDERING_MODE_NAMES_ID[] = {
-        "dvr",
-        "iso_ray",
-        "iso_raster",
-        "domain_outline",
-        "slice",
-        "world_map",
-        "diagram",
-        "scatter_plot",
-        "correlation_matrix",
-        "time_series_correlation",
-        "distribution_similarity"
+        "Opaque",
+        "Deferred Opaque",
+        "Per-Pixel Linked Lists",
+        "Multi-Layer Alpha Blending",
+        "Opacity Optimization",
+        "Depth Complexity",
+        "Moment-Based OIT",
+        "MLAB (Buckets)",
+        "WBOIT",
+        "Depth Peeling",
+        "Atomic Loop 64",
+        "Vulkan Ray Tracer",
+        "Voxel Ray Casting",
+        "OSPRay Ray Tracer",
+
+        // For LineDataScattering:
+        "Line Density Map Renderer",
+        "Volumetric Path Tracer",
+        "Spherical Heat Map Renderer"
 };
 const int NUM_RENDERING_MODES = ((int)(sizeof(RENDERING_MODE_NAMES) / sizeof(*RENDERING_MODE_NAMES)));
 
 const uint32_t ON_TRANSFER_FUNCTION_MAP_REBUILT_EVENT = 4052753091u;
+const uint32_t ON_OPACITY_OPTIMIZATION_RECOMPUTE_EVENT = 4052753092u;
 
-#endif //CORRERENDER_RENDERINGMODES_HPP
+#endif //LINEVIS_RENDERINGMODES_HPP

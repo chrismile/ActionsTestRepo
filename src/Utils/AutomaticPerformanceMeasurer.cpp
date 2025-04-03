@@ -36,6 +36,32 @@
 
 #include "AutomaticPerformanceMeasurer.hpp"
 
+// See: https://stackoverflow.com/questions/2513505/how-to-get-available-memory-c-g
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+size_t getUsedSystemMemoryBytes() {
+    MEMORYSTATUSEX status;
+    status.dwLength = sizeof(status);
+    GlobalMemoryStatusEx(&status);
+    return status.ullTotalPhys - status.ullAvailPhys;
+}
+#elif defined(__linux__)
+#include <unistd.h>
+size_t getUsedSystemMemoryBytes() {
+    size_t totalNumPages = sysconf(_SC_PHYS_PAGES);
+    size_t availablePages = sysconf(_SC_AVPHYS_PAGES);
+    size_t pageSizeBytes = sysconf(_SC_PAGE_SIZE);
+    return (totalNumPages - availablePages) * pageSizeBytes;
+}
+#else
+size_t getUsedSystemMemoryBytes() {
+    return 0;
+}
+#endif
+
 AutomaticPerformanceMeasurer::AutomaticPerformanceMeasurer(
         sgl::vk::Renderer* renderer, std::vector<InternalState> _states,
         const std::string& _csvFilename, const std::string& _depthComplexityFilename,
@@ -161,8 +187,14 @@ void AutomaticPerformanceMeasurer::writeCurrentModeData() {
         ppllFile.writeCell(std::to_string(timePPLLResolve));
         ppllFile.newRow();
 
-        frameTimesNS = ppllTimer->getFrameTimeList(currentState.name);
         timeMS = timePPLLClear + timeFCGather + timePPLLResolve;
+
+        if (!isCleanup) {
+            VkCommandBuffer commandBuffer = renderer->getDevice()->beginSingleTimeCommands();
+            timerVk->finishGPU(commandBuffer);
+            renderer->getDevice()->endSingleTimeCommands(commandBuffer);
+        }
+        frameTimesNS = timerVk->getFrameTimeList(currentState.name);
     }
 
     if (deferredRenderingTimer) {
@@ -271,7 +303,7 @@ void AutomaticPerformanceMeasurer::setNextState(bool first) {
     currentAlgorithmsBufferSizeBytes = 0;
     currentState = states.at(currentStateIndex);
     sgl::Logfile::get()->writeInfo(std::string() + "New state: " + currentState.name);
-    if (false) {
+    if (currentState.renderingMode == RENDERING_MODE_DEPTH_COMPLEXITY) {
         newDepthComplexityMode = true;
     }
     newStateCallback(currentState);
@@ -290,7 +322,7 @@ void AutomaticPerformanceMeasurer::beginRenderFunction() {
 }
 
 void AutomaticPerformanceMeasurer::startMeasure(float timeStamp) {
-    if (false) {
+    if (currentState.renderingMode == RENDERING_MODE_OSPRAY_RAY_TRACER) {
         // CPU rendering algorithm, thus use a CPU timer and not a GPU timer.
         timerVk->startCPU(currentState.name);
     } else {
@@ -299,7 +331,7 @@ void AutomaticPerformanceMeasurer::startMeasure(float timeStamp) {
 }
 
 void AutomaticPerformanceMeasurer::endMeasure() {
-    if (false) {
+    if (currentState.renderingMode == RENDERING_MODE_OSPRAY_RAY_TRACER) {
         // CPU rendering algorithm, thus use a CPU timer and not a GPU timer.
         timerVk->endCPU(currentState.name);
     } else {
