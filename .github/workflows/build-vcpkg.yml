@@ -128,7 +128,7 @@ jobs:
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgGitURL: 'https://github.com/microsoft/vcpkg.git'
-          vcpkgGitCommitId: 'db1ddd074bd51bf01baf4c4672b82de9680835ca'
+          vcpkgGitCommitId: '533a5fda5c0646d1771345fb572e759283444d5f'
           vcpkgDirectory: ${{env.VCPKG_ROOT}}
 
       - name: Create custom vcpkg triplet

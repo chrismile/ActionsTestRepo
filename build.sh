@@ -674,25 +674,6 @@ fi
 [ -d "./third_party/" ] || mkdir "./third_party/"
 pushd third_party > /dev/null
 
-cmake_version=$(cmake --version | head -n 1 | awk '{print $NF}')
-cmake_version_major=$(echo $cmake_version | cut -d. -f1)
-cmake_version_minor=$(echo $cmake_version | cut -d. -f2)
-if [[ $cmake_version_major < 3 || ($cmake_version_major == 3 && $cmake_version_minor < 18) ]]; then
-    os_arch_cmake=${os_arch}
-    if [ "$os_arch" = "arm64" ]; then
-        os_arch_cmake="aarch64"
-    fi
-    cmake_download_version="4.0.0"
-    if [ ! -d "cmake-${cmake_download_version}-linux-x86_64" ]; then
-        echo "------------------------"
-        echo "    downloading cmake   "
-        echo "------------------------"
-        curl --silent --show-error --fail -OL "https://github.com/Kitware/CMake/releases/download/v${cmake_download_version}/cmake-${cmake_download_version}-linux-${os_arch_cmake}.tar.gz"
-        tar -xf cmake-${cmake_download_version}-linux-x86_64.tar.gz -C .
-    fi
-    PATH="${projectpath}/third_party/cmake-${cmake_download_version}-linux-x86_64/bin:$PATH"
-fi
-
 params_sgl=()
 params=()
 params_run=()
@@ -729,6 +710,43 @@ fi
 
 if [ $use_download_swapchain = true ]; then
     params_run+=(--dlswap)
+fi
+
+cmake_version=$(cmake --version | head -n 1 | awk '{print $NF}')
+cmake_version_major=$(echo $cmake_version | cut -d. -f1)
+cmake_version_minor=$(echo $cmake_version | cut -d. -f2)
+if [[ $cmake_version_major < 3 || ($cmake_version_major == 3 && $cmake_version_minor < 18) ]]; then
+    os_arch_cmake=${os_arch}
+    if [ "$os_arch" = "arm64" ]; then
+        os_arch_cmake="aarch64"
+    fi
+    cmake_download_version="4.0.0"
+    if [ ! -d "cmake-${cmake_download_version}-linux-x86_64" ]; then
+        echo "------------------------"
+        echo "    downloading cmake   "
+        echo "------------------------"
+        curl --silent --show-error --fail -OL "https://github.com/Kitware/CMake/releases/download/v${cmake_download_version}/cmake-${cmake_download_version}-linux-${os_arch_cmake}.tar.gz"
+        tar -xf cmake-${cmake_download_version}-linux-x86_64.tar.gz -C .
+    fi
+    PATH="${projectpath}/third_party/cmake-${cmake_download_version}-linux-x86_64/bin:$PATH"
+    cmake_version=$(cmake --version | head -n 1 | awk '{print $NF}')
+    cmake_version_major=$(echo $cmake_version | cut -d. -f1)
+    cmake_version_minor=$(echo $cmake_version | cut -d. -f2)
+fi
+if [ $use_msys = false ] && [ $use_macos = false ] && [ $use_conda = false ] && [ $use_vcpkg = false ] && [[ $cmake_version_major >= 4 ]]; then
+    # Ubuntu 22.04 ships packages, such as libjsoncpp-dev, that are incompatible with CMake 4.0.
+    if (lsb_release -a 2> /dev/null | grep -q 'Ubuntu' || lsb_release -a 2> /dev/null | grep -q 'Mint'); then
+        if lsb_release -a 2> /dev/null | grep -q 'Ubuntu'; then
+            distro_code_name=$(lsb_release -cs)
+            distro_release=$(lsb_release -rs)
+        else
+            distro_code_name=$(cat /etc/upstream-release/lsb-release | grep "DISTRIB_CODENAME=" | sed 's/^.*=//')
+            distro_release=$(cat /etc/upstream-release/lsb-release | grep "DISTRIB_RELEASE=" | sed 's/^.*=//')
+        fi
+        if dpkg --compare-versions "$distro_release" "lt" "24.04"; then
+            params+=(-DCMAKE_POLICY_VERSION_MINIMUM=3.5)
+        fi
+    fi
 fi
 
 use_vulkan=false
@@ -946,8 +964,6 @@ if [ ! -d "./sgl/install" ]; then
     echo "------------------------"
     echo "     building sgl       "
     echo "------------------------"
-    cmake --version
-    which cmake
 
     pushd "./sgl" >/dev/null
     if ! $build_sgl_release_only; then
