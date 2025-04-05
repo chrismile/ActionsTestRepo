@@ -32,7 +32,7 @@ jobs:
       - name: Build
         shell: bash -el {0}
         run: |
-          pip install numpy
+          pip install numpy setuptools
           echo "python:"
           which python
           echo "python3:"
