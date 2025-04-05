@@ -1,0 +1,7 @@
+[project]
+name = "DiffTetVR"
+version = "0.1.0"
+description = "TODO"
+readme = "README.md"
+requires-python = ">=3.8"
+no-build-isolation-package = ['numpy']

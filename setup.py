@@ -27,7 +27,7 @@
 import numpy
 
 setup(
-        name='test',
+        name='DiffTetVR',
         author='Christoph Neuhauser',
         ext_modules=[],
         cmdclass={},
