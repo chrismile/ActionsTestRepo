@@ -1,6 +1,6 @@
 # BSD 2-Clause License
 #
-# Copyright (c) 2024, Christoph Neuhauser
+# Copyright (c) 2025, Christoph Neuhauser
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -24,38 +24,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import sys
-import os
-import stat
-import platform
-import glob
-import shutil
-import subprocess
-import urllib
-import zipfile
-import tarfile
-import inspect
-from pathlib import Path
-from urllib.request import urlopen
-import setuptools
-from setuptools import setup, find_packages
-from setuptools.command.egg_info import egg_info
-from setuptools.dist import Distribution
-from setuptools.command import bdist_egg
-import torch
-from torch.utils.cpp_extension import include_paths, library_paths, BuildExtension, \
-    IS_WINDOWS, IS_HIP_EXTENSION, ROCM_VERSION, ROCM_HOME, CUDA_HOME
-try:
-    from torch.utils.cpp_extension import SYCL_HOME
-except ImportError:
-    SYCL_HOME = None
+import numpy
 
 setup(
         name='test',
         author='Christoph Neuhauser',
-        ext_modules=[
-        ],
+        ext_modules=[],
         cmdclass={},
         license_files=('LICENSE',),
 )
-
