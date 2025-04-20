@@ -488,11 +488,11 @@ elif command -v pacman &> /dev/null && ! $use_conda; then
 elif command -v yum &> /dev/null && ! $use_conda; then
     if ! command -v cmake &> /dev/null || ! command -v git &> /dev/null || ! command -v curl &> /dev/null \
             || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null \
-            || ! command -v patchelf &> /dev/null; then
+            || ! command -v patchelf &> /dev/null || ! command -v gawk &> /dev/null; then
         echo "------------------------"
         echo "installing build essentials"
         echo "------------------------"
-        sudo yum install -y cmake git curl pkgconf gcc gcc-c++ patchelf
+        sudo yum install -y cmake git curl pkgconf gcc gcc-c++ patchelf gawk
     fi
 
     # Dependencies of sgl and the application.

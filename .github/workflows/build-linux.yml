@@ -37,7 +37,7 @@ jobs:
             image_name: "arch-latest"
           - os: ubuntu-latest
             os_name: "Arch Linux (latest, b)"
-            distrobox: "quay.io/toolbox/arch-toolbox:latest"
+            distrobox: "quay.io/toolbx/arch-toolbox:latest"
             image_name: "arch-latest"
 
     runs-on: ${{ matrix.os }}
