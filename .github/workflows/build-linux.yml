@@ -17,14 +17,14 @@ jobs:
         include:
           # Native targets.
           - os: ubuntu-22.04
-            os_name: Ubuntu 22.04
-            distrobox: false
+            os_name: "Ubuntu 22.04"
+            distrobox: "false"
           - os: ubuntu-24.04
-            os_name: Ubuntu 24.04
-            distrobox: false
+            os_name: "Ubuntu 24.04"
+            distrobox: "false"
           - os: ubuntu-latest
-            os_name: Fedora (latest)
-            distrobox: fedora:latest
+            os_name: "Fedora (latest)"
+            distrobox: "fedora"
 
     runs-on: ${{ matrix.os }}
     name: "Build on ${{ matrix.os_name }}"
@@ -48,5 +48,4 @@ jobs:
           curl -s https://raw.githubusercontent.com/89luca89/distrobox/main/install | sudo sh
           img_name=$(echo "${{ env.distrobox }}" | tr : -)
           distrobox-create --name ${img_name} --image ${{ env.distrobox }}
-          ./build.sh --do-not-run
           distrobox-enter ${img_name} -- ./build.sh --do-not-run
