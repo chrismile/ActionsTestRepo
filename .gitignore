@@ -5,7 +5,7 @@
 *.slo
 *.lo
 *.o
-*.obj
+#*.obj Commented out, as project uses .obj model files
 
 # Precompiled Headers
 *.gch
@@ -56,40 +56,43 @@ docs/latex/*
 
 /Debug/
 /build/*
-/build-*/
+/build-*
 
 # CLion
 .idea/*
-*/.idea/*
 cmake-build-*/
 
-Data/Screenshots/*
-Data/Checkpoints/*
-Data/DataSets/*
-Data/tmp/*
+# Custom for models
+*.blend
+*.mtl
+*.obj
+*.binmesh
+*.binmesh_tri
+*.binmesh_lines
+*.voxel
+*.nc
+*.hair
+*.binpath
+*.camera
+*.binlines
+*.vtk
+*.mesh
 
+Data/Meshes/*
+Data/CameraPaths/*
+Data/Checkpoints/*
+Data/Screenshots/*
+Data/Videos/*
+Data/TransferFunctions/*
+Data/ReplayScripts/__pycache__/*
+
+Data/ControlPoints.txt
 imgui.ini
 
 # Build script
 Shipping/*
 .build/*
 .build_*
+third_party/*
 dependencies/*
 vcpkg_installed/*
-third_party/vcpkg
-third_party/fTetWild*
-third_party/tetgen*
-third_party/VulkanSDK
-
-# macOS
-.DS_Store
-
-# Python
-**/__pycache__/*
-
-# setuptools
-build*/
-*egg-info*
-dist/*
-tmp/*
-difftetvr/*
