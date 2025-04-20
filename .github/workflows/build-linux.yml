@@ -23,8 +23,18 @@ jobs:
           #  os_name: "Ubuntu 24.04"
           #  distrobox: "false"
           - os: ubuntu-latest
-            os_name: "Fedora (latest)"
+            os_name: "Fedora (latest, a)"
             distrobox: "fedora:latest"
+          - os: ubuntu-latest
+            os_name: "Fedora (latest, b)"
+            #distrobox: "fedora:latest"
+            #distrobox: "registry.fedoraproject.org/fedora-toolbox:latest"  # Used in GitHub actions by above image.
+            distrobox: "registry.fedoraproject.org/fedora:latest"
+            image_name: "fedora-latest"
+          - os: ubuntu-latest
+            os_name: "Arch Linux (latest)"
+            distrobox: "quay.io/toolbox/arch-toolbox:latest"
+            image_name: "arch-latest"
 
     runs-on: ${{ matrix.os }}
     name: "Build on ${{ matrix.os_name }}"
@@ -45,8 +55,11 @@ jobs:
         if: matrix.distrobox != 'false'
         shell: bash
         run: |
-          sudo apt-get -y install podman
           curl -s https://raw.githubusercontent.com/89luca89/distrobox/main/install | sudo sh
-          img_name=$(echo "${{ env.distrobox }}" | tr : -)
+          if [ -z "${{ env.image_name }}" ]; then
+              img_name=$(echo "${{ env.distrobox }}" | tr : -)
+          else
+              img_name="${{ env.image_name }}"
+          fi
           distrobox-create --name ${img_name} --image ${{ env.distrobox }} --yes
           distrobox-enter ${img_name} -- ./build.sh --do-not-run
