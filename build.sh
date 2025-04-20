@@ -461,8 +461,8 @@ elif command -v pacman &> /dev/null && ! $use_conda; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo pacman -S libgl glu vulkan-devel shaderc openssl autoconf automake autoconf-archive libxinerama \
-            libxcursor pkgconf libxkbcommon wayland-protocols wayland extra-cmake-modules
+            sudo pacman --noconfirm -S libgl glu vulkan-devel shaderc openssl autoconf automake autoconf-archive \
+            libxinerama libxcursor pkgconf libxkbcommon wayland-protocols wayland extra-cmake-modules
         fi
     else
         if ! is_installed_pacman "boost" || ! is_installed_pacman "icu" || ! is_installed_pacman "glm" \
@@ -473,26 +473,27 @@ elif command -v pacman &> /dev/null && ! $use_conda; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo pacman -S boost icu glm libarchive tinyxml2 libpng glew jsoncpp eigen python3 curl embree
+            sudo pacman --noconfirm -S boost icu glm libarchive tinyxml2 libpng glew jsoncpp eigen python3 curl embree
         fi
         if is_available_pacman "sdl3"; then
             if ! is_installed_pacman "sdl3"; then
-                sudo pacman -S sdl3
+                sudo pacman --noconfirm -S sdl3
             fi
         else
             if ! is_installed_pacman "sdl2"; then
-                sudo pacman -S sdl2
+                sudo pacman --noconfirm -S sdl2
             fi
         fi
     fi
 elif command -v yum &> /dev/null && ! $use_conda; then
     if ! command -v cmake &> /dev/null || ! command -v git &> /dev/null || ! command -v curl &> /dev/null \
             || ! command -v pkg-config &> /dev/null || ! command -v g++ &> /dev/null \
-            || ! command -v patchelf &> /dev/null || ! command -v gawk &> /dev/null; then
+            || ! command -v patchelf &> /dev/null || ! command -v awk &> /dev/null \
+            || ! command -v wget &> /dev/null; then
         echo "------------------------"
         echo "installing build essentials"
         echo "------------------------"
-        sudo yum install -y cmake git curl pkgconf gcc gcc-c++ patchelf gawk
+        sudo yum install -y cmake git curl pkgconf gcc gcc-c++ patchelf gawk wget
     fi
 
     # Dependencies of sgl and the application.
