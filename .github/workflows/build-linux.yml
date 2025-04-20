@@ -27,7 +27,7 @@ jobs:
             distrobox: fedora:latest
 
     runs-on: ${{ matrix.os }}
-    name: "Build on ${{ os_name }}"
+    name: "Build on ${{ matrix.os_name }}"
 
     steps:
       - uses: actions/checkout@v2
