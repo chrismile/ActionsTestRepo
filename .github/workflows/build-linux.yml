@@ -2,9 +2,9 @@ name: Build on Linux
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
 
 env:
   BUILD_TYPE: Release
@@ -32,7 +32,11 @@ jobs:
             distrobox: "registry.fedoraproject.org/fedora:latest"
             image_name: "fedora-latest"
           - os: ubuntu-latest
-            os_name: "Arch Linux (latest)"
+            os_name: "Arch Linux (latest, a)"
+            distrobox: "arch:latest"
+            image_name: "arch-latest"
+          - os: ubuntu-latest
+            os_name: "Arch Linux (latest, b)"
             distrobox: "quay.io/toolbox/arch-toolbox:latest"
             image_name: "arch-latest"
 
@@ -56,10 +60,10 @@ jobs:
         shell: bash
         run: |
           curl -s https://raw.githubusercontent.com/89luca89/distrobox/main/install | sudo sh
-          if [ -z "${{ env.image_name }}" ]; then
-              img_name=$(echo "${{ env.distrobox }}" | tr : -)
+          if [ -z "${{ matrix.image_name }}" ]; then
+              img_name=$(echo "${{ matrix.distrobox }}" | tr : -)
           else
-              img_name="${{ env.image_name }}"
+              img_name="${{ matrix.image_name }}"
           fi
-          distrobox-create --name ${img_name} --image ${{ env.distrobox }} --yes
+          distrobox-create --name ${img_name} --image ${{ matrix.distrobox }} --yes
           distrobox-enter ${img_name} -- ./build.sh --do-not-run
