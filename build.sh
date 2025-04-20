@@ -273,7 +273,7 @@ if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [
         echo "------------------------"
         echo "installing dependencies "
         echo "------------------------"
-        pacman --noconfirm -S --needed mingw64/mingw-w64-x86_64-boost mingw64/mingw-w64-x86_64-icu \
+        pacman --noconfirm --needed -S mingw64/mingw-w64-x86_64-boost mingw64/mingw-w64-x86_64-icu \
         mingw64/mingw-w64-x86_64-glm mingw64/mingw-w64-x86_64-libarchive mingw64/mingw-w64-x86_64-tinyxml2 \
         mingw64/mingw-w64-x86_64-libpng mingw64/mingw-w64-x86_64-sdl3 mingw64/mingw-w64-x86_64-sdl3-image \
         mingw64/mingw-w64-x86_64-glew mingw64/mingw-w64-x86_64-jsoncpp mingw64/mingw-w64-x86_64-eigen3 \
@@ -281,7 +281,7 @@ if $use_msys && command -v pacman &> /dev/null && [ ! -d $build_dir_debug ] && [
     fi
     if ! (is_installed_pacman "mingw-w64-x86_64-curl" || is_installed_pacman "mingw-w64-x86_64-curl-gnutls" \
             || is_installed_pacman "mingw-w64-x86_64-curl-winssl"); then
-        pacman --noconfirm -S --needed mingw64/mingw-w64-x86_64-curl
+        pacman --noconfirm --needed -S mingw64/mingw-w64-x86_64-curl
     fi
 elif $use_msys && command -v pacman &> /dev/null; then
     :
@@ -446,7 +446,7 @@ elif command -v pacman &> /dev/null && ! $use_conda; then
         echo "------------------------"
         echo "installing build essentials"
         echo "------------------------"
-        sudo pacman -S cmake git curl pkgconf base-devel patchelf
+        sudo pacman --noconfirm --needed -S cmake git curl pkgconf base-devel patchelf
     fi
 
     # Dependencies of sgl and the application.
@@ -461,8 +461,8 @@ elif command -v pacman &> /dev/null && ! $use_conda; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo pacman --noconfirm -S libgl glu vulkan-devel shaderc openssl autoconf automake autoconf-archive \
-            libxinerama libxcursor pkgconf libxkbcommon wayland-protocols wayland extra-cmake-modules
+            sudo pacman --noconfirm --needed -S libgl glu vulkan-devel shaderc openssl autoconf automake \
+            autoconf-archive libxinerama libxcursor pkgconf libxkbcommon wayland-protocols wayland extra-cmake-modules
         fi
     else
         if ! is_installed_pacman "boost" || ! is_installed_pacman "icu" || ! is_installed_pacman "glm" \
@@ -473,15 +473,16 @@ elif command -v pacman &> /dev/null && ! $use_conda; then
             echo "------------------------"
             echo "installing dependencies "
             echo "------------------------"
-            sudo pacman --noconfirm -S boost icu glm libarchive tinyxml2 libpng glew jsoncpp eigen python3 curl embree
+            sudo pacman --noconfirm --needed -S boost icu glm libarchive tinyxml2 libpng glew jsoncpp eigen python3 curl \
+            embree
         fi
         if is_available_pacman "sdl3"; then
             if ! is_installed_pacman "sdl3"; then
-                sudo pacman --noconfirm -S sdl3
+                sudo pacman --noconfirm --needed -S sdl3
             fi
         else
             if ! is_installed_pacman "sdl2"; then
-                sudo pacman --noconfirm -S sdl2
+                sudo pacman --noconfirm --needed -S sdl2
             fi
         fi
     fi
