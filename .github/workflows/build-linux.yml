@@ -45,6 +45,7 @@ jobs:
         if: matrix.distrobox != 'false'
         shell: bash
         run: |
+          sudo apt-get -y install podman
           curl -s https://raw.githubusercontent.com/89luca89/distrobox/main/install | sudo sh
           img_name=$(echo "${{ env.distrobox }}" | tr : -)
           distrobox-create --name ${img_name} --image ${{ env.distrobox }} --yes
