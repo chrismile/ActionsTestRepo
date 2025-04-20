@@ -416,7 +416,7 @@ elif command -v apt &> /dev/null && ! $use_conda; then
             sudo apt install -y libboost-filesystem-dev libicu-dev libglm-dev libarchive-dev libtinyxml2-dev libpng-dev \
             libglew-dev libjsoncpp-dev libeigen3-dev python3-dev
         fi
-        if ! is_available_apt "libsdl3-dev"; then
+        if is_available_apt "libsdl3-dev"; then
             if ! is_installed_apt "libsdl3-dev"; then
                 sudo apt install -y libsdl3-dev
             fi
@@ -425,7 +425,7 @@ elif command -v apt &> /dev/null && ! $use_conda; then
                 sudo apt install -y libsdl2-dev
             fi
         fi
-        if ! is_available_apt "libsdl3-image-dev"; then
+        if is_available_apt "libsdl3-image-dev"; then
             if ! is_installed_apt "libsdl3-image-dev"; then
                 sudo apt install -y libsdl3-image-dev
             fi
@@ -475,7 +475,7 @@ elif command -v pacman &> /dev/null && ! $use_conda; then
             echo "------------------------"
             sudo pacman -S boost icu glm libarchive tinyxml2 libpng glew jsoncpp eigen python3 curl embree
         fi
-        if ! is_available_pacman "sdl3"; then
+        if is_available_pacman "sdl3"; then
             if ! is_installed_pacman "sdl3"; then
                 sudo pacman -S sdl3
             fi
@@ -528,7 +528,7 @@ elif command -v yum &> /dev/null && ! $use_conda; then
             sudo yum install -y boost-devel libicu-devel glm-devel libarchive-devel tinyxml2-devel libpng-devel \
             glew-devel jsoncpp-devel eigen3-devel python3-devel libcurl-devel
         fi
-        if ! is_available_yum "SDL3-devel"; then
+        if is_available_yum "SDL3-devel"; then
             if ! is_installed_rpm "SDL3-devel"; then
                 sudo yum install -y SDL3-devel
             fi
@@ -537,7 +537,7 @@ elif command -v yum &> /dev/null && ! $use_conda; then
                 sudo yum install -y SDL2-devel
             fi
         fi
-        if ! is_available_yum "SDL3_image-devel"; then
+        if is_available_yum "SDL3_image-devel"; then
             if ! is_installed_rpm "SDL3_image-devel"; then
                 sudo yum install -y SDL3_image-devel
             fi
